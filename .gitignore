@@ -1,0 +1,21 @@
+node_modules/
+dist/
+dist-electron/
+release/
+release-dist/
+release-portable/
+release-v2/
+自动购物助手-win32-x64-temp/
+extra/
+*.db
+*.tsbuildinfo
+*.zip
+*.zip.tmp
+UI-DESIGN.md
+product-roadmap.md
+requirement.md
+后续改进与新增功能清单.md
+打包与发布指南.md
+问题汇总.txt
+需求汇总表 第一批.md
+需求澄清与建议书.md

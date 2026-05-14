@@ -1,0 +1,18 @@
+appId: com.autoshopping.app
+productName: 自动购物助手
+directories:
+  buildResources: build
+  output: D:\workspace\release-output
+files:
+  - dist
+  - dist-electron
+win:
+  target:
+    - target: portable
+      arch:
+        - x64
+  icon: build/auto_shopping_app_icon.png
+  signAndEditExecutable: false
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
