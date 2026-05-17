@@ -59,3 +59,42 @@ export const MIGRATION_V3 = [
     created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
   )`,
 ]
+
+export const MIGRATION_V4 = [
+  `CREATE TABLE IF NOT EXISTS pending_confirmations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id INTEGER NOT NULL,
+    product_name TEXT NOT NULL,
+    original_price REAL NOT NULL DEFAULT 0,
+    failure_reason TEXT NOT NULL DEFAULT '',
+    search_keyword TEXT NOT NULL DEFAULT '',
+    candidates TEXT NOT NULL DEFAULT '[]',
+    status TEXT NOT NULL DEFAULT 'pending',
+    created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+    resolved_at TEXT,
+    FOREIGN KEY (task_id) REFERENCES tasks(id)
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_pending_confirmations_status ON pending_confirmations(status)`,
+]
+
+export const MIGRATION_V5 = [
+  `ALTER TABLE orders ADD COLUMN shop_name TEXT NOT NULL DEFAULT ''`,
+  `ALTER TABLE orders ADD COLUMN sku TEXT NOT NULL DEFAULT ''`,
+]
+
+export const MIGRATION_V6 = [
+  `ALTER TABLE tasks ADD COLUMN progress_log TEXT NOT NULL DEFAULT '[]'`,
+]
+
+export const MIGRATION_V7 = [
+  `ALTER TABLE orders ADD COLUMN unavailable INTEGER NOT NULL DEFAULT 0`,
+  `ALTER TABLE pending_confirmations ADD COLUMN order_id INTEGER`,
+]
+
+export const MIGRATION_V8 = [
+  `ALTER TABLE tasks ADD COLUMN started_at TEXT`,
+]
+
+export const MIGRATION_V9 = [
+  `ALTER TABLE tasks ADD COLUMN payment_mode TEXT NOT NULL DEFAULT 'auto_pay'`,
+]

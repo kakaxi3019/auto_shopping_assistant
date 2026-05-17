@@ -2,10 +2,11 @@ import initSqlJs, { type Database as SqlJsDatabase } from 'sql.js'
 import { join } from 'path'
 import { app } from 'electron'
 import { existsSync, readFileSync, writeFileSync } from 'fs'
-import { MIGRATIONS, MIGRATION_V2, MIGRATION_V3 } from './migrations'
-import type { Order, ShoppingTask } from '../../shared/types/task.types'
+import { MIGRATIONS, MIGRATION_V2, MIGRATION_V3, MIGRATION_V4, MIGRATION_V5, MIGRATION_V6, MIGRATION_V7, MIGRATION_V8, MIGRATION_V9 } from './migrations'
+import type { ShoppingTask, PendingConfirmation } from '../../shared/types/task.types'
+import type { Order } from '../../shared/types/platform.types'
 
-const MIGRATION_VERSION = 3
+const MIGRATION_VERSION = 9
 
 function toCamelCase(obj: Record<string, unknown>): Record<string, unknown> {
   const result: Record<string, unknown> = {}
@@ -121,6 +122,42 @@ export class Database {
       }
     }
 
+    if (currentVersion < 4) {
+      for (const sql of MIGRATION_V4) {
+        this.db.run(sql)
+      }
+    }
+
+    if (currentVersion < 5) {
+      for (const sql of MIGRATION_V5) {
+        this.db.run(sql)
+      }
+    }
+
+    if (currentVersion < 6) {
+      for (const sql of MIGRATION_V6) {
+        this.db.run(sql)
+      }
+    }
+
+    if (currentVersion < 7) {
+      for (const sql of MIGRATION_V7) {
+        this.db.run(sql)
+      }
+    }
+
+    if (currentVersion < 8) {
+      for (const sql of MIGRATION_V8) {
+        this.db.run(sql)
+      }
+    }
+
+    if (currentVersion < 9) {
+      for (const sql of MIGRATION_V9) {
+        this.db.run(sql)
+      }
+    }
+
     this.db.run('INSERT INTO schema_migrations (version) VALUES (?)', [MIGRATION_VERSION])
     this.saveImmediate()
   }
@@ -191,7 +228,7 @@ export class Database {
   }
 
   searchOrders(keyword: string, platform?: string): Order[] {
-    let sql = 'SELECT * FROM orders WHERE product_name LIKE ?'
+    let sql = 'SELECT * FROM orders WHERE product_name LIKE ? AND unavailable = 0'
     const params: unknown[] = [`%${keyword}%`]
     if (platform) {
       sql += ' AND platform = ?'
@@ -209,24 +246,66 @@ export class Database {
   }
 
   searchOrdersFuzzy(keyword: string, platform?: string): { orders: Order[]; usedKeyword: string } {
-    let results = this.searchOrders(keyword, platform)
-    if (results.length > 0) {
-      return { orders: results, usedKeyword: keyword }
+    const MIN_FUZZY_LENGTH = 2
+    const MAX_SUBSTRINGS = 10
+    const MAX_FUZZY_RESULTS = 20
+    const seen = new Set<string>()
+    const allOrders: Order[] = []
+    let usedKeyword = keyword
+
+    const addUnique = (orders: Order[], limit?: number) => {
+      let added = 0
+      for (const o of orders) {
+        const key = `${o.platform}:${o.orderId}`
+        if (!seen.has(key)) {
+          seen.add(key)
+          allOrders.push(o)
+          added++
+          if (limit && added >= limit) break
+        }
+      }
+      return added
     }
 
-    const MIN_FUZZY_LENGTH = 2
+    const exactResults = this.searchOrders(keyword, platform)
+    if (exactResults.length > 0) {
+      addUnique(exactResults)
+      usedKeyword = keyword
+    }
 
-    for (let len = keyword.length - 1; len >= MIN_FUZZY_LENGTH; len--) {
-      for (let start = 0; start <= keyword.length - len; start++) {
-        const sub = keyword.substring(start, start + len)
-        results = this.searchOrders(sub, platform)
-        if (results.length > 0) {
-          return { orders: results, usedKeyword: sub }
+    if (allOrders.length < MAX_FUZZY_RESULTS && keyword.length >= MIN_FUZZY_LENGTH + 1) {
+      let count = 0
+      for (let len = keyword.length - 1; len >= MIN_FUZZY_LENGTH; len--) {
+        const subResults: { sub: string; orders: Order[] }[] = []
+        for (let start = 0; start <= keyword.length - len; start++) {
+          const sub = keyword.substring(start, start + len)
+          const orders = this.searchOrders(sub, platform)
+          if (orders.length > 0) {
+            subResults.push({ sub, orders })
+          }
+          count++
+          if (count >= MAX_SUBSTRINGS) break
         }
+        if (subResults.length > 0) {
+          subResults.sort((a, b) => a.orders.length - b.orders.length)
+          if (usedKeyword === keyword && exactResults.length === 0) {
+            usedKeyword = subResults[0].sub
+          }
+          for (const { sub, orders } of subResults) {
+            if (orders.length > 10 && subResults.some(sr => sr.orders.length <= 10 && sr.orders.length > 0)) {
+              continue
+            }
+            const perSubLimit = orders.length <= 5 ? orders.length : 5
+            addUnique(orders, perSubLimit)
+            if (allOrders.length >= MAX_FUZZY_RESULTS) break
+          }
+          break
+        }
+        if (count >= MAX_SUBSTRINGS) break
       }
     }
 
-    return { orders: [], usedKeyword: keyword }
+    return { orders: allOrders, usedKeyword }
   }
 
   getOrderCount(platform: string): number {
@@ -256,21 +335,64 @@ export class Database {
 
   upsertOrder(order: Omit<Order, 'id'>): number {
     this.db.run(`
-      INSERT INTO orders (platform, order_id, product_name, product_url, price, image_url, purchased_at, raw_data)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO orders (platform, order_id, product_name, product_url, price, image_url, purchased_at, shop_name, sku, raw_data)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(platform, order_id) DO UPDATE SET
         product_name = excluded.product_name,
         product_url = excluded.product_url,
         price = excluded.price,
-        image_url = excluded.image_url
-    `, [order.platform, order.orderId, order.productName, order.productUrl, order.price, order.imageUrl, order.purchasedAt, order.rawData])
+        image_url = excluded.image_url,
+        shop_name = excluded.shop_name,
+        sku = excluded.sku
+    `, [order.platform, order.orderId, order.productName, order.productUrl, order.price, order.imageUrl, order.purchasedAt, order.shopName, order.sku, order.rawData])
     this.scheduleSave()
     const row = this.db.exec('SELECT last_insert_rowid() as id')
     return row[0]?.values[0]?.[0] as number
   }
 
-  createTask(instruction: string, parsedItems: string, platform = 'taobao'): number {
-    this.db.run('INSERT INTO tasks (instruction, parsed_items, platform, created_at) VALUES (?, ?, ?, datetime(\'now\', \'localtime\'))', [instruction, parsedItems, platform])
+  markOrderUnavailable(id: number) {
+    this.db.run('UPDATE orders SET unavailable = 1 WHERE id = ?', [id])
+    this.scheduleSave()
+  }
+
+  toggleOrderUnavailable(id: number): boolean {
+    const order = this.getOrderById(id)
+    if (!order) return false
+    const newStatus = (order as any).unavailable ? 0 : 1
+    this.db.run('UPDATE orders SET unavailable = ? WHERE id = ?', [newStatus, id])
+    this.scheduleSave()
+    return true
+  }
+
+  deleteOrder(id: number): boolean {
+    const order = this.getOrderById(id)
+    if (!order) return false
+    this.db.run('DELETE FROM orders WHERE id = ?', [id])
+    this.scheduleSave()
+    return true
+  }
+
+  deleteOrders(ids: number[]): number {
+    if (ids.length === 0) return 0
+    const placeholders = ids.map(() => '?').join(',')
+    this.db.run(`DELETE FROM orders WHERE id IN (${placeholders})`, ids)
+    this.scheduleSave()
+    return ids.length
+  }
+
+  createOrderFromSearch(params: { platform: string; productName: string; price: number; imageUrl: string; productUrl: string; shopName?: string }): number {
+    const orderId = `search_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`
+    this.db.run(`
+      INSERT INTO orders (platform, order_id, product_name, product_url, price, image_url, purchased_at, shop_name, sku, raw_data)
+      VALUES (?, ?, ?, ?, ?, ?, datetime('now', 'localtime'), ?, '', '')
+    `, [params.platform, orderId, params.productName, params.productUrl, params.price, params.imageUrl, params.shopName || ''])
+    this.scheduleSave()
+    const row = this.db.exec('SELECT last_insert_rowid() as id')
+    return row[0]?.values[0]?.[0] as number
+  }
+
+  createTask(instruction: string, parsedItems: string, platform = 'taobao', paymentMode = 'cart_only'): number {
+    this.db.run('INSERT INTO tasks (instruction, parsed_items, platform, payment_mode, created_at) VALUES (?, ?, ?, ?, datetime(\'now\', \'localtime\'))', [instruction, parsedItems, platform, paymentMode])
     this.scheduleSave()
     const row = this.db.exec('SELECT last_insert_rowid() as id')
     return row[0]?.values[0]?.[0] as number
@@ -297,6 +419,8 @@ export class Database {
   updateTaskStatus(id: number, status: string, error?: string) {
     if (status === 'success' || status === 'failed') {
       this.db.run(`UPDATE tasks SET status = ?, error = ?, completed_at = datetime('now', 'localtime') WHERE id = ?`, [status, error || null, id])
+    } else if (status === 'running') {
+      this.db.run(`UPDATE tasks SET status = ?, error = ?, started_at = datetime('now', 'localtime') WHERE id = ?`, [status, error || null, id])
     } else {
       this.db.run('UPDATE tasks SET status = ?, error = ? WHERE id = ?', [status, error || null, id])
     }
@@ -305,6 +429,26 @@ export class Database {
 
   updateTaskItemResults(id: number, itemResults: string) {
     this.db.run('UPDATE tasks SET item_results = ? WHERE id = ?', [itemResults, id])
+    this.scheduleSave()
+  }
+
+  appendTaskProgressLog(id: number, message: string) {
+    const stmt = this.db.prepare('SELECT progress_log FROM tasks WHERE id = ?')
+    stmt.bind([id])
+    let log: string[] = []
+    if (stmt.step()) {
+      try {
+        log = JSON.parse(stmt.getAsObject().progress_log as string || '[]')
+      } catch { /* ignore */ }
+    }
+    stmt.free()
+    log.push(message)
+    this.db.run('UPDATE tasks SET progress_log = ? WHERE id = ?', [JSON.stringify(log), id])
+    this.scheduleSave()
+  }
+
+  clearTaskProgressLog(id: number) {
+    this.db.run('UPDATE tasks SET progress_log = ? WHERE id = ?', ['[]', id])
     this.scheduleSave()
   }
 
@@ -318,6 +462,39 @@ export class Database {
     }
     stmt.free()
     return null
+  }
+
+  deleteTask(id: number): boolean {
+    const task = this.getTaskById(id)
+    if (!task) return false
+    this.db.run('DELETE FROM pending_confirmations WHERE task_id = ?', [id])
+    this.db.run('DELETE FROM tasks WHERE id = ?', [id])
+    this.scheduleSave()
+    return true
+  }
+
+  deleteTasks(ids: number[]): number {
+    if (ids.length === 0) return 0
+    const placeholders = ids.map(() => '?').join(',')
+    this.db.run(`DELETE FROM pending_confirmations WHERE task_id IN (${placeholders})`, ids)
+    this.db.run(`DELETE FROM tasks WHERE id IN (${placeholders})`, ids)
+    this.scheduleSave()
+    return ids.length
+  }
+
+  clearCompletedTasks(): number {
+    const result = this.db.run("DELETE FROM pending_confirmations WHERE task_id IN (SELECT id FROM tasks WHERE status IN ('success', 'failed', 'cancelled'))")
+    this.db.run("DELETE FROM tasks WHERE status IN ('success', 'failed', 'cancelled')")
+    this.scheduleSave()
+    return result.changes ?? 0
+  }
+
+  resetStaleRunningTasks(): number {
+    const result = this.db.run(
+      "UPDATE tasks SET status = 'cancelled', error = '应用重启，任务已自动取消', completed_at = datetime('now', 'localtime') WHERE status IN ('running', 'pending', 'partial')"
+    )
+    this.scheduleSave()
+    return result.changes ?? 0
   }
 
   getSetting(key: string): string | null {
@@ -406,9 +583,11 @@ export class Database {
   }
 
   getDueScheduledTasks(): Record<string, unknown>[] {
-    const now = new Date().toISOString().replace('T', ' ').substring(0, 19)
+    const now = new Date()
+    const pad = (n: number) => String(n).padStart(2, '0')
+    const nowStr = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`
     const stmt = this.db.prepare('SELECT * FROM scheduled_tasks WHERE enabled = 1 AND next_run_at <= ?')
-    stmt.bind([now])
+    stmt.bind([nowStr])
     const results: Record<string, unknown>[] = []
     while (stmt.step()) {
       results.push(toCamelCase(stmt.getAsObject()))
@@ -419,6 +598,84 @@ export class Database {
 
   markScheduledTaskRun(id: number) {
     this.db.run(`UPDATE scheduled_tasks SET last_run_at = datetime('now', 'localtime') WHERE id = ?`, [id])
+    this.scheduleSave()
+  }
+
+  createPendingConfirmation(item: { taskId: number; productName: string; originalPrice: number; failureReason: string; searchKeyword: string; candidates: string; orderId?: number }): number {
+    this.db.run(
+      `INSERT INTO pending_confirmations (task_id, product_name, original_price, failure_reason, search_keyword, candidates, order_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [item.taskId, item.productName, item.originalPrice, item.failureReason, item.searchKeyword, item.candidates, item.orderId || null]
+    )
+    this.scheduleSave()
+    const row = this.db.exec('SELECT last_insert_rowid() as id')
+    return row[0]?.values[0]?.[0] as number
+  }
+
+  getPendingConfirmations(status?: string): PendingConfirmation[] {
+    let sql = 'SELECT * FROM pending_confirmations'
+    let params: unknown[] = []
+    if (status) {
+      sql += ' WHERE status = ?'
+      params = [status]
+    }
+    sql += ' ORDER BY created_at DESC'
+    const stmt = this.db.prepare(sql)
+    if (params.length) stmt.bind(params)
+    const results: PendingConfirmation[] = []
+    while (stmt.step()) {
+      results.push(toCamelCase(stmt.getAsObject()) as unknown as PendingConfirmation)
+    }
+    stmt.free()
+    return results
+  }
+
+  getPendingConfirmationById(id: number): PendingConfirmation | null {
+    const stmt = this.db.prepare('SELECT * FROM pending_confirmations WHERE id = ?')
+    stmt.bind([id])
+    if (stmt.step()) {
+      const result = toCamelCase(stmt.getAsObject()) as unknown as PendingConfirmation
+      stmt.free()
+      return result
+    }
+    stmt.free()
+    return null
+  }
+
+  updatePendingConfirmationStatus(id: number, status: 'pending' | 'resolved' | 'dismissed') {
+    if (status === 'resolved' || status === 'dismissed') {
+      this.db.run('UPDATE pending_confirmations SET status = ?, resolved_at = datetime(\'now\', \'localtime\') WHERE id = ?', [status, id])
+    } else {
+      this.db.run('UPDATE pending_confirmations SET status = ? WHERE id = ?', [status, id])
+    }
+    this.scheduleSave()
+  }
+
+  getPendingConfirmationCount(): number {
+    const stmt = this.db.prepare('SELECT COUNT(*) as count FROM pending_confirmations WHERE status = \'pending\'')
+    if (stmt.step()) {
+      const count = stmt.getAsObject().count as number
+      stmt.free()
+      return count
+    }
+    stmt.free()
+    return 0
+  }
+
+  hasPendingConfirmationsForTask(taskId: number): boolean {
+    const stmt = this.db.prepare('SELECT COUNT(*) as count FROM pending_confirmations WHERE task_id = ? AND status = \'pending\'')
+    stmt.bind([taskId])
+    if (stmt.step()) {
+      const count = stmt.getAsObject().count as number
+      stmt.free()
+      return count > 0
+    }
+    stmt.free()
+    return false
+  }
+
+  dismissPendingConfirmationsForTask(taskId: number) {
+    this.db.run('UPDATE pending_confirmations SET status = \'dismissed\', resolved_at = datetime(\'now\', \'localtime\') WHERE task_id = ? AND status = \'pending\'', [taskId])
     this.scheduleSave()
   }
 

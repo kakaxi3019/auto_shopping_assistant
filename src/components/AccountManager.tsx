@@ -221,7 +221,7 @@ export default function AccountManager() {
           <div className="border-t border-gray-100 pt-3 mt-3">
             <div className="flex items-center justify-between mb-3">
               <span className="text-sm text-gray-600">历史订单</span>
-              <div className="flex items-center gap-3 text-xs text-gray-400">
+              <div className="flex items-center gap-3 text-sm text-gray-400">
                 {orderCount > 0 && <span>{orderCount} 条</span>}
                 {lastSyncTime && <span>上次同步: {formatTime(lastSyncTime)}</span>}
               </div>
@@ -239,7 +239,7 @@ export default function AccountManager() {
                 <button
                   key={opt.key}
                   onClick={() => setSyncTimeRange(opt.key)}
-                  className={`px-2.5 py-1 text-xs rounded-md transition-colors ${
+                  className={`px-2.5 py-1 text-sm rounded-md transition-colors ${
                     syncTimeRange === opt.key
                       ? 'bg-blue-100 text-blue-700 font-medium'
                       : 'bg-gray-50 text-gray-500 hover:bg-gray-100'
@@ -320,7 +320,7 @@ export default function AccountManager() {
             </div>
           )}
 
-          <div className="text-xs text-gray-400 mt-2 px-1">
+          <div className="text-sm text-gray-400 mt-2 px-1">
             💡 同步操作会在后台自动访问淘宝订单页面，抓取历史订单并保存到本地。
             同步后即可输入"买牛奶"等指令复购之前买过的商品。
           </div>

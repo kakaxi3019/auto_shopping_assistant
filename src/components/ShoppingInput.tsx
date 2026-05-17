@@ -1,11 +1,16 @@
 import { useState } from 'react'
 
+interface RecentTask {
+  instruction: string
+}
+
 interface ShoppingInputProps {
   onSubmit: (instruction: string) => Promise<void>
   disabled?: boolean
+  recentTasks?: RecentTask[]
 }
 
-export default function ShoppingInput({ onSubmit, disabled = false }: ShoppingInputProps) {
+export default function ShoppingInput({ onSubmit, disabled = false, recentTasks = [] }: ShoppingInputProps) {
   const [value, setValue] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
@@ -57,6 +62,22 @@ export default function ShoppingInput({ onSubmit, disabled = false }: ShoppingIn
       </div>
       {error && (
         <p className="text-sm text-red-500 mt-2">{error}</p>
+      )}
+      {recentTasks.length > 0 && (
+        <div className="mt-3 flex items-center gap-2 flex-wrap">
+          <span className="text-sm text-gray-400">购买历史：</span>
+          {recentTasks.map((task, i) => (
+            <button
+              key={i}
+              onClick={() => { setValue(task.instruction) }}
+              disabled={loading || disabled}
+              className="px-2.5 py-1 text-sm text-gray-600 bg-gray-50 border border-gray-200 rounded-md hover:bg-blue-50 hover:text-blue-600 hover:border-blue-200 disabled:opacity-50 transition-colors truncate max-w-[200px]"
+              title={task.instruction}
+            >
+              {task.instruction}
+            </button>
+          ))}
+        </div>
       )}
     </div>
   )

@@ -11,6 +11,7 @@ interface Order {
   imageUrl: string
   purchasedAt: string
   rawData: string
+  unavailable: number
 }
 
 interface PlatformInfo {
@@ -44,7 +45,7 @@ function formatPrice(price: number): string {
   return `¥${price.toFixed(2)}`
 }
 
-export default function OrderList() {
+export default function OrderList({ onNavigateToTasks }: { onNavigateToTasks?: (filter?: string | number) => void }) {
   const [selectedPlatform, setSelectedPlatform] = useState<string | null>(null)
   const [orders, setOrders] = useState<Order[]>([])
   const [orderCounts, setOrderCounts] = useState<Record<string, number>>({})
@@ -54,6 +55,37 @@ export default function OrderList() {
   const [activeSearch, setActiveSearch] = useState('')
   const [loading, setLoading] = useState(false)
   const [clearing, setClearing] = useState<string | null>(null)
+  const [rebuying, setRebuying] = useState<number | null>(null)
+
+  const [manageMode, setManageMode] = useState(false)
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
+  const [deleting, setDeleting] = useState(false)
+  const [togglingId, setTogglingId] = useState<number | null>(null)
+
+  const handleRebuy = useCallback(async (order: Order) => {
+    setRebuying(order.id)
+    try {
+      const paymentMode = await api.getSetting('payment_mode') as string || 'auto_pay'
+      const result = await api.confirmTask(
+        order.productName,
+        [{ name: order.productName, quantity: 1, orderRef: order.id }],
+        order.platform,
+        false,
+        paymentMode,
+      ) as { taskId?: number; error?: string }
+      if (result && result.error) {
+        console.error('再买一单失败:', result.error)
+      } else if (result && result.taskId) {
+        onNavigateToTasks?.(result.taskId)
+      } else {
+        onNavigateToTasks?.('running')
+      }
+    } catch (e) {
+      console.error('再买一单失败:', e)
+    } finally {
+      setRebuying(null)
+    }
+  }, [onNavigateToTasks])
 
   const loadCounts = useCallback(async () => {
     const counts: Record<string, number> = {}
@@ -98,11 +130,19 @@ export default function OrderList() {
     if (selectedPlatform) loadOrders()
   }, [selectedPlatform, loadOrders])
 
+  useEffect(() => {
+    if (!manageMode) {
+      setSelectedIds(new Set())
+    }
+  }, [manageMode])
+
   const handlePlatformClick = (platformKey: string) => {
     setSelectedPlatform(platformKey)
     setPage(1)
     setSearchKeyword('')
     setActiveSearch('')
+    setManageMode(false)
+    setSelectedIds(new Set())
   }
 
   const handleBack = () => {
@@ -110,6 +150,8 @@ export default function OrderList() {
     setOrders([])
     setSearchKeyword('')
     setActiveSearch('')
+    setManageMode(false)
+    setSelectedIds(new Set())
     loadCounts()
   }
 
@@ -139,6 +181,70 @@ export default function OrderList() {
     }
   }
 
+  const toggleSelect = (id: number) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) {
+        next.delete(id)
+      } else {
+        next.add(id)
+      }
+      return next
+    })
+  }
+
+  const toggleSelectAll = () => {
+    if (selectedIds.size === orders.length) {
+      setSelectedIds(new Set())
+    } else {
+      setSelectedIds(new Set(orders.map(o => o.id)))
+    }
+  }
+
+  const handleDeleteSelected = async () => {
+    if (selectedIds.size === 0) return
+    if (!confirm(`确定要删除选中的 ${selectedIds.size} 条订单吗？此操作不可恢复。`)) return
+    setDeleting(true)
+    try {
+      await api.deleteOrders(Array.from(selectedIds))
+      setSelectedIds(new Set())
+      loadOrders()
+      loadCounts()
+    } catch {
+      alert('删除失败')
+    } finally {
+      setDeleting(false)
+    }
+  }
+
+  const handleDeleteSingle = async (id: number) => {
+    if (!confirm('确定要删除这条订单吗？此操作不可恢复。')) return
+    try {
+      await api.deleteOrder(id)
+      setSelectedIds(prev => {
+        const next = new Set(prev)
+        next.delete(id)
+        return next
+      })
+      loadOrders()
+      loadCounts()
+    } catch {
+      alert('删除失败')
+    }
+  }
+
+  const handleToggleUnavailable = async (id: number) => {
+    setTogglingId(id)
+    try {
+      await api.toggleOrderUnavailable(id)
+      loadOrders()
+    } catch {
+      alert('操作失败')
+    } finally {
+      setTogglingId(null)
+    }
+  }
+
   const platform = PLATFORMS.find(p => p.key === selectedPlatform)
   const totalPages = Math.ceil(total / PAGE_SIZE)
 
@@ -165,7 +271,7 @@ export default function OrderList() {
                 </div>
               </div>
               <div className="mt-4 flex items-center justify-between">
-                <div className="flex items-center text-xs text-gray-400 group-hover:text-gray-600 transition-colors">
+                <div className="flex items-center text-sm text-gray-400 group-hover:text-gray-600 transition-colors">
                   查看订单
                   <svg className="w-3.5 h-3.5 ml-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
@@ -175,7 +281,7 @@ export default function OrderList() {
                   <button
                     onClick={(e) => handleClearPlatform(e, p.key)}
                     disabled={clearing === p.key}
-                    className="text-xs text-gray-400 hover:text-red-500 transition-colors disabled:opacity-50"
+                    className="text-sm text-gray-400 hover:text-red-500 transition-colors disabled:opacity-50"
                   >
                     {clearing === p.key ? '清除中...' : '清除记录'}
                   </button>
@@ -205,7 +311,48 @@ export default function OrderList() {
           <h2 className="text-lg font-semibold text-gray-800">{platform?.name} 历史订单</h2>
         </div>
         <span className="text-sm text-gray-400 ml-1">{total} 条</span>
+
+        <div className="ml-auto flex items-center gap-2">
+          {orders.length > 0 && (
+            <button
+              onClick={() => setManageMode(!manageMode)}
+              className={`px-3 py-1.5 text-sm rounded-lg border transition-colors ${
+                manageMode
+                  ? 'bg-blue-600 text-white border-blue-600'
+                  : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'
+              }`}
+            >
+              {manageMode ? '退出管理' : '管理订单'}
+            </button>
+          )}
+        </div>
       </div>
+
+      {manageMode && (
+        <div className="mb-4 flex items-center gap-3 p-3 bg-blue-50 rounded-xl border border-blue-100">
+          <label className="flex items-center gap-2 cursor-pointer text-sm text-gray-700">
+            <input
+              type="checkbox"
+              checked={selectedIds.size === orders.length && orders.length > 0}
+              onChange={toggleSelectAll}
+              className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+            />
+            <span>全选</span>
+          </label>
+          <span className="text-sm text-gray-500">
+            已选 {selectedIds.size} 项
+          </span>
+          {selectedIds.size > 0 && (
+            <button
+              onClick={handleDeleteSelected}
+              disabled={deleting}
+              className="ml-auto px-3 py-1.5 text-sm bg-red-500 text-white rounded-lg hover:bg-red-600 transition-colors disabled:opacity-50"
+            >
+              {deleting ? '删除中...' : `删除选中 (${selectedIds.size})`}
+            </button>
+          )}
+        </div>
+      )}
 
       <div className="flex items-center gap-2 mb-4">
         <div className="relative">
@@ -269,9 +416,21 @@ export default function OrderList() {
             {orders.map((order) => (
               <div
                 key={order.id}
-                className="bg-white rounded-xl border border-gray-100 shadow-sm p-4 hover:shadow-md transition-shadow"
+                className={`bg-white rounded-xl border shadow-sm p-4 hover:shadow-md transition-shadow ${
+                  order.unavailable ? 'border-gray-200 opacity-60' : 'border-gray-100'
+                } ${selectedIds.has(order.id) ? 'ring-2 ring-blue-500 border-blue-300' : ''}`}
               >
                 <div className="flex gap-4">
+                  {manageMode && (
+                    <div className="flex items-center flex-shrink-0">
+                      <input
+                        type="checkbox"
+                        checked={selectedIds.has(order.id)}
+                        onChange={() => toggleSelect(order.id)}
+                        className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                      />
+                    </div>
+                  )}
                   <div className="w-20 h-20 flex-shrink-0 rounded-lg overflow-hidden bg-gray-100">
                     {order.imageUrl ? (
                       <img
@@ -310,25 +469,81 @@ export default function OrderList() {
                           order.productName
                         )}
                       </h3>
-                      {order.price > 0 && (
-                        <span className="flex-shrink-0 text-sm font-semibold text-orange-500">
-                          {formatPrice(order.price)}
-                        </span>
-                      )}
+                      <div className="flex items-center gap-2 flex-shrink-0">
+                        {order.price > 0 && (
+                          <span className="text-sm font-semibold text-orange-500">
+                            {formatPrice(order.price)}
+                          </span>
+                        )}
+                      </div>
                     </div>
 
                     <div className="flex items-center gap-3 mt-2">
-                      <span className="inline-flex items-center px-2 py-0.5 rounded-md text-xs bg-orange-50 text-orange-600 font-medium">
+                      <span className="inline-flex items-center px-2 py-0.5 rounded-md text-sm bg-orange-50 text-orange-600 font-medium">
                         {platform?.name}
                       </span>
+                      {order.unavailable ? (
+                        <span className="inline-flex items-center px-2 py-0.5 rounded-md text-sm bg-gray-100 text-gray-500 font-medium">
+                          已下架
+                        </span>
+                      ) : null}
                       {order.purchasedAt && (
-                        <span className="text-xs text-gray-400">
+                        <span className="text-sm text-gray-400">
                           {formatDate(order.purchasedAt)}
                         </span>
                       )}
-                      <span className="text-xs text-gray-300">
+                      <span className="text-sm text-gray-300">
                         #{order.orderId}
                       </span>
+                    </div>
+
+                    <div className="flex items-center gap-2 mt-2">
+                      {!manageMode && (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            handleRebuy(order)
+                          }}
+                          disabled={rebuying === order.id}
+                          className="text-sm text-blue-500 hover:text-blue-700 transition-colors disabled:opacity-50"
+                          title="使用当前支付模式重新购买此商品"
+                        >
+                          {rebuying === order.id ? '执行中...' : '再买一单'}
+                        </button>
+                      )}
+                      {!manageMode && (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            handleToggleUnavailable(order.id)
+                          }}
+                          disabled={togglingId === order.id}
+                          className={`text-sm transition-colors disabled:opacity-50 ${
+                            order.unavailable
+                              ? 'text-green-500 hover:text-green-700'
+                              : 'text-gray-400 hover:text-orange-500'
+                          }`}
+                          title={order.unavailable ? '恢复上架，使其重新参与搜索匹配' : '标记下架，搜索商品时不再匹配此订单'}
+                        >
+                          {togglingId === order.id
+                            ? '处理中...'
+                            : order.unavailable
+                              ? '恢复上架'
+                              : '标记下架'}
+                        </button>
+                      )}
+                      {!manageMode && (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            handleDeleteSingle(order.id)
+                          }}
+                          className="text-sm text-gray-400 hover:text-red-500 transition-colors"
+                          title="删除此订单"
+                        >
+                          删除
+                        </button>
+                      )}
                     </div>
                   </div>
                 </div>

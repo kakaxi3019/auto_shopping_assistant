@@ -1,6 +1,6 @@
 {
   "name": "auto-shopping",
-  "version": "1.0.0",
+  "version": "0.1.0",
   "description": "自动购物助手 - 周期性复购自动化桌面应用",
   "main": "dist-electron/main.js",
   "scripts": {
@@ -23,7 +23,7 @@
     "@types/react-dom": "^19.1.5",
     "@vitejs/plugin-react": "^4.5.2",
     "autoprefixer": "^10.5.0",
-    "electron": "^35.5.0",
+    "electron": "^35.7.5",
     "electron-builder": "^25.1.8",
     "postcss": "^8.5.14",
     "react": "^19.1.0",
@@ -56,7 +56,9 @@
       {
         "from": "extra/playwright-browsers/",
         "to": "playwright-browsers/",
-        "filter": ["**/*"]
+        "filter": [
+          "**/*"
+        ]
       }
     ],
     "win": {

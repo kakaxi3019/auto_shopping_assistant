@@ -1,5 +1,6 @@
 import type { Database } from '../db/database'
 import type { TaskScheduler } from './task-scheduler'
+import type { PaymentMode } from '../../shared/types/platform.types'
 
 export class ScheduledTaskRunner {
   private db: Database
@@ -48,7 +49,9 @@ export class ScheduledTaskRunner {
     this.db.markScheduledTaskRun(id)
 
     try {
-      await this.scheduler.createTask(instruction)
+      const preview = await this.scheduler.previewTask(instruction)
+      const paymentMode = (this.db.getSetting('payment_mode') as PaymentMode) || 'cart_only'
+      await this.scheduler.confirmTask(instruction, preview.items, 'taobao', undefined, paymentMode)
     } catch (e) {
       console.error(`[ScheduledTaskRunner] Task #${id} execution failed:`, e)
     }

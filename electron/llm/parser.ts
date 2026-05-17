@@ -25,37 +25,57 @@ const SYSTEM_PROMPT = `你是一个购物指令解析助手。用户会输入自
 
 只输出 JSON，不要输出其他任何内容。`
 
-const SYSTEM_PROMPT_WITH_HISTORY = `你是一个购物指令解析助手。用户会输入自然语言的购物需求，你需要解析出结构化的购物清单，并从用户的历史订单中找到对应的商品。
+const SYSTEM_PROMPT_WITH_HISTORY = `你是一个购物指令解析助手。用户会输入自然语言的购物需求，你需要解析出结构化的购物清单，并从用户的历史订单中找到所有相关的商品。
 
 用户的历史订单如下（每行格式：序号. [ID:数字] [平台:名称] 商品名称）：
 {orderHistory}
 
-重要规则：
-1. 你必须根据用户需求，从上面的历史订单中找到语义最匹配的商品
-2. 找到匹配商品后，必须填写 orderRef 字段为该商品的 ID 数字
-3. name 字段填写用户描述的商品名称（简洁名称，如"牛奶"、"洗衣液"、"书"），不要填写历史订单中的完整商品名
-4. 如果用户说的商品在历史订单中找不到任何相关的，orderRef 留空，name 使用用户原始描述
-5. 语义匹配示例："拖鞋"可以匹配"夏季防滑居家凉拖"，"牛奶"可以匹配"蒙牛纯牛奶250ml"
-6. 如果多个平台都有同名商品，优先选择最近购买的，或者根据用户描述中的平台提示选择
+核心原则：用户说"买XX"，绝大多数情况是想再买之前买过的同类商品，而不是买全新的东西。所以你必须优先从历史订单中寻找匹配。
+
+匹配规则（按优先级排列）：
+1. 关键词包含匹配：用户说的词出现在历史订单商品名中，即为匹配。例如"篮球"匹配"安踏静音篮筐"，"牛奶"匹配"蒙牛纯牛奶250ml"
+2. 语义关联匹配：用户说的词与历史订单商品属于同一品类或用途。例如"拖鞋"匹配"夏季防滑居家凉拖"，"手机贴膜"匹配"钢化膜"、"AR无纹膜"
+3. 必须找出历史订单中所有与用户需求相关的商品，不要只返回一个
+4. 对每个匹配的订单，给出置信度（0-100），表示该订单与用户需求的匹配程度：
+   - 90-100：完全匹配，商品就是用户要的
+   - 70-89：高度相关，同类商品的不同规格/品牌
+   - 50-69：可能相关，同品类但不确定是否是用户想要的
+   - 30-49：弱相关，可能不是用户想要的
+   - 0-29：不太相关
+5. orderRef 字段填写置信度最高的订单 ID
+6. 只有当历史订单中确实没有任何相关商品时，matchedOrders 才留空
+
+输出规则：
+- name 字段：使用用户的原始描述（如用户说"买牛奶"则填"牛奶"，说"买手机贴膜"则填"手机贴膜"）
+- orderRef 字段：置信度最高的匹配订单 ID
+- matchedOrders 字段：所有相关订单的列表，按置信度从高到低排列，最多10个
+- platform 字段：从置信度最高的匹配订单中获取对应的平台标识
 
 输出格式为 JSON，包含 items 数组，每个元素包含：
-- name: 商品名称（字符串，用户描述的简洁名称）
+- name: 用户的原始商品描述（字符串）
 - quantity: 数量（整数，默认1）
 - sku: 规格/型号（可选字符串）
-- orderRef: 匹配到的历史订单 ID（整数，从上面的列表中获取）
-- platform: 平台名称（可选字符串，从历史订单中获取，如 taobao、jd、pdd）
+- orderRef: 置信度最高的匹配订单 ID（整数）
+- platform: 平台名称（字符串，如 taobao、jd、pdd）
+- matchedOrders: 匹配订单数组，每个元素包含 orderRef（整数）和 confidence（0-100整数）
 
 示例：
 历史订单：
 1. [ID:5] [平台:淘宝] 蒙牛纯牛奶250ml*12
 2. [ID:8] [平台:淘宝] 蓝月亮洗衣液3kg
-3. [ID:12] [平台:京东] 夏季防滑居家凉拖
+3. [ID:12] [平台:京东] 安踏静音篮球篮筐
+4. [ID:15] [平台:淘宝] 专柜正品adidas新款男子运动鞋
+5. [ID:20] [平台:淘宝] 伊利纯牛奶250ml*16
+6. [ID:25] [平台:淘宝] 蒙牛纯牛奶250ml*24
 
 输入："再买一箱牛奶"
-输出：{"items":[{"name":"牛奶","quantity":1,"orderRef":5,"platform":"taobao"}]}
+输出：{"items":[{"name":"牛奶","quantity":1,"orderRef":5,"platform":"taobao","matchedOrders":[{"orderRef":5,"confidence":95},{"orderRef":25,"confidence":85},{"orderRef":20,"confidence":70}]}]}
 
-输入："买两箱牛奶和一双拖鞋"
-输出：{"items":[{"name":"牛奶","quantity":2,"orderRef":5,"platform":"taobao"},{"name":"拖鞋","quantity":1,"orderRef":12,"platform":"jd"}]}
+输入："买两箱牛奶和一双鞋"
+输出：{"items":[{"name":"牛奶","quantity":2,"orderRef":5,"platform":"taobao","matchedOrders":[{"orderRef":5,"confidence":95},{"orderRef":25,"confidence":85},{"orderRef":20,"confidence":70}]},{"name":"鞋","quantity":1,"orderRef":15,"platform":"taobao","matchedOrders":[{"orderRef":15,"confidence":90}]}]}
+
+输入："买一个篮球"
+输出：{"items":[{"name":"篮球","quantity":1,"orderRef":12,"platform":"jd","matchedOrders":[{"orderRef":12,"confidence":90}]}]}
 
 输入："买一个新手机"
 输出：{"items":[{"name":"新手机","quantity":1}]}
@@ -275,10 +295,23 @@ export class LlmParser {
   async parse(instruction: string): Promise<ParsedShoppingItem[]> {
     const provider = this.getProvider()
     const systemPrompt = this.buildSystemPrompt()
+    let items: ParsedShoppingItem[]
     if (provider === 'anthropic') {
-      return this.parseWithAnthropic(instruction, systemPrompt)
+      items = await this.parseWithAnthropic(instruction, systemPrompt)
+    } else {
+      items = await this.parseWithOpenAI(instruction, systemPrompt)
     }
-    return this.parseWithOpenAI(instruction, systemPrompt)
+
+    for (const item of items) {
+      if (item.orderRef) {
+        const order = this.db.getOrderById(item.orderRef)
+        if (order && order.productName && (!item.name || item.name.trim().length === 0)) {
+          item.name = order.productName
+        }
+      }
+    }
+
+    return items
   }
 
   private buildSystemPrompt(): string {
@@ -353,15 +386,24 @@ export class LlmParser {
       const jsonStr = this.extractJson(content)
       const parsed = JSON.parse(jsonStr)
       const items = Array.isArray(parsed) ? parsed : parsed.items || parsed.shopping_list || [parsed]
-      return items.map((item: Record<string, unknown>) => ({
-        name: String(item.name || item.product || item.item || ''),
-        quantity: Number(item.quantity || item.qty || item.count || 1),
-        sku: item.sku ? String(item.sku) : undefined,
-        platform: item.platform ? String(item.platform) : undefined,
-        orderRef: item.orderRef || item.order_ref || item.orderId || item.order_id
-          ? Number(item.orderRef || item.order_ref || item.orderId || item.order_id)
-          : undefined,
-      }))
+      return items.map((item: Record<string, unknown>) => {
+        const matchedOrders = Array.isArray(item.matchedOrders || item.matched_orders)
+          ? (item.matchedOrders || item.matched_orders).map((m: Record<string, unknown>) => ({
+              orderRef: Number(m.orderRef || m.order_ref || m.orderId || m.order_id || 0),
+              confidence: Math.min(100, Math.max(0, Number(m.confidence || m.score || 50))),
+            })).filter((m: { orderRef: number }) => m.orderRef > 0)
+          : undefined
+        return {
+          name: String(item.name || item.product || item.item || ''),
+          quantity: Number(item.quantity || item.qty || item.count || 1),
+          sku: item.sku ? String(item.sku) : undefined,
+          platform: item.platform ? String(item.platform) : undefined,
+          orderRef: item.orderRef || item.order_ref || item.orderId || item.order_id
+            ? Number(item.orderRef || item.order_ref || item.orderId || item.order_id)
+            : undefined,
+          matchedOrders,
+        }
+      })
     } catch {
       throw new Error(`LLM 返回格式解析失败: ${content}`)
     }

@@ -200,7 +200,7 @@ export default function ScheduledTasks() {
                   <button
                     key={i}
                     onClick={() => setDayOfWeek(i)}
-                    className={`w-10 h-8 text-xs rounded-lg transition-colors ${
+                    className={`w-10 h-8 text-sm rounded-lg transition-colors ${
                       dayOfWeek === i
                         ? 'bg-blue-600 text-white'
                         : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
@@ -249,7 +249,7 @@ export default function ScheduledTasks() {
         <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-12 text-center" role="status">
           <p className="text-3xl mb-3" aria-hidden="true">⏰</p>
           <p className="text-sm text-gray-500">暂无定时任务</p>
-          <p className="text-xs text-gray-400 mt-1">点击"新建定时任务"设置自动购买计划</p>
+          <p className="text-sm text-gray-400 mt-1">点击"新建定时任务"设置自动购买计划</p>
         </div>
       ) : (
         <div className="space-y-3">
@@ -264,19 +264,19 @@ export default function ScheduledTasks() {
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 mb-1">
                     <h3 className="text-sm font-medium text-gray-900">{task.name}</h3>
-                    <span className={`px-2 py-0.5 text-xs rounded-full font-medium ${
+                    <span className={`px-2 py-0.5 text-sm rounded-full font-medium ${
                       task.enabled
                         ? 'bg-green-50 text-green-600'
                         : 'bg-gray-100 text-gray-400'
                     }`}>
                       {task.enabled ? '启用' : '暂停'}
                     </span>
-                    <span className="px-2 py-0.5 text-xs rounded-full bg-blue-50 text-blue-600 font-medium">
+                    <span className="px-2 py-0.5 text-sm rounded-full bg-blue-50 text-blue-600 font-medium">
                       {formatRepeatInfo(task)}
                     </span>
                   </div>
-                  <p className="text-xs text-gray-500 mb-2">{task.instruction}</p>
-                  <div className="flex items-center gap-4 text-xs text-gray-400">
+                  <p className="text-sm text-gray-500 mb-2">{task.instruction}</p>
+                  <div className="flex items-center gap-4 text-sm text-gray-400">
                     <span>下次执行: {formatNextRun(task)}</span>
                     {task.lastRunAt && (
                       <span>上次执行: {new Date(task.lastRunAt.replace(' ', 'T')).toLocaleString('zh-CN')}</span>
@@ -286,7 +286,7 @@ export default function ScheduledTasks() {
                 <div className="flex items-center gap-2">
                   <button
                     onClick={() => handleToggle(task)}
-                    className={`px-3 py-1.5 text-xs rounded-lg transition-colors ${
+                    className={`px-3 py-1.5 text-sm rounded-lg transition-colors ${
                       task.enabled
                         ? 'bg-amber-50 text-amber-600 hover:bg-amber-100'
                         : 'bg-green-50 text-green-600 hover:bg-green-100'
@@ -296,13 +296,13 @@ export default function ScheduledTasks() {
                   </button>
                   <button
                     onClick={() => handleEdit(task)}
-                    className="px-3 py-1.5 text-xs rounded-lg bg-gray-50 text-gray-600 hover:bg-gray-100 transition-colors"
+                    className="px-3 py-1.5 text-sm rounded-lg bg-gray-50 text-gray-600 hover:bg-gray-100 transition-colors"
                   >
                     编辑
                   </button>
                   <button
                     onClick={() => handleDelete(task.id)}
-                    className="px-3 py-1.5 text-xs rounded-lg bg-red-50 text-red-600 hover:bg-red-100 transition-colors"
+                    className="px-3 py-1.5 text-sm rounded-lg bg-red-50 text-red-600 hover:bg-red-100 transition-colors"
                   >
                     删除
                   </button>

@@ -20,10 +20,6 @@ const SETTING_KEYS: Record<LlmProvider, { apiKey: string; baseUrl: string; model
   anthropic: { apiKey: 'anthropic_api_key', baseUrl: 'anthropic_base_url', model: 'anthropic_model' },
 }
 
-const PAYMENT_PLATFORMS = [
-  { value: 'taobao', label: '淘宝/天猫' },
-]
-
 export default function Settings() {
   const [activeTab, setActiveTab] = useState<SettingsTab>('model')
   const [provider, setProvider] = useState<LlmProvider>('openai')
@@ -37,9 +33,8 @@ export default function Settings() {
   const [availableModels, setAvailableModels] = useState<string[]>([])
   const [fetchingModels, setFetchingModels] = useState(false)
 
-  const [payFreeEnabled, setPayFreeEnabled] = useState(false)
-  const [payFreeLimit, setPayFreeLimit] = useState('200')
-  const [payFreePlatform, setPayFreePlatform] = useState('taobao')
+  const [autoPayLimit, setAutoPayLimit] = useState('200')
+  const [paymentMode, setPaymentMode] = useState('cart_only')
   const [paymentSaved, setPaymentSaved] = useState(false)
 
   const current = providerSettings[provider]
@@ -68,11 +63,9 @@ export default function Settings() {
     if (p === 'anthropic' || p === 'openai') setProvider(p)
 
     const limit = await api.getSetting('pay_free_limit')
-    const platform = await api.getSetting('pay_free_platform')
-    const enabled = await api.getSetting('pay_free_enabled')
-    if (limit) setPayFreeLimit(limit)
-    if (platform) setPayFreePlatform(platform)
-    setPayFreeEnabled(enabled === 'true')
+    const mode = await api.getSetting('payment_mode')
+    if (limit) setAutoPayLimit(limit)
+    if (mode && typeof mode === 'string') setPaymentMode(mode)
   }
 
   const updateCurrent = (field: keyof ProviderSettings, value: string) => {
@@ -157,13 +150,12 @@ export default function Settings() {
   }
 
   const handlePaymentSave = async () => {
-    const limit = parseFloat(payFreeLimit)
+    const limit = parseFloat(autoPayLimit)
     if (isNaN(limit) || limit < 0) {
       return
     }
-    await api.setSetting('pay_free_enabled', String(payFreeEnabled))
     await api.setSetting('pay_free_limit', String(limit))
-    await api.setSetting('pay_free_platform', payFreePlatform)
+    await api.setSetting('payment_mode', paymentMode)
     setPaymentSaved(true)
     setTimeout(() => setPaymentSaved(false), 2000)
   }
@@ -224,11 +216,11 @@ export default function Settings() {
                       {config.label}
                     </span>
                     {providerSettings[key].apiKey && (
-                      <span className="ml-2 text-xs text-gray-400">已配置</span>
+                      <span className="ml-2 text-sm text-gray-400">已配置</span>
                     )}
                   </div>
                   {provider === key && (
-                    <span className="px-2 py-0.5 bg-blue-500 text-white text-xs rounded-full font-medium">
+                    <span className="px-2 py-0.5 bg-blue-500 text-white text-sm rounded-full font-medium">
                       使用中
                     </span>
                   )}
@@ -261,7 +253,7 @@ export default function Settings() {
               placeholder={currentConfig.defaultBaseUrl}
               className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
             />
-            <p className="text-xs text-gray-400 mt-1">留空使用默认地址，或填入兼容的第三方地址</p>
+            <p className="text-sm text-gray-400 mt-1">留空使用默认地址，或填入兼容的第三方地址</p>
           </div>
 
           <div>
@@ -273,7 +265,7 @@ export default function Settings() {
                 <button
                   onClick={handleFetchModels}
                   disabled={fetchingModels}
-                  className="text-xs text-blue-600 hover:text-blue-700 disabled:opacity-50"
+                  className="text-sm text-blue-600 hover:text-blue-700 disabled:opacity-50"
                 >
                   {fetchingModels ? '获取中...' : availableModels.length > 0 ? '刷新模型列表' : '获取可用模型'}
                 </button>
@@ -298,7 +290,7 @@ export default function Settings() {
                   placeholder={currentConfig.defaultModel}
                   className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 />
-                <p className="text-xs text-gray-400 mt-1">
+                <p className="text-sm text-gray-400 mt-1">
                   {provider === 'openai' ? '常用: gpt-4o-mini, gpt-4o, gpt-3.5-turbo' : '常用: claude-sonnet-4-20250514, claude-3-5-sonnet-20241022, claude-3-haiku-20240307'}
                 </p>
               </div>
@@ -336,87 +328,115 @@ export default function Settings() {
       {activeTab === 'payment' && (
         <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-6 max-w-lg space-y-5">
           <div>
-            <h3 className="text-sm font-medium text-gray-700 mb-1">免密支付</h3>
-            <p className="text-xs text-gray-400 mb-4">开启后，订单金额低于设定值时自动免密支付；关闭则所有订单均需手动支付</p>
+            <h3 className="text-sm font-medium text-gray-700 mb-1">支付模式</h3>
+            <p className="text-sm text-gray-400 mb-4">控制购买流程中自动化的程度</p>
           </div>
 
-          <div className="flex items-center justify-between">
-            <div>
-              <span className="text-sm font-medium text-gray-700">启用免密支付</span>
-              <p className="text-xs text-gray-400 mt-0.5">关闭后所有订单均需手动确认支付</p>
-            </div>
-            <button
-              onClick={() => setPayFreeEnabled(!payFreeEnabled)}
-              role="switch"
-              aria-checked={payFreeEnabled}
-              aria-label="启用免密支付"
-              className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
-                payFreeEnabled ? 'bg-blue-600' : 'bg-gray-200'
+          <div className="space-y-3">
+            <label
+              className={`flex items-start gap-3 px-4 py-3 rounded-lg border-2 cursor-pointer transition-colors ${
+                paymentMode === 'auto_pay'
+                  ? 'border-blue-500 bg-blue-50'
+                  : 'border-gray-200 bg-white hover:border-gray-300'
               }`}
             >
-              <span
-                className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-                  payFreeEnabled ? 'translate-x-6' : 'translate-x-1'
-                }`}
-              />
-            </button>
-          </div>
-
-          {payFreeEnabled && (
-            <>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1.5">
-                  免密支付金额上限（元）
-                </label>
-                <div className="relative">
-                  <input
-                    type="number"
-                    min="0"
-                    step="0.01"
-                    value={payFreeLimit}
-                    onChange={(e) => setPayFreeLimit(e.target.value)}
-                    placeholder="200"
-                    className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent pr-8"
-                  />
-                  <span className="absolute right-3 top-1/2 -translate-y-1/2 text-sm text-gray-400">元</span>
-                </div>
-                <p className="text-xs text-gray-400 mt-1">低于此金额的订单将自动免密支付</p>
+              <div className={`w-4 h-4 mt-0.5 rounded-full border-2 flex items-center justify-center flex-shrink-0 ${
+                paymentMode === 'auto_pay' ? 'border-blue-500' : 'border-gray-300'
+              }`}>
+                {paymentMode === 'auto_pay' && <div className="w-2 h-2 rounded-full bg-blue-500" />}
               </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1.5">
-                  免密支付平台
-                </label>
-                <div className="space-y-2">
-                  {PAYMENT_PLATFORMS.map(p => (
-                    <label
-                      key={p.value}
-                      className={`flex items-center gap-3 px-4 py-3 rounded-lg border-2 cursor-pointer transition-colors ${
-                        payFreePlatform === p.value
-                          ? 'border-blue-500 bg-blue-50'
-                          : 'border-gray-200 bg-white hover:border-gray-300'
-                      }`}
-                    >
-                      <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center flex-shrink-0 ${
-                        payFreePlatform === p.value ? 'border-blue-500' : 'border-gray-300'
-                      }`}>
-                        {payFreePlatform === p.value && <div className="w-2 h-2 rounded-full bg-blue-500" />}
+              <div className="flex-1" onClick={() => setPaymentMode('auto_pay')}>
+                <div className="flex items-center gap-2">
+                  <span className="text-sm">💳</span>
+                  <span className={`text-sm font-medium ${paymentMode === 'auto_pay' ? 'text-blue-700' : 'text-gray-700'}`}>
+                    自动支付
+                  </span>
+                </div>
+                <p className={`text-sm mt-1 ${paymentMode === 'auto_pay' ? 'text-blue-500' : 'text-gray-400'}`}>
+                  全自动完成：选规格→购买→结算→支付，无需人工干预
+                </p>
+                {paymentMode === 'auto_pay' && (
+                  <div className="mt-3 pt-3 border-t border-blue-200 space-y-3" onClick={(e) => e.stopPropagation()}>
+                    <div>
+                      <label className="block text-sm font-medium text-blue-700 mb-1.5">
+                        安全限额
+                      </label>
+                      <div className="relative">
+                        <input
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          value={autoPayLimit}
+                          onChange={(e) => setAutoPayLimit(e.target.value)}
+                          placeholder="200"
+                          className="w-full px-3 py-2 border border-blue-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent pr-8 bg-white"
+                        />
+                        <span className="absolute right-3 top-1/2 -translate-y-1/2 text-sm text-gray-400">元</span>
                       </div>
-                      <span className={`text-sm font-medium ${payFreePlatform === p.value ? 'text-blue-700' : 'text-gray-700'}`}>
-                        {p.label}
-                      </span>
-                    </label>
-                  ))}
-                </div>
+                      <p className="text-sm text-blue-400 mt-1.5">
+                        低于此金额自动完成支付，超过此金额会暂停并要求您确认
+                      </p>
+                    </div>
+                    <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                      <p className="text-sm text-amber-700">
+                        <span className="font-medium">提示：</span>自动支付需在支付宝中开通小额免密支付功能，否则即使金额低于限额也无法自动完成支付
+                      </p>
+                    </div>
+                  </div>
+                )}
               </div>
+            </label>
 
-              <div className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-3">
-                <p className="text-xs text-amber-700">
-                  <span className="font-medium">提示：</span>免密支付需要在对应平台已开通小额免密支付功能。如果未开通，即使金额低于设定值也无法自动完成支付。
+            <label
+              className={`flex items-start gap-3 px-4 py-3 rounded-lg border-2 cursor-pointer transition-colors ${
+                paymentMode === 'checkout_only'
+                  ? 'border-amber-500 bg-amber-50'
+                  : 'border-gray-200 bg-white hover:border-gray-300'
+              }`}
+            >
+              <div className={`w-4 h-4 mt-0.5 rounded-full border-2 flex items-center justify-center flex-shrink-0 ${
+                paymentMode === 'checkout_only' ? 'border-amber-500' : 'border-gray-300'
+              }`}>
+                {paymentMode === 'checkout_only' && <div className="w-2 h-2 rounded-full bg-amber-500" />}
+              </div>
+              <div onClick={() => setPaymentMode('checkout_only')}>
+                <div className="flex items-center gap-2">
+                  <span className="text-sm">📋</span>
+                  <span className={`text-sm font-medium ${paymentMode === 'checkout_only' ? 'text-amber-700' : 'text-gray-700'}`}>
+                    确认金额后支付
+                  </span>
+                </div>
+                <p className={`text-sm mt-1 ${paymentMode === 'checkout_only' ? 'text-amber-500' : 'text-gray-400'}`}>
+                  自动选规格和结算，但支付前弹出确认窗口，需手动确认金额后付款
                 </p>
               </div>
-            </>
-          )}
+            </label>
+
+            <label
+              className={`flex items-start gap-3 px-4 py-3 rounded-lg border-2 cursor-pointer transition-colors ${
+                paymentMode === 'cart_only'
+                  ? 'border-green-500 bg-green-50'
+                  : 'border-gray-200 bg-white hover:border-gray-300'
+              }`}
+            >
+              <div className={`w-4 h-4 mt-0.5 rounded-full border-2 flex items-center justify-center flex-shrink-0 ${
+                paymentMode === 'cart_only' ? 'border-green-500' : 'border-gray-300'
+              }`}>
+                {paymentMode === 'cart_only' && <div className="w-2 h-2 rounded-full bg-green-500" />}
+              </div>
+              <div onClick={() => setPaymentMode('cart_only')}>
+                <div className="flex items-center gap-2">
+                  <span className="text-sm">🛒</span>
+                  <span className={`text-sm font-medium ${paymentMode === 'cart_only' ? 'text-green-700' : 'text-gray-700'}`}>
+                    仅加购
+                  </span>
+                </div>
+                <p className={`text-sm mt-1 ${paymentMode === 'cart_only' ? 'text-green-500' : 'text-gray-400'}`}>
+                  只加入购物车，不结算不支付，适合需要批量选购后统一结算
+                </p>
+              </div>
+            </label>
+          </div>
 
           <button
             onClick={handlePaymentSave}

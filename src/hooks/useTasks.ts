@@ -7,10 +7,23 @@ interface Task {
   instruction: string
   parsedItems: string
   platform: string
+  paymentMode?: string
   createdAt: string
   completedAt: string | null
   error: string | null
   itemResults?: string | null
+  progress?: string | null
+  progressLog?: string[]
+}
+
+interface CandidateOrder {
+  id: number
+  productName: string
+  price: number
+  imageUrl: string
+  platform: string
+  purchasedAt: string
+  shopName: string
 }
 
 interface PreviewItem {
@@ -24,6 +37,7 @@ interface PreviewItem {
   lastPrice?: number
   imageUrl?: string
   platform?: string
+  candidates?: CandidateOrder[]
 }
 
 interface TaskPreview {
@@ -41,26 +55,84 @@ export function useTasks() {
   const refresh = useCallback(async () => {
     setLoading(true)
     try {
-      const result = await api.listTasks()
-      setTasks(result as Task[])
+      const result = await api.listTasks() as Task[]
+      const parsed = result.map(t => ({
+        ...t,
+        progressLog: typeof (t as any).progressLog === 'string'
+          ? JSON.parse((t as any).progressLog as string)
+          : t.progressLog || [],
+      }))
+      setTasks((prev) => {
+        const merged = parsed.map((fresh) => {
+          const local = prev.find(t => t.id === fresh.id)
+          if (local && local.status === 'running' && local.progressLog && local.progressLog.length > 0) {
+            const freshLog = fresh.progressLog || []
+            if (local.progressLog.length > freshLog.length) {
+              return { ...fresh, progressLog: local.progressLog }
+            }
+          }
+          return fresh
+        })
+        const freshIds = new Set(parsed.map(t => t.id))
+        prev.forEach(t => {
+          if (!freshIds.has(t.id) && t.status === 'running') {
+            merged.push(t)
+          }
+        })
+        return merged
+      })
     } finally {
       setLoading(false)
     }
   }, [])
 
   useEffect(() => {
-    refresh()
-
     const unsubscribe = api.onTaskStatusUpdate((data: unknown) => {
-      const update = data as { taskId: number; status: string; error?: string }
-      setTasks((prev) =>
-        prev.map((t) =>
-          t.id === update.taskId
-            ? { ...t, status: update.status, error: update.error || t.error }
-            : t
-        )
-      )
-      refresh()
+      const update = data as { taskId: number; status: string; error?: string; progress?: string; itemResults?: string }
+      setTasks((prev) => {
+        const existing = prev.find(t => t.id === update.taskId)
+        if (!existing) {
+          setTimeout(() => refresh(), 100)
+          const newTask: Task = {
+            id: update.taskId,
+            status: update.status,
+            instruction: '',
+            parsedItems: '[]',
+            platform: 'taobao',
+            createdAt: new Date().toISOString(),
+            completedAt: null,
+            error: update.error || null,
+            progress: update.progress || null,
+            progressLog: update.progress ? [update.progress] : [],
+            itemResults: update.itemResults || null,
+          }
+          return [newTask, ...prev]
+        }
+        if (existing.status === update.status && update.status !== 'running' && !update.progress) {
+          return prev
+        }
+        return prev.map((t) => {
+          if (t.id !== update.taskId) return t
+          const isRestarting = update.status === 'running' && t.status !== 'running'
+          const newLog = isRestarting
+            ? (update.progress ? [update.progress] : [])
+            : (update.progress ? [...(t.progressLog || []), update.progress] : t.progressLog)
+          const updated: any = {
+            ...t,
+            status: update.status,
+            error: update.status === 'running' ? (update.error || null) : (update.error || t.error),
+            progress: update.progress !== undefined ? update.progress : t.progress,
+            progressLog: update.status === 'running' ? newLog : t.progressLog,
+          }
+          if (update.itemResults !== undefined) {
+            updated.itemResults = update.itemResults
+          }
+          return updated
+        })
+      })
+      if (update.status !== 'running') {
+        setTimeout(() => refresh(), 500)
+      }
     })
 
     return unsubscribe
@@ -79,7 +151,7 @@ export function useTasks() {
     }
   }, [])
 
-  const confirmTask = useCallback(async (instruction: string, items: PreviewItem[], dryRun?: boolean) => {
+  const confirmTask = useCallback(async (instruction: string, items: PreviewItem[], dryRun?: boolean, paymentMode?: string) => {
     const matchedItems = items.filter(item => item.matched)
     if (matchedItems.length === 0) {
       throw new Error('没有匹配的商品可以购买')
@@ -90,7 +162,7 @@ export function useTasks() {
       sku: item.sku,
       orderRef: item.orderRef,
     }))
-    const result = await api.confirmTask(instruction, confirmItems, undefined, dryRun) as { error?: string }
+    const result = await api.confirmTask(instruction, confirmItems, undefined, dryRun, paymentMode) as { error?: string }
     if (result && result.error) {
       throw new Error(result.error)
     }
@@ -115,6 +187,7 @@ export function useTasks() {
     setPreview(prev => {
       if (!prev) return prev
       const newItems = prev.items.filter((_, i) => i !== index)
+      if (newItems.length === 0) return null
       return { ...prev, items: newItems }
     })
   }, [])
@@ -140,9 +213,25 @@ export function useTasks() {
     await refresh()
   }, [refresh])
 
+  const deleteTask = useCallback(async (id: number) => {
+    await api.deleteTask(id)
+    await refresh()
+  }, [refresh])
+
+  const deleteTasks = useCallback(async (ids: number[]) => {
+    await api.deleteTasks(ids)
+    await refresh()
+  }, [refresh])
+
+  const clearHistory = useCallback(async () => {
+    await api.clearHistory()
+    await refresh()
+  }, [refresh])
+
   return {
     tasks, loading, refresh,
     createTask, cancelTask, retryTaskItem,
+    deleteTask, deleteTasks, clearHistory,
     preview, previewLoading, previewTask, confirmTask, cancelPreview,
     updatePreviewItem, removePreviewItem,
   }

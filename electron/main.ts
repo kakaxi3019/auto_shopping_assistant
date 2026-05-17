@@ -1,3 +1,9 @@
+process.removeAllListeners('warning')
+process.on('warning', (warning) => {
+  if (warning.name === 'DeprecationWarning') return
+  console.warn(warning)
+})
+
 import { app, BrowserWindow, ipcMain, Menu, session } from 'electron'
 import { join } from 'path'
 import { Database } from './db/database'
@@ -51,7 +57,7 @@ function createWindow() {
 
 Menu.setApplicationMenu(null)
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   console.log('[Startup] App ready')
 
   session.defaultSession.webRequest.onBeforeSendHeaders((details, callback) => {
@@ -62,10 +68,17 @@ app.whenReady().then(() => {
   })
 
   db = new Database()
+  await db.waitReady()
+
+  const staleCount = db.resetStaleRunningTasks()
+  if (staleCount > 0) {
+    console.log(`[Startup] Reset ${staleCount} stale running/pending tasks to cancelled`)
+  }
+
   scheduler = new TaskScheduler(db)
   const handlers = registerIpcHandlers(db, scheduler)
 
-  ipcMain.handle('app:is-ready', () => backendReady)
+  ipcMain.handle('app:is-ready', () => true)
 
   createWindow()
 
@@ -74,28 +87,16 @@ app.whenReady().then(() => {
     handlers.setMainWindow(mainWindow)
   }
 
-  initBackend().catch(console.error)
+  scheduledRunner = new ScheduledTaskRunner(db, scheduler)
+  scheduledRunner.start()
+
+  backendReady = true
+  mainWindow?.webContents.send('app:ready')
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })
 })
-
-async function initBackend() {
-  console.log('[Startup] Initializing database...')
-  const startTime = Date.now()
-
-  await db!.waitReady()
-
-  console.log(`[Startup] Database ready in ${Date.now() - startTime}ms`)
-
-  scheduledRunner = new ScheduledTaskRunner(db!, scheduler!)
-  scheduledRunner.start()
-
-  console.log('[Startup] Backend initialized')
-  backendReady = true
-  mainWindow?.webContents.send('app:ready')
-}
 
 app.on('window-all-closed', () => {
   scheduledRunner?.stop()
