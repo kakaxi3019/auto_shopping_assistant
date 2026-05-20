@@ -19,11 +19,10 @@ const navItems: { key: Page; label: string; icon: string }[] = [
 export default function Layout({ children, currentPage, onNavigate }: LayoutProps) {
   return (
     <div className="flex h-screen bg-gray-50">
-      {/* Sidebar */}
       <aside className="w-56 bg-white border-r border-gray-100 flex flex-col">
         <div className="px-6 py-5 border-b border-gray-100">
-          <h1 className="text-lg font-bold text-gray-800">自动购物助手</h1>
-          <p className="text-sm text-gray-400 mt-0.5">周期性复购自动化</p>
+          <h1 className="text-lg font-bold text-gray-800">🛍️ 购物助手</h1>
+          <p className="text-sm text-gray-400 mt-0.5">说一声，帮你买</p>
         </div>
         <nav aria-label="主导航" className="flex-1 px-3 py-4 space-y-1">
           {navItems.map((item) => (
@@ -43,11 +42,10 @@ export default function Layout({ children, currentPage, onNavigate }: LayoutProp
           ))}
         </nav>
         <div className="px-4 py-3 border-t border-gray-100">
-          <p className="text-sm text-gray-400">v0.1.0</p>
+          <p className="text-sm text-gray-400">v0.2.0</p>
         </div>
       </aside>
 
-      {/* Main content */}
       <main className="flex-1 overflow-auto p-6">{children}</main>
     </div>
   )

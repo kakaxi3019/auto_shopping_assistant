@@ -12,14 +12,7 @@ extra/
 *.zip
 *.zip.tmp
 electron_debug.log
-UI-DESIGN.md
-product-roadmap.md
-requirement.md
-后续改进与新增功能清单.md
-打包与发布指南.md
 问题汇总.txt
-需求汇总表 第一批.md
-需求澄清与建议书.md
-优化迭代1.md
 遇到的问题记录.txt
-FEATURES.md
+*.md
+!README.md

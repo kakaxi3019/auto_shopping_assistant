@@ -48,9 +48,66 @@ export class TaskScheduler {
     }
   }
 
+  private lastProgressPerTask = new Map<number, string>()
+
+  private simplifyProgress(msg: string): string {
+    const patterns: [RegExp, string][] = [
+      [/正在.*LLM.*匹配/i, '翻阅历史订单'],
+      [/LLM.*匹配/i, '翻阅历史订单'],
+      [/正在查找.*订单/i, '查找购买记录'],
+      [/查找.*订单/i, '查找购买记录'],
+      [/匹配.*历史/i, '匹配历史订单'],
+      [/正在打开订单详情/i, '打开订单详情'],
+      [/执行再买一单/i, '一键复购'],
+      [/已点击再买一单/i, '点击复购按钮'],
+      [/点击.*再买一单/i, '点击复购按钮'],
+      [/再买一单/i, '一键复购'],
+      [/正在选择商品规格/i, '选择商品规格'],
+      [/选择.*SKU/i, '选择商品规格'],
+      [/SKU.*选择/i, '匹配商品规格'],
+      [/自动选择.*规格/i, '自动选择规格'],
+      [/正在点击购买/i, '点击购买'],
+      [/正在点击加入购物车/i, '点击加入购物车'],
+      [/正在点击立即购买/i, '点击立即购买'],
+      [/已点击购买按钮/i, '点击购买'],
+      [/已点击加入购物车/i, '加入购物车'],
+      [/加入购物车/i, '加入购物车'],
+      [/已进入结算/i, '进入结算'],
+      [/正在结算/i, '结算'],
+      [/正在提交订单/i, '提交订单'],
+      [/正在.*支付/i, '支付'],
+      [/购买完成/i, '购买完成'],
+      [/支付完成/i, '支付完成'],
+      [/验证完成/i, '验证完成'],
+      [/已下架/i, '商品已下架'],
+      [/登录.*过期/i, '登录过期'],
+      [/身份验证/i, '身份验证'],
+      [/超时/i, '操作超时'],
+      [/搜索替代/i, '搜索替代商品'],
+      [/搜索.*商品/i, '搜索替代商品'],
+      [/打开.*窗口/i, '打开操作窗口'],
+      [/弹.*窗口/i, '弹出操作窗口'],
+      [/操作窗口已关闭/i, '操作窗口关闭'],
+    ]
+    for (const [regex, replacement] of patterns) {
+      if (regex.test(msg)) return replacement
+    }
+    return msg.replace(/["""]/g, '"').replace(/订单\s*\S+/g, '订单').replace(/#\d+/g, '#').replace(/\s+/g, ' ').trim()
+  }
+
+  private isDuplicateProgress(taskId: number, progress: string): boolean {
+    const last = this.lastProgressPerTask.get(taskId)
+    if (!last) return false
+    if (last === progress) return true
+    return this.simplifyProgress(last) === this.simplifyProgress(progress)
+  }
+
   private emitUpdate(taskId: number, status: string, error?: string, progress?: string, itemResults?: string) {
     if (progress) {
-      this.db.appendTaskProgressLog(taskId, progress)
+      if (!this.isDuplicateProgress(taskId, progress)) {
+        this.db.appendTaskProgressLog(taskId, progress)
+        this.lastProgressPerTask.set(taskId, progress)
+      }
     }
     const payload: any = { taskId, status, error, progress }
     if (itemResults !== undefined) {
@@ -135,6 +192,7 @@ export class TaskScheduler {
   }
 
   private async executeTask(taskId: number, parsedItems: ParsedShoppingItem[], platformName: string, instruction?: string, dryRun?: boolean, paymentMode?: PaymentMode) {
+    this.lastProgressPerTask.delete(taskId)
     const taskFn = async () => {
       const platform = this.registry.get(platformName)
       if (!platform) {
@@ -208,6 +266,11 @@ export class TaskScheduler {
   cancelTask(taskId: number) {
     this.taskQueue = this.taskQueue.filter(t => t.taskId !== taskId)
     this.db.dismissPendingConfirmationsForTask(taskId)
+    for (const platform of this.registry.getAll()) {
+      if ('resolveConfirmation' in platform && typeof (platform as any).resolveConfirmation === 'function') {
+        (platform as any).resolveConfirmation(false).catch(() => {})
+      }
+    }
     this.db.updateTaskStatus(taskId, 'cancelled')
     this.emitUpdate(taskId, 'cancelled')
   }
@@ -232,6 +295,7 @@ export class TaskScheduler {
 
     this.db.updateTaskStatus(taskId, 'running')
     this.db.clearTaskProgressLog(taskId)
+    this.lastProgressPerTask.delete(taskId)
 
     const retryItemResult: ItemResult = { name: itemName, quantity: item.quantity, status: 'pending' }
     const itemResults: ItemResult[] = [retryItemResult]

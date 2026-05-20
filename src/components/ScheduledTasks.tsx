@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { api } from '../lib/api'
 
 type RepeatType = 'once' | 'daily' | 'weekly' | 'monthly'
+type PaymentMode = '' | 'cart_only' | 'checkout_only' | 'auto_pay'
 
 interface ScheduledTask {
   id: number
@@ -15,6 +16,7 @@ interface ScheduledTask {
   lastRunAt: string | null
   nextRunAt: string | null
   createdAt: string
+  paymentMode: string
 }
 
 const REPEAT_LABELS: Record<RepeatType, string> = {
@@ -23,6 +25,13 @@ const REPEAT_LABELS: Record<RepeatType, string> = {
   weekly: '每周',
   monthly: '每月',
 }
+
+const PAYMENT_MODE_OPTIONS: { value: PaymentMode; label: string; icon: string; desc: string }[] = [
+  { value: '', label: '跟随设置', icon: '⚙️', desc: '使用全局设置中的支付模式' },
+  { value: 'cart_only', label: '仅加购', icon: '🛒', desc: '只加入购物车，不结算' },
+  { value: 'checkout_only', label: '确认后支付', icon: '📋', desc: '自动结算，支付前需确认' },
+  { value: 'auto_pay', label: '自动支付', icon: '💳', desc: '全自动完成支付' },
+]
 
 const WEEKDAY_LABELS = ['周日', '周一', '周二', '周三', '周四', '周五', '周六']
 
@@ -37,6 +46,7 @@ export default function ScheduledTasks() {
   const [scheduledTime, setScheduledTime] = useState('')
   const [dayOfWeek, setDayOfWeek] = useState(1)
   const [dayOfMonth, setDayOfMonth] = useState(1)
+  const [paymentMode, setPaymentMode] = useState<PaymentMode>('')
 
   useEffect(() => {
     loadTasks()
@@ -54,6 +64,7 @@ export default function ScheduledTasks() {
     setScheduledTime('')
     setDayOfWeek(1)
     setDayOfMonth(1)
+    setPaymentMode('')
     setEditingId(null)
     setShowForm(false)
   }
@@ -69,6 +80,7 @@ export default function ScheduledTasks() {
     setScheduledTime(timeVal)
     setDayOfWeek(task.dayOfWeek ?? 1)
     setDayOfMonth(task.dayOfMonth ?? 1)
+    setPaymentMode((task.paymentMode || '') as PaymentMode)
     setShowForm(true)
   }
 
@@ -83,12 +95,14 @@ export default function ScheduledTasks() {
         dayOfWeek: repeatType === 'weekly' ? dayOfWeek : undefined,
         dayOfMonth: repeatType === 'monthly' ? dayOfMonth : undefined,
         nextRunAt: scheduledTimeStr,
+        paymentMode,
       })
     } else {
       await api.createScheduledTask({
         name, instruction, repeatType, scheduledTime: scheduledTimeStr,
         dayOfWeek: repeatType === 'weekly' ? dayOfWeek : undefined,
         dayOfMonth: repeatType === 'monthly' ? dayOfMonth : undefined,
+        paymentMode,
       })
     }
 
@@ -121,6 +135,11 @@ export default function ScheduledTasks() {
       return `${REPEAT_LABELS[task.repeatType]}${task.dayOfMonth}号`
     }
     return REPEAT_LABELS[task.repeatType]
+  }
+
+  const getPaymentModeLabel = (mode: string) => {
+    const opt = PAYMENT_MODE_OPTIONS.find(o => o.value === mode)
+    return opt ? `${opt.icon} ${opt.label}` : '⚙️ 跟随设置'
   }
 
   return (
@@ -227,6 +246,28 @@ export default function ScheduledTasks() {
             </div>
           )}
 
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1.5">支付模式</label>
+            <div className="grid grid-cols-2 gap-2">
+              {PAYMENT_MODE_OPTIONS.map((opt) => (
+                <button
+                  key={opt.value}
+                  onClick={() => setPaymentMode(opt.value)}
+                  className={`px-3 py-2 text-sm rounded-lg transition-colors text-left ${
+                    paymentMode === opt.value
+                      ? 'bg-blue-600 text-white'
+                      : 'bg-gray-50 text-gray-600 hover:bg-gray-100 border border-gray-200'
+                  }`}
+                >
+                  <span className="font-medium">{opt.icon} {opt.label}</span>
+                  <p className={`text-xs mt-0.5 ${paymentMode === opt.value ? 'text-blue-100' : 'text-gray-400'}`}>
+                    {opt.desc}
+                  </p>
+                </button>
+              ))}
+            </div>
+          </div>
+
           <div className="flex gap-3">
             <button
               onClick={handleSave}
@@ -273,6 +314,9 @@ export default function ScheduledTasks() {
                     </span>
                     <span className="px-2 py-0.5 text-sm rounded-full bg-blue-50 text-blue-600 font-medium">
                       {formatRepeatInfo(task)}
+                    </span>
+                    <span className="px-2 py-0.5 text-sm rounded-full bg-purple-50 text-purple-600 font-medium">
+                      {getPaymentModeLabel(task.paymentMode)}
                     </span>
                   </div>
                   <p className="text-sm text-gray-500 mb-2">{task.instruction}</p>

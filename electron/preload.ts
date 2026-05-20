@@ -42,7 +42,7 @@ const api = {
   fetchModels: () => ipcRenderer.invoke('settings:fetch-models'),
 
   // Scheduled Tasks
-  createScheduledTask: (task: { name: string; instruction: string; repeatType: string; scheduledTime: string; dayOfWeek?: number; dayOfMonth?: number }) => ipcRenderer.invoke('scheduled:create', task),
+  createScheduledTask: (task: { name: string; instruction: string; repeatType: string; scheduledTime: string; dayOfWeek?: number; dayOfMonth?: number; paymentMode?: string }) => ipcRenderer.invoke('scheduled:create', task),
   listScheduledTasks: () => ipcRenderer.invoke('scheduled:list'),
   updateScheduledTask: (id: number, updates: Record<string, unknown>) => ipcRenderer.invoke('scheduled:update', id, updates),
   deleteScheduledTask: (id: number) => ipcRenderer.invoke('scheduled:delete', id),

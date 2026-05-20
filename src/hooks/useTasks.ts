@@ -51,6 +51,8 @@ export function useTasks() {
   const [loading, setLoading] = useState(false)
   const [preview, setPreview] = useState<TaskPreview | null>(null)
   const [previewLoading, setPreviewLoading] = useState(false)
+  const [activeTaskId, setActiveTaskId] = useState<number | null>(null)
+  const [panelOpen, setPanelOpen] = useState(false)
 
   const refresh = useCallback(async () => {
     setLoading(true)
@@ -146,6 +148,7 @@ export function useTasks() {
         throw new Error(result.error)
       }
       setPreview(result)
+      setPanelOpen(true)
     } finally {
       setPreviewLoading(false)
     }
@@ -162,16 +165,32 @@ export function useTasks() {
       sku: item.sku,
       orderRef: item.orderRef,
     }))
-    const result = await api.confirmTask(instruction, confirmItems, undefined, dryRun, paymentMode) as { error?: string }
+    const result = await api.confirmTask(instruction, confirmItems, undefined, dryRun, paymentMode) as { taskId?: number; error?: string }
     if (result && result.error) {
       throw new Error(result.error)
     }
+    if (result && result.taskId) {
+      setActiveTaskId(result.taskId)
+    }
     setPreview(null)
+    setPanelOpen(true)
     await refresh()
   }, [refresh])
 
   const cancelPreview = useCallback(() => {
     setPreview(null)
+    setPanelOpen(false)
+  }, [])
+
+  const closePanel = useCallback(() => {
+    setPanelOpen(false)
+    setPreview(null)
+  }, [])
+
+  const openTaskPanel = useCallback((taskId: number) => {
+    setActiveTaskId(taskId)
+    setPreview(null)
+    setPanelOpen(true)
   }, [])
 
   const updatePreviewItem = useCallback((index: number, updates: Partial<PreviewItem>) => {
@@ -234,5 +253,6 @@ export function useTasks() {
     deleteTask, deleteTasks, clearHistory,
     preview, previewLoading, previewTask, confirmTask, cancelPreview,
     updatePreviewItem, removePreviewItem,
+    activeTaskId, panelOpen, closePanel, openTaskPanel,
   }
 }

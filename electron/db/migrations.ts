@@ -98,3 +98,7 @@ export const MIGRATION_V8 = [
 export const MIGRATION_V9 = [
   `ALTER TABLE tasks ADD COLUMN payment_mode TEXT NOT NULL DEFAULT 'auto_pay'`,
 ]
+
+export const MIGRATION_V10 = [
+  `ALTER TABLE scheduled_tasks ADD COLUMN payment_mode TEXT NOT NULL DEFAULT ''`,
+]

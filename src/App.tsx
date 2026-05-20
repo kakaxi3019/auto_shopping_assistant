@@ -3,7 +3,7 @@ import Layout from './components/Layout'
 import Dashboard from './components/Dashboard'
 import ShoppingInput from './components/ShoppingInput'
 import TaskList from './components/TaskList'
-import PreviewPanel from './components/PreviewPanel'
+import ShoppingAssistantPanel from './components/ShoppingAssistantPanel'
 import ToastProvider from './components/ToastProvider'
 import { useTasks } from './hooks/useTasks'
 import { api } from './lib/api'
@@ -22,7 +22,8 @@ export default function App() {
   const { tasks, loading, refresh, createTask, cancelTask, retryTaskItem,
     deleteTask, deleteTasks, clearHistory,
     preview, previewLoading, previewTask, confirmTask, cancelPreview,
-    updatePreviewItem, removePreviewItem } = useTasks()
+    updatePreviewItem, removePreviewItem,
+    activeTaskId, panelOpen, closePanel, openTaskPanel } = useTasks()
 
   const handleReExecute = useCallback(async (task: { instruction: string; parsedItems: string; paymentMode?: string }) => {
     try {
@@ -84,18 +85,9 @@ export default function App() {
       case 'shopping':
         return (
           <div className="space-y-6">
+            <ShoppingInput onSubmit={previewTask} disabled={!backendReady || previewLoading} recentTasks={tasks.filter(t => t.status === 'success').filter((t, i, arr) => arr.findIndex(x => x.instruction === t.instruction) === i).slice(0, 5)} previewOpen={panelOpen} />
             <Dashboard tasks={tasks} onScrollToTasks={(filter) => { setScrollToFilter(filter !== undefined ? filter : ''); setPage('shopping') }} />
-            <ShoppingInput onSubmit={previewTask} disabled={!backendReady || previewLoading} recentTasks={tasks.filter(t => t.status === 'success').filter((t, i, arr) => arr.findIndex(x => x.instruction === t.instruction) === i).slice(0, 5)} />
-            {preview && (
-              <PreviewPanel
-                preview={preview}
-                onConfirm={confirmTask}
-                onCancel={cancelPreview}
-                onUpdateItem={updatePreviewItem}
-                onRemoveItem={removePreviewItem}
-              />
-            )}
-            <TaskList tasks={tasks} loading={loading} onCancel={cancelTask} onRetryItem={retryTaskItem} onReExecute={handleReExecute} onDelete={deleteTask} onDeleteBatch={deleteTasks} onClearHistory={clearHistory} scrollToFilter={scrollToFilter} onScrollHandled={() => setScrollToFilter(null)} />
+            <TaskList tasks={tasks} loading={loading} onCancel={cancelTask} onRetryItem={retryTaskItem} onReExecute={handleReExecute} onDelete={deleteTask} onDeleteBatch={deleteTasks} onClearHistory={clearHistory} scrollToFilter={scrollToFilter} onScrollHandled={() => setScrollToFilter(null)} onOpenTaskPanel={openTaskPanel} />
           </div>
         )
       case 'orders':
@@ -136,6 +128,22 @@ export default function App() {
         )}
         {renderPage()}
       </Layout>
+      {panelOpen && (
+        <ShoppingAssistantPanel
+          preview={preview}
+          activeTaskId={activeTaskId}
+          tasks={tasks}
+          onConfirm={confirmTask}
+          onCancelPreview={cancelPreview}
+          onUpdateItem={updatePreviewItem}
+          onRemoveItem={removePreviewItem}
+          onClose={closePanel}
+          onConfirmAction={async () => { const r = await api.confirmAction() as boolean; return r }}
+          onRejectAction={async () => { const r = await api.rejectAction() as boolean; return r }}
+          onReopenWindow={async () => { const r = await api.reopenConfirmationWindow() as boolean; return r }}
+          onRetryItem={retryTaskItem}
+        />
+      )}
     </ToastProvider>
   )
 }

@@ -8,9 +8,10 @@ interface ShoppingInputProps {
   onSubmit: (instruction: string) => Promise<void>
   disabled?: boolean
   recentTasks?: RecentTask[]
+  previewOpen?: boolean
 }
 
-export default function ShoppingInput({ onSubmit, disabled = false, recentTasks = [] }: ShoppingInputProps) {
+export default function ShoppingInput({ onSubmit, disabled = false, recentTasks = [], previewOpen = false }: ShoppingInputProps) {
   const [value, setValue] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
@@ -39,44 +40,54 @@ export default function ShoppingInput({ onSubmit, disabled = false, recentTasks 
   }
 
   return (
-    <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5">
-      <h3 className="text-sm font-medium text-gray-700 mb-3">输入购物需求</h3>
+    <div className={`bg-white rounded-xl border shadow-sm p-5 transition-all ${previewOpen ? 'border-blue-300 ring-2 ring-blue-100' : 'border-gray-100'}`}>
       <div className="flex gap-3">
-        <textarea
-          value={value}
-          onChange={(e) => setValue(e.target.value)}
-          onKeyDown={handleKeyDown}
-          placeholder='例如：买两箱牛奶和一袋洗衣液'
-          aria-label="输入购物需求"
-          rows={2}
-          className="flex-1 resize-none rounded-lg border border-gray-200 px-4 py-3 text-sm placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-shadow"
-          disabled={loading || disabled}
-        />
+        <div className="flex-1">
+          <textarea
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            onKeyDown={handleKeyDown}
+            placeholder='说一声，帮你买 →  例如：再买一箱牛奶'
+            aria-label="输入购物需求"
+            rows={2}
+            className="w-full resize-none rounded-lg border border-gray-200 px-4 py-3 text-sm placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-shadow"
+            disabled={loading || disabled}
+          />
+        </div>
         <button
           onClick={handleSubmit}
           disabled={loading || disabled || !value.trim()}
-          className="self-end px-6 py-3 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          className="self-end px-6 py-3 bg-gradient-to-r from-blue-500 to-blue-600 text-white text-sm font-semibold rounded-lg hover:from-blue-600 hover:to-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-sm hover:shadow-md active:scale-[0.98]"
         >
-          {loading ? '解析中...' : '解析需求'}
+          {loading ? (
+            <span className="flex items-center gap-1.5">
+              <span className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+              匹配中...
+            </span>
+          ) : '帮我买'}
         </button>
       </div>
       {error && (
         <p className="text-sm text-red-500 mt-2">{error}</p>
       )}
       {recentTasks.length > 0 && (
-        <div className="mt-3 flex items-center gap-2 flex-wrap">
-          <span className="text-sm text-gray-400">购买历史：</span>
-          {recentTasks.map((task, i) => (
-            <button
-              key={i}
-              onClick={() => { setValue(task.instruction) }}
-              disabled={loading || disabled}
-              className="px-2.5 py-1 text-sm text-gray-600 bg-gray-50 border border-gray-200 rounded-md hover:bg-blue-50 hover:text-blue-600 hover:border-blue-200 disabled:opacity-50 transition-colors truncate max-w-[200px]"
-              title={task.instruction}
-            >
-              {task.instruction}
-            </button>
-          ))}
+        <div className="mt-3">
+          <div className="flex items-center gap-2 mb-1.5">
+            <span className="text-xs text-gray-400">💡 猜你想买</span>
+          </div>
+          <div className="flex gap-2 overflow-x-auto scrollbar-hide pb-1">
+            {recentTasks.map((task, i) => (
+              <button
+                key={i}
+                onClick={() => { setValue(task.instruction) }}
+                disabled={loading || disabled}
+                className="px-3 py-1.5 text-sm text-gray-600 bg-gray-50 border border-gray-200 rounded-full hover:bg-blue-50 hover:text-blue-600 hover:border-blue-200 disabled:opacity-50 transition-colors whitespace-nowrap flex-shrink-0"
+                title={task.instruction}
+              >
+                {task.instruction}
+              </button>
+            ))}
+          </div>
         </div>
       )}
     </div>

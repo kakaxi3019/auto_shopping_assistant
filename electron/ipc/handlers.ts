@@ -283,9 +283,9 @@ export function registerIpcHandlers(db: Database, scheduler: TaskScheduler) {
   })
 
   // Scheduled Tasks
-  ipcMain.handle('scheduled:create', async (_event, task: { name: string; instruction: string; repeatType: string; scheduledTime: string; dayOfWeek?: number; dayOfMonth?: number }) => {
-    return db.createScheduledTask(task)
-  })
+  ipcMain.handle('scheduled:create', async (_event, task: { name: string; instruction: string; repeatType: string; scheduledTime: string; dayOfWeek?: number; dayOfMonth?: number; paymentMode?: string }) => {
+  return db.createScheduledTask(task)
+})
 
   ipcMain.handle('scheduled:list', async () => {
     return db.getScheduledTasks()

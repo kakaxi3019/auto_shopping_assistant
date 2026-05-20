@@ -268,7 +268,7 @@ export default function ConfirmationPanel() {
                             disabled={excludingOrderId === item.orderId}
                             className="flex-shrink-0 px-3 py-1.5 text-sm font-medium text-orange-700 bg-orange-100 rounded-md hover:bg-orange-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
                           >
-                            {excludingOrderId === item.orderId ? '处理中...' : '标记下架'}
+                            {excludingOrderId === item.orderId ? '处理中...' : '忽略此商品'}
                           </button>
                         </div>
                       </div>

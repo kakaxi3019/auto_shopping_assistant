@@ -28,6 +28,7 @@ interface TaskListProps {
   onClearHistory?: () => void
   scrollToFilter?: string | number | null
   onScrollHandled?: () => void
+  onOpenTaskPanel?: (taskId: number) => void
 }
 
 const COMPLETED_VISIBLE_MS = 15000
@@ -37,7 +38,7 @@ function isTerminalStatus(status: string): boolean {
   return ['success', 'failed', 'cancelled'].includes(status)
 }
 
-export default function TaskList({ tasks, loading, onCancel, onRetryItem, onReExecute, onDelete, onDeleteBatch, onClearHistory, scrollToFilter, onScrollHandled }: TaskListProps) {
+export default function TaskList({ tasks, loading, onCancel, onRetryItem, onReExecute, onDelete, onDeleteBatch, onClearHistory, scrollToFilter, onScrollHandled, onOpenTaskPanel }: TaskListProps) {
   const [showHistory, setShowHistory] = useState(false)
   const [recentlyCompletedIds, setRecentlyCompletedIds] = useState<Set<number>>(new Set())
   const [fadingOutIds, setFadingOutIds] = useState<Set<number>>(new Set())
@@ -239,7 +240,7 @@ export default function TaskList({ tasks, loading, onCancel, onRetryItem, onReEx
           </h3>
           <div className="space-y-3">
             {activeTasks.map((task) => (
-              <TaskCard key={task.id} task={task} onCancel={onCancel} onRetryItem={onRetryItem} onReExecute={onReExecute} recentlyCompleted={recentlyCompletedIds.has(task.id)} fadingOut={fadingOutIds.has(task.id)} />
+              <TaskCard key={task.id} task={task} onCancel={onCancel} onRetryItem={onRetryItem} onReExecute={onReExecute} recentlyCompleted={recentlyCompletedIds.has(task.id)} fadingOut={fadingOutIds.has(task.id)} onOpenPanel={onOpenTaskPanel ? () => onOpenTaskPanel(task.id) : undefined} />
             ))}
           </div>
         </div>

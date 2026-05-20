@@ -2,11 +2,11 @@ import initSqlJs, { type Database as SqlJsDatabase } from 'sql.js'
 import { join } from 'path'
 import { app } from 'electron'
 import { existsSync, readFileSync, writeFileSync } from 'fs'
-import { MIGRATIONS, MIGRATION_V2, MIGRATION_V3, MIGRATION_V4, MIGRATION_V5, MIGRATION_V6, MIGRATION_V7, MIGRATION_V8, MIGRATION_V9 } from './migrations'
+import { MIGRATIONS, MIGRATION_V2, MIGRATION_V3, MIGRATION_V4, MIGRATION_V5, MIGRATION_V6, MIGRATION_V7, MIGRATION_V8, MIGRATION_V9, MIGRATION_V10 } from './migrations'
 import type { ShoppingTask, PendingConfirmation } from '../../shared/types/task.types'
 import type { Order } from '../../shared/types/platform.types'
 
-const MIGRATION_VERSION = 9
+const MIGRATION_VERSION = 10
 
 function toCamelCase(obj: Record<string, unknown>): Record<string, unknown> {
   const result: Record<string, unknown> = {}
@@ -154,6 +154,12 @@ export class Database {
 
     if (currentVersion < 9) {
       for (const sql of MIGRATION_V9) {
+        this.db.run(sql)
+      }
+    }
+
+    if (currentVersion < 10) {
+      for (const sql of MIGRATION_V10) {
         this.db.run(sql)
       }
     }
@@ -539,11 +545,11 @@ export class Database {
     this.scheduleSave()
   }
 
-  createScheduledTask(task: { name: string; instruction: string; repeatType: string; scheduledTime: string; dayOfWeek?: number; dayOfMonth?: number }): number {
+  createScheduledTask(task: { name: string; instruction: string; repeatType: string; scheduledTime: string; dayOfWeek?: number; dayOfMonth?: number; paymentMode?: string }): number {
     this.db.run(
-      `INSERT INTO scheduled_tasks (name, instruction, repeat_type, scheduled_time, day_of_week, day_of_month, next_run_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [task.name, task.instruction, task.repeatType, task.scheduledTime, task.dayOfWeek ?? null, task.dayOfMonth ?? null, task.scheduledTime]
+      `INSERT INTO scheduled_tasks (name, instruction, repeat_type, scheduled_time, day_of_week, day_of_month, next_run_at, payment_mode)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [task.name, task.instruction, task.repeatType, task.scheduledTime, task.dayOfWeek ?? null, task.dayOfMonth ?? null, task.scheduledTime, task.paymentMode || '']
     )
     this.scheduleSave()
     const row = this.db.exec('SELECT last_insert_rowid() as id')
@@ -560,7 +566,7 @@ export class Database {
     return results
   }
 
-  updateScheduledTask(id: number, updates: { name?: string; instruction?: string; repeatType?: string; scheduledTime?: string; dayOfWeek?: number; dayOfMonth?: number; enabled?: boolean; nextRunAt?: string }) {
+  updateScheduledTask(id: number, updates: { name?: string; instruction?: string; repeatType?: string; scheduledTime?: string; dayOfWeek?: number; dayOfMonth?: number; enabled?: boolean; nextRunAt?: string; paymentMode?: string }) {
     const fields: string[] = []
     const values: unknown[] = []
     if (updates.name !== undefined) { fields.push('name = ?'); values.push(updates.name) }
@@ -571,6 +577,7 @@ export class Database {
     if (updates.dayOfMonth !== undefined) { fields.push('day_of_month = ?'); values.push(updates.dayOfMonth) }
     if (updates.enabled !== undefined) { fields.push('enabled = ?'); values.push(updates.enabled ? 1 : 0) }
     if (updates.nextRunAt !== undefined) { fields.push('next_run_at = ?'); values.push(updates.nextRunAt) }
+    if (updates.paymentMode !== undefined) { fields.push('payment_mode = ?'); values.push(updates.paymentMode) }
     if (fields.length === 0) return
     values.push(id)
     this.db.run(`UPDATE scheduled_tasks SET ${fields.join(', ')} WHERE id = ?`, values)

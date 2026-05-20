@@ -28,7 +28,7 @@ declare global {
       setSetting: (key: string, value: string) => Promise<unknown>
       verifyLlm: () => Promise<unknown>
       fetchModels: () => Promise<unknown>
-      createScheduledTask: (task: { name: string; instruction: string; repeatType: string; scheduledTime: string; dayOfWeek?: number; dayOfMonth?: number }) => Promise<unknown>
+      createScheduledTask: (task: { name: string; instruction: string; repeatType: string; scheduledTime: string; dayOfWeek?: number; dayOfMonth?: number; paymentMode?: string }) => Promise<unknown>
       listScheduledTasks: () => Promise<unknown>
       updateScheduledTask: (id: number, updates: Record<string, unknown>) => Promise<unknown>
       deleteScheduledTask: (id: number) => Promise<unknown>
@@ -45,6 +45,9 @@ declare global {
       onSyncStatusUpdate: (callback: (data: unknown) => void) => () => void
       onTaskNotificationClick: (callback: (data: { taskId: number }) => void) => () => void
       openInteractionWindow: (url: string) => Promise<unknown>
+      confirmAction: (platform?: string) => Promise<unknown>
+      rejectAction: (platform?: string) => Promise<unknown>
+      reopenConfirmationWindow: (platform?: string) => Promise<unknown>
     }
   }
 }

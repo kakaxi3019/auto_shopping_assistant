@@ -37,6 +37,63 @@ function getChromiumPath(): string | undefined {
   return undefined
 }
 
+const ANTI_DETECT_JS = `
+  Object.defineProperty(Document.prototype, 'visibilityState', { get: () => 'visible', configurable: true });
+  Object.defineProperty(Document.prototype, 'hidden', { get: () => false, configurable: true });
+  Object.defineProperty(document, 'visibilityState', { get: () => 'visible', configurable: true });
+  Object.defineProperty(document, 'hidden', { get: () => false, configurable: true });
+  window.addEventListener('visibilitychange', function(e) { e.stopImmediatePropagation(); }, true);
+
+  delete Object.getPrototypeOf(navigator).__proto__.webdriver;
+  Object.defineProperty(navigator, 'webdriver', { get: () => undefined, configurable: true });
+  Object.defineProperty(navigator, 'languages', { get: () => ['zh-CN', 'zh', 'en-US', 'en'], configurable: true });
+  Object.defineProperty(navigator, 'platform', { get: () => 'Win32', configurable: true });
+  Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => 8, configurable: true });
+  Object.defineProperty(navigator, 'maxTouchPoints', { get: () => 0, configurable: true });
+
+  var origQuery = window.navigator.permissions.query.bind(window.navigator.permissions);
+  Object.defineProperty(window.navigator.permissions, 'query', {
+    value: function(params) { return params.name === 'notifications' ? Promise.resolve({ state: Notification.permission }) : origQuery(params); },
+    configurable: true,
+  });
+
+  if (!window.chrome) { window.chrome = {}; }
+  if (!window.chrome.runtime) { window.chrome.runtime = { connect: function(){}, sendMessage: function(){}, onMessage: { addListener: function(){} } }; }
+  if (!window.chrome.app) { window.chrome.app = { isInstalled: false, InstallState: { DISABLED: 'disabled', INSTALLED: 'installed', NOT_INSTALLED: 'not_installed' }, RunningState: { CANNOT_RUN: 'cannot_run', READY_TO_RUN: 'ready_to_run', RUNNING: 'running' }, getDetails: function(){}, getIsInstalled: function(){ return false; } }; }
+  if (!window.chrome.csi) { window.chrome.csi = function(){}; }
+  if (!window.chrome.loadTimes) { window.chrome.loadTimes = function(){ return { commitLoadTime: Date.now()/1000, connectionInfo: 'h2', finishDocumentLoadTime: 0, finishLoadTime: 0, firstPaintAfterLoadTime: 0, firstPaintTime: 0, navigationType: 'Other', npnNegotiatedProtocol: 'h2', requestTime: Date.now()/1000 - 0.5, startLoadTime: Date.now()/1000 - 0.5, wasAlternateProtocolAvailable: false, wasFetchedViaSpdy: true, wasNpnNegotiated: true }; }; }
+`
+
+const CANVAS_NOISE_JS = `
+  var origGetContext = HTMLCanvasElement.prototype.getContext;
+  HTMLCanvasElement.prototype.getContext = function(type) {
+    var result = origGetContext.apply(this, arguments);
+    if (type === '2d' && result) {
+      var origGetImageData = result.getImageData;
+      result.getImageData = function() {
+        var imageData = origGetImageData.apply(this, arguments);
+        for (var i = 0; i < imageData.data.length; i += 4) {
+          imageData.data[i] += Math.random() > 0.5 ? 1 : -1;
+        }
+        return imageData;
+      };
+      var origToDataURL = result.canvas.toDataURL;
+      result.canvas.toDataURL = function() {
+        var ctx2 = origGetContext.call(this, '2d');
+        if (ctx2) {
+          var imgData = origGetImageData.call(ctx2, 0, 0, this.width, this.height);
+          for (var i = 0; i < imgData.data.length; i += 4) {
+            imgData.data[i] += Math.random() > 0.5 ? 1 : -1;
+          }
+          ctx2.putImageData(imgData, 0, 0);
+        }
+        return origToDataURL.apply(this, arguments);
+      };
+    }
+    return result;
+  };
+`
+
 const HUMAN_SIM_JS = `
   if (!window._hs) {
   var _hs = {
@@ -46,12 +103,22 @@ const HUMAN_SIM_JS = `
       var rect = el.getBoundingClientRect();
       var x = rect.left + rect.width * (0.3 + Math.random() * 0.4);
       var y = rect.top + rect.height * (0.3 + Math.random() * 0.4);
-      var opts = { view: window, bubbles: true, cancelable: true, clientX: x, clientY: y, button: 0 };
+      var opts = { view: window, bubbles: true, cancelable: true, clientX: x, clientY: y, button: 0, buttons: 1 };
+      var pointerOpts = Object.assign({}, opts, { pointerId: 1, pointerType: 'mouse', isPrimary: true, pressure: 0.5, width: 1, height: 1, tiltX: 0, tiltY: 0 });
+      el.dispatchEvent(new PointerEvent('pointerover', Object.assign({}, pointerOpts, { pressure: 0 })));
       el.dispatchEvent(new MouseEvent('mouseover', opts));
+      el.dispatchEvent(new PointerEvent('pointerenter', Object.assign({}, pointerOpts, { pressure: 0 })));
       el.dispatchEvent(new MouseEvent('mouseenter', opts));
+      el.dispatchEvent(new PointerEvent('pointermove', Object.assign({}, pointerOpts, { clientX: x + _hs.rand(-2,2), clientY: y + _hs.rand(-2,2) })));
       el.dispatchEvent(new MouseEvent('mousemove', Object.assign({}, opts, { clientX: x + _hs.rand(-2,2), clientY: y + _hs.rand(-2,2) })));
+      el.dispatchEvent(new PointerEvent('pointerdown', Object.assign({}, pointerOpts, { pressure: 0.5 })));
       el.dispatchEvent(new MouseEvent('mousedown', opts));
+      el.dispatchEvent(new PointerEvent('pointerup', Object.assign({}, pointerOpts, { pressure: 0 })));
       el.dispatchEvent(new MouseEvent('mouseup', opts));
+      el.dispatchEvent(new PointerEvent('pointerout', Object.assign({}, pointerOpts, { pressure: 0 })));
+      el.dispatchEvent(new MouseEvent('mouseout', opts));
+      el.dispatchEvent(new PointerEvent('pointerleave', Object.assign({}, pointerOpts, { pressure: 0 })));
+      el.dispatchEvent(new MouseEvent('mouseleave', opts));
       el.dispatchEvent(new MouseEvent('click', opts));
       return true;
     },
@@ -257,6 +324,19 @@ export class TaobaoPlatform implements PlatformAdapter {
       win.webContents.on('did-create-window', (newWindow) => {
         this.setUserAgent(newWindow)
         newWindow.setIcon(APP_ICON)
+
+        newWindow.webContents.on('did-navigate', async () => {
+          const popupUrl = newWindow.webContents.getURL()
+          if (this.isLoginPage(popupUrl)) {
+            await this.tryAutoLoginThenShow(newWindow)
+          }
+        })
+        newWindow.webContents.on('did-finish-load', async () => {
+          const popupUrl = newWindow.webContents.getURL()
+          if (this.isLoginPage(popupUrl)) {
+            await this.tryAutoLoginThenShow(newWindow)
+          }
+        })
       })
 
       win.webContents.on('did-start-loading', () => {
@@ -293,10 +373,31 @@ export class TaobaoPlatform implements PlatformAdapter {
     return () => this._statusCallbacks.delete(id)
   }
 
+  private _lastEmittedStatus: string = ''
+
   private emitStatus(status: string) {
+    if (status === this._lastEmittedStatus) return
+    this._lastEmittedStatus = status
     for (const callback of this._statusCallbacks.values()) {
       try { callback(status) } catch { /* ignore */ }
     }
+  }
+
+  private confirmationTimeout: ReturnType<typeof setTimeout> | null = null
+  private static readonly CONFIRMATION_TIMEOUT_MS = 30 * 60 * 1000
+
+  private isDisposableUrl(url: string): boolean {
+    if (!url) return false
+    if (url.includes('confirm_order')) return true
+    if (url.includes('cashier.')) return true
+    if (url.includes('alipay.com')) return true
+    if (url.includes('payresult')) return true
+    if (url.includes('trade_success')) return true
+    if (url.includes('tradeDetail')) return true
+    if (url.includes('buyerPaySuccess')) return true
+    if (url.includes('TmallConfirmOrderError')) return true
+    if (url.includes('buy.taobao.com') || url.includes('buy.tmall.com')) return true
+    return false
   }
 
   private async waitForUserConfirmation(
@@ -307,26 +408,87 @@ export class TaobaoPlatform implements PlatformAdapter {
   ): Promise<boolean> {
     const id = `confirm_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
     const windowUrl = win.webContents.getURL()
+    const disposable = this.isDisposableUrl(windowUrl)
+    console.log(`[Taobao] waitForUserConfirmation created, id: ${id}, URL: ${windowUrl}, disposable: ${disposable}`)
+    debugLog(`waitForUserConfirmation created, id: ${id}, URL: ${windowUrl}, disposable: ${disposable}`)
 
     return new Promise<boolean>((resolve) => {
+      let resolved = false
+      const safeResolve = (value: boolean) => {
+        if (resolved) return
+        resolved = true
+        if (this.confirmationTimeout) {
+          clearTimeout(this.confirmationTimeout)
+          this.confirmationTimeout = null
+        }
+        if (this.pendingConfirmation?.id === id) {
+          this.pendingConfirmation = null
+        }
+        resolve(value)
+      }
+
       this.pendingConfirmation = {
         id,
-        resolve,
+        resolve: safeResolve,
         window: win,
         windowUrl,
         windowTitle,
         bannerMessage,
       }
 
-      const reopenTag = `|REOPEN:${id}|弹出的窗口|REOPEN_END|`
-      this.emitStatus(`${statusMessage.replace('弹出的窗口', reopenTag)}`)
+      if (!win.isDestroyed()) {
+        win.webContents.on('did-navigate', () => {
+          if (this.pendingConfirmation && this.pendingConfirmation.id === id && !win.isDestroyed()) {
+            const newUrl = win.webContents.getURL()
+            console.log(`[Taobao] Confirmation window navigated: ${this.pendingConfirmation.windowUrl} -> ${newUrl}`)
+            debugLog(`Confirmation window navigated: ${this.pendingConfirmation.windowUrl} -> ${newUrl}`)
+            this.pendingConfirmation.windowUrl = newUrl
+          }
+        })
+        win.webContents.on('did-navigate-in-page', () => {
+          if (this.pendingConfirmation && this.pendingConfirmation.id === id && !win.isDestroyed()) {
+            this.pendingConfirmation.windowUrl = win.webContents.getURL()
+          }
+        })
+        win.on('closed', () => {
+          if (!resolved) {
+            debugLog(`Confirmation window closed by user, id: ${id}, lastUrl: ${this.pendingConfirmation?.windowUrl || 'unknown'}`)
+            const closedUrl = this.pendingConfirmation?.windowUrl || ''
+            if (this.isDisposableUrl(closedUrl)) {
+              debugLog(`Disposable page closed, auto-resolving as false, URL: ${closedUrl}`)
+              this.emitStatus('操作窗口已关闭，结算/支付页面无法恢复，任务已自动取消')
+              safeResolve(false)
+            } else {
+              this.emitStatus('操作窗口已关闭')
+            }
+          }
+        })
+      }
+
+      this.confirmationTimeout = setTimeout(() => {
+        if (!resolved) {
+          this.emitStatus('操作超时（30分钟），自动取消')
+          safeResolve(false)
+        }
+      }, TaobaoPlatform.CONFIRMATION_TIMEOUT_MS)
+
+      if (disposable) {
+        this.emitStatus(statusMessage.replace('弹出的窗口', '弹出的窗口（关闭后无法恢复）'))
+      } else {
+        const reopenTag = `|REOPEN:${id}|弹出的窗口|REOPEN_END|`
+        this.emitStatus(`${statusMessage.replace('弹出的窗口', reopenTag)}`)
+      }
     })
   }
 
-  async resolveConfirmation(confirmed: boolean) {
+  async resolveConfirmation(confirmed: boolean): Promise<boolean> {
     if (this.pendingConfirmation) {
       const pending = this.pendingConfirmation
       this.pendingConfirmation = null
+      if (this.confirmationTimeout) {
+        clearTimeout(this.confirmationTimeout)
+        this.confirmationTimeout = null
+      }
       if (pending.window && !pending.window.isDestroyed()) {
         try {
           await this.syncCookiesFromElectron()
@@ -334,25 +496,123 @@ export class TaobaoPlatform implements PlatformAdapter {
         pending.window.close()
       }
       pending.resolve(confirmed)
+      return true
     }
+    return false
   }
 
-  async reopenConfirmationWindow() {
-    if (!this.pendingConfirmation) return
+  async reopenConfirmationWindow(): Promise<boolean> {
+    if (!this.pendingConfirmation) return false
     const { windowUrl, windowTitle, bannerMessage } = this.pendingConfirmation
+
+    console.log(`[Taobao] Reopening confirmation window, URL: ${windowUrl}`)
+    debugLog(`Reopening confirmation window, URL: ${windowUrl}`)
+
+    this.lastCookieToElectronSyncTime = 0
     await this.syncCookiesToElectron()
     const win = new BrowserWindow({
       width: 1100,
       height: 800,
       title: windowTitle,
+      icon: APP_ICON,
+      autoHideMenuBar: true,
       webPreferences: { nodeIntegration: false, contextIsolation: true },
     })
     this.setUserAgent(win)
-    win.loadURL(windowUrl)
     if (this.mainWindow) win.setParentWindow(this.mainWindow)
+
+    win.webContents.setWindowOpenHandler(({ url: openUrl }) => {
+      console.log('[Taobao] Reopened confirmation window open: ' + openUrl)
+      return { action: 'allow', overrideBrowserWindowOptions: { show: false } }
+    })
+
+    win.webContents.on('did-create-window', (newWindow) => {
+      this.setUserAgent(newWindow)
+      newWindow.setIcon(APP_ICON)
+
+      const handlePopupUrl = async (popupUrl: string) => {
+        if (this.isIdentityVerifyPage(popupUrl)) {
+          this.emitStatus('需要进行身份验证，请在弹出的窗口中完成验证...')
+          newWindow.setSize(500, 600)
+          newWindow.setTitle('淘宝身份验证')
+          if (this.mainWindow) newWindow.setParentWindow(this.mainWindow)
+          this.injectOverlayBanner(newWindow, "🔐 自动购物助手：淘宝要求身份验证，请在下方完成验证后继续")
+          newWindow.show()
+          return
+        }
+
+        if (this.isLoginPage(popupUrl)) {
+          await this.tryAutoLoginThenShow(newWindow)
+          return
+        }
+
+        if (this.isCheckoutOrPayPage(popupUrl) || popupUrl.includes('buy.tmall.com') || popupUrl.includes('buy.taobao.com')) {
+          await this.syncCookiesFromElectron()
+          this.emitStatus('已进入结算页面')
+          return
+        }
+
+        if (popupUrl.includes('cart.taobao.com')) {
+          await this.syncCookiesFromElectron()
+          this.emitStatus('已加入购物车')
+          return
+        }
+      }
+
+      newWindow.webContents.on('did-finish-load', async () => {
+        await handlePopupUrl(newWindow.webContents.getURL())
+      })
+      newWindow.webContents.on('did-navigate', async () => {
+        await handlePopupUrl(newWindow.webContents.getURL())
+      })
+    })
+
+    win.loadURL(windowUrl)
     this.injectOverlayBanner(win, bannerMessage)
     win.show()
     this.pendingConfirmation.window = win
+
+    win.webContents.on('did-finish-load', async () => {
+      if (!this.pendingConfirmation) return
+      const loadedUrl = win.webContents.getURL()
+      console.log(`[Taobao] Reopened confirmation window loaded: ${loadedUrl}`)
+      debugLog(`Reopened confirmation window loaded: ${loadedUrl}`)
+      if (this.isLoginPage(loadedUrl)) {
+        this.emitStatus('重新打开的页面已过期（跳转到了登录页），请点击"操作失败"取消当前任务，然后重新下单')
+        win.setTitle('页面已过期 - 请关闭此窗口')
+        this.injectOverlayBanner(win, '⚠️ 此页面已过期，请关闭此窗口并点击任务面板中的「操作失败」按钮，然后重新下单')
+        return
+      }
+      try {
+        const pageText = await win.webContents.executeJavaScript('document.body?.innerText?.substring(0, 200) || ""')
+        if (pageText.includes('系统繁忙') || pageText.includes('系统异常') || pageText.includes('页面已过期') || pageText.includes('session expired')) {
+          console.log(`[Taobao] Reopened page shows error: ${pageText.substring(0, 100)}`)
+          debugLog(`Reopened page shows error, URL: ${loadedUrl}, text: ${pageText.substring(0, 200)}`)
+          this.emitStatus('重新打开的页面已失效（系统繁忙/页面过期），请点击"操作失败"取消当前任务，然后重新下单')
+          win.setTitle('页面已失效 - 请关闭此窗口')
+          this.injectOverlayBanner(win, '⚠️ 此页面已失效，请关闭此窗口并点击任务面板中的「操作失败」按钮，然后重新下单')
+        }
+      } catch { /* ignore */ }
+    })
+
+    win.on('closed', () => {
+      if (this.pendingConfirmation) {
+        this.emitStatus('操作窗口已关闭')
+      }
+    })
+
+    if (this.confirmationTimeout) {
+      clearTimeout(this.confirmationTimeout)
+      this.confirmationTimeout = null
+    }
+    this.confirmationTimeout = setTimeout(() => {
+      if (this.pendingConfirmation) {
+        this.emitStatus('操作超时（30分钟），自动取消')
+        this.resolveConfirmation(false)
+      }
+    }, TaobaoPlatform.CONFIRMATION_TIMEOUT_MS)
+
+    return true
   }
 
   private async ensureBrowser() {
@@ -392,37 +652,21 @@ export class TaobaoPlatform implements PlatformAdapter {
 
       await this.context.addInitScript(HUMAN_SIM_JS)
 
-      await this.context.addInitScript(() => {
-        Object.defineProperty(navigator, 'webdriver', { get: () => undefined })
-        Object.defineProperty(navigator, 'languages', { get: () => ['zh-CN', 'zh', 'en'] })
-        Object.defineProperty(navigator, 'platform', { get: () => 'Win32' })
-        const originalQuery = window.navigator.permissions.query
-        Object.defineProperty(window.navigator.permissions, 'query', {
-          value: (params: any) => params.name === 'notifications'
-            ? Promise.resolve({ state: Notification.permission } as PermissionStatus)
-            : originalQuery(params),
-        })
-        if (!window.chrome) {
-          (window as any).chrome = { runtime: {} }
-        }
-        const originalGetContext = HTMLCanvasElement.prototype.getContext
-        HTMLCanvasElement.prototype.getContext = function(type: string, ...args: any[]) {
-          const result = originalGetContext.apply(this, [type, ...args] as any)
-          if (type === '2d' && result) {
-            const originalGetImageData = result.getImageData
-            result.getImageData = function(...args: any[]) {
-              const imageData = originalGetImageData.apply(this, args as any)
-              for (let i = 0; i < imageData.data.length; i += 4) {
-                imageData.data[i] += Math.random() > 0.5 ? 1 : 0
-              }
-              return imageData
-            }
-          }
-          return result
-        }
-      })
+      await this.context.addInitScript(ANTI_DETECT_JS)
 
       await this.auth.loadCookies(this.context)
+
+      const currentCookies = await this.context.cookies()
+      const hasLoginCookie = currentCookies.some(c =>
+        (c.name === 'cookie2' || c.name === 'sgcookie' || c.name === '_tb_token_') &&
+        c.domain.includes('taobao')
+      )
+      if (!hasLoginCookie) {
+        console.log('[Taobao] Warning: No login cookies found in Playwright context after loading, may trigger verification')
+      }
+
+      this.lastCookieToElectronSyncTime = 0
+      await this.syncCookiesToElectron()
 
       this.page = await this.context.newPage()
       this.emitStatus('自动化引擎已就绪')
@@ -487,6 +731,36 @@ export class TaobaoPlatform implements PlatformAdapter {
         )
 
         this.auth.saveElectronCookies(taobaoCookies)
+
+        if (this.context && taobaoCookies.length > 0) {
+          try {
+            const playwrightCookies = taobaoCookies.map((c) => {
+              let sameSite: 'Strict' | 'Lax' | 'None' = 'Lax'
+              if (c.sameSite === 'no_restriction' || c.sameSite === 'None') {
+                sameSite = c.secure ? 'None' : 'Lax'
+              } else if (c.sameSite === 'strict' || c.sameSite === 'Strict') {
+                sameSite = 'Strict'
+              } else if (c.secure) {
+                sameSite = 'None'
+              }
+              return {
+                name: c.name,
+                value: c.value,
+                domain: c.domain,
+                path: c.path,
+                secure: c.secure,
+                httpOnly: c.httpOnly,
+                sameSite,
+                ...(c.expirationDate && c.expirationDate > 0 ? { expires: c.expirationDate } : {}),
+              }
+            })
+            await this.context.addCookies(playwrightCookies)
+            console.log(`[Taobao] Synced ${playwrightCookies.length} cookies from login to Playwright context`)
+          } catch (e) {
+            console.log(`[Taobao] Failed to sync cookies to Playwright after login: ${e}`)
+          }
+        }
+
         this.loginWindow?.close()
         this.loginWindow = null
         this.emitStatus('登录成功，登录状态已保存')
@@ -547,7 +821,7 @@ export class TaobaoPlatform implements PlatformAdapter {
     const hiddenWindow = new BrowserWindow({
       width: 1280,
       height: 800,
-      show: false,
+      show: true,
       icon: APP_ICON,
       webPreferences: {
         contextIsolation: true,
@@ -555,6 +829,8 @@ export class TaobaoPlatform implements PlatformAdapter {
         sandbox: false,
       },
     })
+    this.setUserAgent(hiddenWindow)
+    hiddenWindow.minimize()
 
     const beginTime = timeRange?.beginTime || ''
     const endTime = timeRange?.endTime || ''
@@ -809,7 +1085,10 @@ export class TaobaoPlatform implements PlatformAdapter {
 
   private shopWindow: BrowserWindow | null = null
 
-  private readonly CHROME_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'
+  private readonly CHROME_UA = (() => {
+    const electronVer = process.versions.chrome || '131.0.0.0'
+    return `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${electronVer} Safari/537.36`
+  })()
 
   private setUserAgent(win: BrowserWindow) {
     win.webContents.setUserAgent(this.CHROME_UA)
@@ -818,8 +1097,19 @@ export class TaobaoPlatform implements PlatformAdapter {
 
   private injectHumanSim(win: BrowserWindow) {
     const inject = () => {
-      win.webContents.executeJavaScript(HUMAN_SIM_JS).catch(() => {})
+      if (win.isDestroyed()) return
+      const url = win.webContents.getURL()
+      const isCaptchaPage = url.includes('nocaptcha') || url.includes('captcha') || url.includes('slider') || url.includes('baxia') || url.includes('passport.taobao.com/iv')
+      win.webContents.executeJavaScript(ANTI_DETECT_JS).catch(() => {})
+      if (!isCaptchaPage) {
+        win.webContents.executeJavaScript(CANVAS_NOISE_JS).catch(() => {})
+        win.webContents.executeJavaScript(HUMAN_SIM_JS).catch(() => {})
+      }
     }
+    win.webContents.on('did-start-navigation', () => {
+      if (win.isDestroyed()) return
+      win.webContents.executeJavaScript(ANTI_DETECT_JS).catch(() => {})
+    })
     win.webContents.on('did-finish-load', inject)
     if (!win.webContents.isLoading()) {
       inject()
@@ -871,29 +1161,32 @@ export class TaobaoPlatform implements PlatformAdapter {
 
   private async humanDelay(base: number, jitter?: number): Promise<void> {
     const range = jitter ?? Math.ceil(base * 0.4)
-    const ms = base + Math.floor(Math.random() * range * 2) - range
-    await new Promise(r => setTimeout(r, Math.max(100, ms)))
+    const u1 = Math.random()
+    const u2 = Math.random()
+    const normal = Math.sqrt(-2 * Math.log(Math.max(u1, 1e-10))) * Math.cos(2 * Math.PI * u2)
+    const ms = base + Math.round(normal * range * 0.5)
+    await new Promise(r => setTimeout(r, Math.max(150, ms)))
   }
 
   private injectOverlayBanner(win: BrowserWindow, message: string) {
     const js = `
       (function() {
-        var existing = document.getElementById('_as_ov_');
-        if (existing) existing.remove();
-        var overlay = document.createElement('div');
-        overlay.id = '_as_ov_';
-        overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:2147483647;padding:10px 20px;background:rgba(37,99,235,0.9);color:#fff;font-size:14px;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;text-align:center;backdrop-filter:blur(4px);box-shadow:0 2px 8px rgba(0,0,0,0.15);line-height:1.5;';
-        overlay.textContent = ${JSON.stringify(message)};
+        var existing = document.getElementById('site-nav');
+        if (existing && existing.querySelector('[data-hint]')) return;
+        var nav = document.getElementById('site-nav') || document.body.firstChild;
+        var hint = document.createElement('div');
+        hint.setAttribute('data-hint', '1');
+        hint.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:2147483647;padding:10px 20px;background:rgba(37,99,235,0.9);color:#fff;font-size:14px;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;text-align:center;backdrop-filter:blur(4px);box-shadow:0 2px 8px rgba(0,0,0,0.15);line-height:1.5;';
+        hint.textContent = ${JSON.stringify(message)};
         var closeBtn = document.createElement('span');
         closeBtn.textContent = '✕';
         closeBtn.style.cssText = 'position:absolute;right:12px;top:50%;transform:translateY(-50%);cursor:pointer;font-size:16px;opacity:0.7;';
         closeBtn.onmouseover = function() { closeBtn.style.opacity = '1'; };
         closeBtn.onmouseout = function() { closeBtn.style.opacity = '0.7'; };
-        closeBtn.onclick = function() { overlay.remove(); };
-        overlay.style.position = 'fixed';
-        overlay.appendChild(closeBtn);
-        document.documentElement.appendChild(overlay);
-        document.body.style.paddingTop = (overlay.offsetHeight + 8) + 'px';
+        closeBtn.onclick = function() { hint.remove(); };
+        hint.appendChild(closeBtn);
+        document.documentElement.appendChild(hint);
+        document.body.style.paddingTop = (hint.offsetHeight + 8) + 'px';
       })();
     `;
     win.webContents.executeJavaScript(js).catch(() => {});
@@ -940,6 +1233,7 @@ export class TaobaoPlatform implements PlatformAdapter {
     if (fullUrl.startsWith('//')) fullUrl = 'https:' + fullUrl
 
     try {
+      this.lastCookieToElectronSyncTime = 0
       await this.syncCookiesToElectron()
 
       if (this.shopWindow && !this.shopWindow.isDestroyed()) {
@@ -950,7 +1244,7 @@ export class TaobaoPlatform implements PlatformAdapter {
       this.shopWindow = new BrowserWindow({
         width: 1280,
         height: 800,
-        show: false,
+        show: true,
         autoHideMenuBar: true,
         icon: APP_ICON,
         webPreferences: {
@@ -959,6 +1253,10 @@ export class TaobaoPlatform implements PlatformAdapter {
         },
       })
       this.setUserAgent(this.shopWindow)
+      if (this.mainWindow) {
+        this.shopWindow.setParentWindow(this.mainWindow)
+      }
+      this.shopWindow.minimize()
 
       return new Promise<AddToCartResult>((resolve) => {
         let resolved = false
@@ -1039,12 +1337,7 @@ export class TaobaoPlatform implements PlatformAdapter {
             }
 
             if (this.isLoginPage(popupUrl)) {
-              this.emitStatus('登录已过期，请在弹出的窗口中重新登录...')
-              newWindow.setSize(900, 700)
-              newWindow.setTitle('淘宝登录 - 请重新登录')
-              if (this.mainWindow) newWindow.setParentWindow(this.mainWindow)
-              this.injectOverlayBanner(newWindow, "🔑 自动购物助手：登录已过期，请在下方重新登录后继续")
-              newWindow.show()
+              await this.tryAutoLoginThenShow(newWindow)
               return
             }
           }
@@ -1393,12 +1686,7 @@ export class TaobaoPlatform implements PlatformAdapter {
             }
 
             if (this.isLoginPage(popupUrl)) {
-              this.emitStatus('登录已过期，请在弹出的窗口中重新登录...')
-              newWindow.setSize(900, 700)
-              newWindow.setTitle('淘宝登录 - 请重新登录')
-              if (this.mainWindow) newWindow.setParentWindow(this.mainWindow)
-              this.injectOverlayBanner(newWindow, "🔑 自动购物助手：登录已过期，请在下方重新登录后继续")
-              newWindow.show()
+              await this.tryAutoLoginThenShow(newWindow)
               return
             }
           }
@@ -1581,6 +1869,7 @@ export class TaobaoPlatform implements PlatformAdapter {
     debugLog(`[Taobao] runInHiddenWindow: ${detailUrl}`)
     this.emitStatus('正在打开订单详情页...')
 
+    this.lastCookieToElectronSyncTime = 0
     await this.syncCookiesToElectron()
 
     if (this.shopWindow && !this.shopWindow.isDestroyed()) {
@@ -1592,7 +1881,7 @@ export class TaobaoPlatform implements PlatformAdapter {
       this.shopWindow = new BrowserWindow({
         width: 1280,
         height: 800,
-        show: false,
+        show: true,
         autoHideMenuBar: true,
         icon: APP_ICON,
         webPreferences: {
@@ -1601,6 +1890,10 @@ export class TaobaoPlatform implements PlatformAdapter {
         },
       })
       this.setUserAgent(this.shopWindow)
+      if (this.mainWindow) {
+        this.shopWindow.setParentWindow(this.mainWindow)
+      }
+      this.shopWindow.minimize()
       this.shopWindow.loadURL(detailUrl)
 
       this.shopWindow.webContents.setWindowOpenHandler(({ url: openUrl }) => {
@@ -1674,15 +1967,8 @@ export class TaobaoPlatform implements PlatformAdapter {
           }
 
           if (this.isLoginPage(popupUrl)) {
-            console.log(`[Taobao] Login page in popup, showing to user`)
-            this.emitStatus('登录已过期，请在弹出的窗口中重新登录...')
-            newWindow.setSize(900, 700)
-            newWindow.setTitle('淘宝登录 - 请重新登录')
-            if (this.mainWindow) {
-              newWindow.setParentWindow(this.mainWindow)
-            }
-            this.injectOverlayBanner(newWindow, "🔑 自动购物助手：登录已过期，请在下方重新登录后继续")
-            newWindow.show()
+            console.log(`[Taobao] Login page in popup, trying auto login first`)
+            await this.tryAutoLoginThenShow(newWindow)
             return
           }
 
@@ -1802,6 +2088,16 @@ export class TaobaoPlatform implements PlatformAdapter {
                 const currentPopupUrl = newWindow.webContents.getURL()
                 debugLog(`[Taobao] After buy click, current URL: ${currentPopupUrl}`)
                 if (this.isIdentityVerifyPage(currentPopupUrl) || currentPopupUrl.includes('nocaptcha') || currentPopupUrl.includes('slider')) {
+                  await newWindow.webContents.executeJavaScript(`
+                    (function() {
+                      try {
+                        Object.defineProperty(Document.prototype, 'visibilityState', { get: function() { return document.hidden ? 'hidden' : 'visible'; }, configurable: true });
+                        Object.defineProperty(Document.prototype, 'hidden', { get: function() { return !document.hasFocus(); }, configurable: true });
+                        Object.defineProperty(document, 'visibilityState', { get: function() { return document.hidden ? 'hidden' : 'visible'; }, configurable: true });
+                        Object.defineProperty(document, 'hidden', { get: function() { return !document.hasFocus(); }, configurable: true });
+                      } catch(e) {}
+                    })()
+                  `).catch(() => {})
                   newWindow.setSize(1100, 800)
                   newWindow.setTitle('淘宝安全验证')
                   if (this.mainWindow) newWindow.setParentWindow(this.mainWindow)
@@ -2523,11 +2819,47 @@ export class TaobaoPlatform implements PlatformAdapter {
         if (!url) return
         debugLog(`[Taobao] Hidden window loaded: ${url}`)
 
+        const hasCaptcha = await this.detectCaptcha(this.shopWindow!)
+        if (hasCaptcha) {
+          await this.shopWindow?.webContents.executeJavaScript(`
+            (function() {
+              try {
+                Object.defineProperty(Document.prototype, 'visibilityState', { get: function() { return document.hidden ? 'hidden' : 'visible'; }, configurable: true });
+                Object.defineProperty(Document.prototype, 'hidden', { get: function() { return !document.hasFocus(); }, configurable: true });
+                Object.defineProperty(document, 'visibilityState', { get: function() { return document.hidden ? 'hidden' : 'visible'; }, configurable: true });
+                Object.defineProperty(document, 'hidden', { get: function() { return !document.hasFocus(); }, configurable: true });
+              } catch(e) {}
+            })()
+          `).catch(() => {})
+          this.shopWindow?.restore()
+          this.shopWindow?.setSize(1100, 800)
+          this.shopWindow?.setTitle('淘宝安全验证')
+          this.injectOverlayBanner(this.shopWindow!, '🔐 自动购物助手：淘宝要求安全验证，请拖动滑块完成验证')
+          this.emitStatus('需要进行滑块验证，请在弹出的窗口中完成验证...')
+          const verified = await this.waitForUserConfirmation(
+            this.shopWindow!,
+            '淘宝要求安全验证（滑块验证），请在弹出的窗口中拖动滑块完成验证，然后点击"已完成"',
+            '淘宝安全验证',
+            '🔐 请拖动滑块完成验证',
+          )
+          if (!verified) {
+            resolved = true
+            clearTimeout(timeout)
+            clearInterval(checkInterval)
+            this.closeShopWindow()
+            resolve({ success: false, error: '安全验证未完成' })
+            return
+          }
+          await this.humanDelay(1000)
+          return
+        }
+
         if (this.isLoginPage(url)) {
           if (loginRetryCount < 1) {
             loginRetryCount++
             debugLog(`[Taobao] Login page detected, re-syncing cookies and retrying...`)
             this.emitStatus('检测到登录页面，正在重新同步登录状态...')
+            this.lastCookieToElectronSyncTime = 0
             await this.syncCookiesToElectron()
             await this.humanDelay(500)
             this.shopWindow?.loadURL(detailUrl)
@@ -3141,6 +3473,77 @@ export class TaobaoPlatform implements PlatformAdapter {
       url.includes('havanaone/login')
   }
 
+  private async detectCaptcha(win: BrowserWindow): Promise<boolean> {
+    try {
+      const result = await win.webContents.executeJavaScript(`
+        (function() {
+          var captchaSelectors = [
+            '#nc_1_wrapper', '#nc_1__scale_text', '#nocaptcha',
+            '[class*="nc-container"]', '[class*="nc_wrapper"]',
+            '[class*="slider"]', '[class*="captcha"]',
+            '#baxia-dialog-content', '[class*="baxia"]',
+            'iframe[src*="nocaptcha"]', 'iframe[src*="captcha"]',
+            'iframe[src*="slider"]'
+          ];
+          for (var i = 0; i < captchaSelectors.length; i++) {
+            var el = document.querySelector(captchaSelectors[i]);
+            if (el) {
+              var rect = el.getBoundingClientRect();
+              if (rect.width > 0 && rect.height > 0) return true;
+            }
+          }
+          var iframes = document.querySelectorAll('iframe');
+          for (var j = 0; j < iframes.length; j++) {
+            var src = iframes[j].src || '';
+            if (src.includes('nocaptcha') || src.includes('captcha') || src.includes('slider') || src.includes('baxia')) {
+              return true;
+            }
+          }
+          var bodyText = (document.body?.innerText || '').substring(0, 2000);
+          var captchaHints = ['请拖动滑块', '拖动滑块', '请完成验证', '安全验证', '滑动验证', '请按住滑块'];
+          for (var k = 0; k < captchaHints.length; k++) {
+            if (bodyText.includes(captchaHints[k])) return true;
+          }
+          return false;
+        })()
+      `)
+      return !!result
+    } catch {
+      return false
+    }
+  }
+
+  private async tryAutoLoginThenShow(win: BrowserWindow): Promise<void> {
+    this.lastCookieToElectronSyncTime = 0
+    await this.syncCookiesToElectron()
+
+    const currentUrl = win.webContents.getURL()
+    if (!this.isLoginPage(currentUrl)) {
+      this.emitStatus('Cookie 已同步，页面已自动跳转')
+      win.show()
+      return
+    }
+
+    try {
+      const referrer = win.webContents.getURL()
+      await win.loadURL(referrer)
+      await new Promise(r => setTimeout(r, 3000))
+
+      if (!this.isLoginPage(win.webContents.getURL())) {
+        this.emitStatus('Cookie 已同步，页面已自动跳转')
+        win.show()
+        return
+      }
+    } catch { /* ignore */ }
+
+    this.emitStatus('登录已过期，请在弹出的窗口中重新登录...')
+    win.setSize(900, 700)
+    win.setTitle('淘宝登录 - 请重新登录')
+    if (this.mainWindow) win.setParentWindow(this.mainWindow)
+    this.injectOverlayBanner(win, "🔑 自动购物助手：登录已过期，请在下方重新登录后继续")
+    win.show()
+  }
+
   private async fallbackManualAddToCart(productUrl?: string): Promise<AddToCartResult> {
     if (!this.page) return { success: false, error: '浏览器未初始化' }
 
@@ -3737,6 +4140,16 @@ export class TaobaoPlatform implements PlatformAdapter {
         if (this.shopWindow && !this.shopWindow.isDestroyed()) {
           const currentUrl = this.shopWindow.webContents.getURL()
           if (this.isIdentityVerifyPage(currentUrl) || currentUrl.includes('nocaptcha') || currentUrl.includes('slider')) {
+            await this.shopWindow.webContents.executeJavaScript(`
+              (function() {
+                try {
+                  Object.defineProperty(Document.prototype, 'visibilityState', { get: function() { return document.hidden ? 'hidden' : 'visible'; }, configurable: true });
+                  Object.defineProperty(Document.prototype, 'hidden', { get: function() { return !document.hasFocus(); }, configurable: true });
+                  Object.defineProperty(document, 'visibilityState', { get: function() { return document.hidden ? 'hidden' : 'visible'; }, configurable: true });
+                  Object.defineProperty(document, 'hidden', { get: function() { return !document.hasFocus(); }, configurable: true });
+                } catch(e) {}
+              })()
+            `).catch(() => {})
             this.shopWindow.setSize(1100, 800)
             this.shopWindow.setTitle('淘宝安全验证 - 需要手动操作')
             if (this.mainWindow) this.shopWindow.setParentWindow(this.mainWindow)
@@ -3977,21 +4390,46 @@ export class TaobaoPlatform implements PlatformAdapter {
     if (now - this.lastCookieToElectronSyncTime < 500) return
 
     try {
-      const loaded = this.auth.loadCookiesRaw()
-      let sourceCookies: { name: string; value: string; domain: string; path: string; secure: boolean; httpOnly?: boolean; sameSite?: string; expires?: number }[] = loaded.filter(
-        (c) => c.domain.includes('taobao') || c.domain.includes('tmall') || c.domain.includes('alipay')
-      )
+      let sourceCookies: { name: string; value: string; domain: string; path: string; secure: boolean; httpOnly?: boolean; sameSite?: string; expires?: number }[] = []
 
-      if (sourceCookies.length === 0 && this.context) {
-        const pwCookies = await this.context.cookies()
-        sourceCookies = pwCookies.filter(
-          (c) => c.domain.includes('taobao') || c.domain.includes('tmall') || c.domain.includes('alipay')
-        )
+      if (this.context) {
+        try {
+          const pwCookies = await this.context.cookies()
+          sourceCookies = pwCookies
+            .filter(c => c.domain.includes('taobao') || c.domain.includes('tmall') || c.domain.includes('alipay'))
+            .map(c => ({
+              name: c.name,
+              value: c.value,
+              domain: c.domain,
+              path: c.path,
+              secure: c.secure,
+              httpOnly: c.httpOnly,
+              sameSite: c.sameSite === 'Strict' ? 'strict' : c.sameSite === 'None' ? 'no_restriction' : 'lax',
+              expires: c.expires && c.expires > 0 ? c.expires : undefined,
+            }))
+        } catch (e) {
+          console.log(`[Taobao] syncCookiesToElectron: failed to read Playwright cookies: ${e}`)
+        }
       }
 
       if (sourceCookies.length === 0) {
-        console.log(`[Taobao] syncCookiesToElectron: no source cookies to sync`)
-        return
+        const loaded = this.auth.loadCookiesRaw()
+        sourceCookies = loaded.filter(
+          (c) => c.domain.includes('taobao') || c.domain.includes('tmall') || c.domain.includes('alipay')
+        )
+      } else {
+        const loaded = this.auth.loadCookiesRaw()
+        const fileCookies = loaded.filter(
+          (c) => c.domain.includes('taobao') || c.domain.includes('tmall') || c.domain.includes('alipay')
+        )
+        const pwKeySet = new Set(sourceCookies.map(c => `${c.domain}:${c.name}:${c.path}`))
+        for (const fc of fileCookies) {
+          const key = `${fc.domain}:${fc.name}:${fc.path}`
+          if (!pwKeySet.has(key)) {
+            sourceCookies.push(fc)
+            pwKeySet.add(key)
+          }
+        }
       }
 
       const existingCookies = await session.defaultSession.cookies.get({})
@@ -4001,13 +4439,99 @@ export class TaobaoPlatform implements PlatformAdapter {
 
       const normalizeDomain = (d: string) => d.startsWith('.') ? d : '.' + d
 
+      const nowSec = Date.now() / 1000
+      const sourceMap = new Map<string, { value: string; expires?: number }>()
+      for (const c of sourceCookies) {
+        const key = `${normalizeDomain(c.domain)}:${c.name}:${c.path}`
+        sourceMap.set(key, { value: c.value, expires: c.expires })
+      }
+
+      const sessionOnlyCookies: { name: string; value: string; domain: string; path: string; secure: boolean; httpOnly?: boolean; sameSite?: string; expires?: number }[] = []
+      for (const ec of taobaoExisting) {
+        const key = `${normalizeDomain(ec.domain)}:${ec.name}:${ec.path}`
+        const sourceEntry = sourceMap.get(key)
+        if (!sourceEntry) {
+          const ecExpired = ec.expirationDate && ec.expirationDate > 0 && ec.expirationDate <= nowSec
+          if (!ecExpired) {
+            let sameSite: string | undefined
+            if (ec.sameSite === 'no_restriction' || ec.sameSite === 'None') {
+              sameSite = ec.secure ? 'None' : 'Lax'
+            } else if (ec.sameSite === 'strict' || ec.sameSite === 'Strict') {
+              sameSite = 'Strict'
+            } else if (ec.secure) {
+              sameSite = 'None'
+            } else {
+              sameSite = 'Lax'
+            }
+            sessionOnlyCookies.push({
+              name: ec.name,
+              value: ec.value,
+              domain: ec.domain,
+              path: ec.path,
+              secure: ec.secure,
+              httpOnly: ec.httpOnly,
+              sameSite: sameSite === 'Strict' ? 'strict' : sameSite === 'None' ? 'no_restriction' : 'lax',
+              expires: ec.expirationDate && ec.expirationDate > 0 ? ec.expirationDate : undefined,
+            })
+          }
+        } else {
+          const sourceExpired = sourceEntry.expires && sourceEntry.expires > 0 && sourceEntry.expires <= nowSec
+          const ecExpired = ec.expirationDate && ec.expirationDate > 0 && ec.expirationDate <= nowSec
+          if (sourceExpired && !ecExpired) {
+            let sameSite: string | undefined
+            if (ec.sameSite === 'no_restriction' || ec.sameSite === 'None') {
+              sameSite = ec.secure ? 'None' : 'Lax'
+            } else if (ec.sameSite === 'strict' || ec.sameSite === 'Strict') {
+              sameSite = 'Strict'
+            } else if (ec.secure) {
+              sameSite = 'None'
+            } else {
+              sameSite = 'Lax'
+            }
+            sessionOnlyCookies.push({
+              name: ec.name,
+              value: ec.value,
+              domain: ec.domain,
+              path: ec.path,
+              secure: ec.secure,
+              httpOnly: ec.httpOnly,
+              sameSite: sameSite === 'Strict' ? 'strict' : sameSite === 'None' ? 'no_restriction' : 'lax',
+              expires: ec.expirationDate && ec.expirationDate > 0 ? ec.expirationDate : undefined,
+            })
+          }
+        }
+      }
+
+      if (sessionOnlyCookies.length > 0) {
+        if (this.context) {
+          const pwCookies = sessionOnlyCookies.map(c => ({
+            name: c.name,
+            value: c.value,
+            domain: c.domain,
+            path: c.path,
+            secure: c.secure,
+            httpOnly: c.httpOnly,
+            sameSite: (c.sameSite === 'strict' ? 'Strict' : c.sameSite === 'no_restriction' ? 'None' : 'Lax') as 'Strict' | 'Lax' | 'None',
+            ...(c.expires && c.expires > 0 ? { expires: c.expires } : {}),
+          }))
+          await this.context.addCookies(pwCookies)
+        }
+        this.auth.saveElectronCookies(taobaoExisting as any)
+        sourceCookies = [...sourceCookies, ...sessionOnlyCookies]
+        console.log(`[Taobao] syncCookiesToElectron: supplemented ${sessionOnlyCookies.length} cookies from Electron session`)
+      }
+
+      if (sourceCookies.length === 0) {
+        console.log(`[Taobao] syncCookiesToElectron: no source cookies to sync`)
+        return
+      }
+
       const existingMap = new Map<string, { value: string; expirationDate?: number }>()
       for (const c of taobaoExisting) {
         const key = `${normalizeDomain(c.domain)}:${c.name}:${c.path}`
         existingMap.set(key, { value: c.value, expirationDate: c.expirationDate })
       }
 
-      const now = Date.now() / 1000
       const cookiesToSet: { name: string; value: string; domain: string; path: string; secure: boolean; httpOnly?: boolean; sameSite?: string; expires?: number }[] = []
 
       for (const cookie of sourceCookies) {
@@ -4015,8 +4539,8 @@ export class TaobaoPlatform implements PlatformAdapter {
         const existing = existingMap.get(key)
 
         if (existing) {
-          const sourceExpired = cookie.expires && cookie.expires > 0 && cookie.expires <= now
-          const existingExpired = existing.expirationDate && existing.expirationDate > 0 && existing.expirationDate <= now
+          const sourceExpired = cookie.expires && cookie.expires > 0 && cookie.expires <= nowSec
+          const existingExpired = existing.expirationDate && existing.expirationDate > 0 && existing.expirationDate <= nowSec
 
           if (sourceExpired && !existingExpired) {
             continue
@@ -4032,7 +4556,7 @@ export class TaobaoPlatform implements PlatformAdapter {
             continue
           }
         } else {
-          const sourceExpired = cookie.expires && cookie.expires > 0 && cookie.expires <= now
+          const sourceExpired = cookie.expires && cookie.expires > 0 && cookie.expires <= nowSec
           if (!sourceExpired) {
             cookiesToSet.push(cookie)
           }
