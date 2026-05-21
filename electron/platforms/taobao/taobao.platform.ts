@@ -563,34 +563,43 @@ export class TaobaoPlatform implements PlatformAdapter {
       }
 
       if (!win.isDestroyed()) {
+        const updateSceneFromUrl = (newUrl: string) => {
+          if (this.isCheckoutOrPayPage(newUrl) || newUrl.includes('buy.tmall.com') || newUrl.includes('buy.taobao.com') || newUrl.includes('alipay.com')) {
+            if (this.pendingConfirmation && this.pendingConfirmation.scene !== 'payment') {
+              console.log(`[Taobao] Confirmation window navigated to payment page, updating scene from ${this.pendingConfirmation.scene} to payment`)
+              this.pendingConfirmation.scene = 'payment'
+              this.emitStatus(`已进入支付页面，请在窗口中完成支付|SCENE:payment|`)
+            }
+          } else if (newUrl.includes('item.taobao.com') || newUrl.includes('detail.tmall.com')) {
+            if (this.pendingConfirmation && this.pendingConfirmation.scene === 'verification') {
+              console.log(`[Taobao] Confirmation window navigated to product page after verification, updating scene to add-to-cart`)
+              this.pendingConfirmation.scene = 'add-to-cart'
+              this.emitStatus(`验证完成，已进入商品页面，请选择规格并购买|SCENE:add-to-cart|`)
+            }
+          } else if (newUrl.includes('cart.taobao.com')) {
+            if (this.pendingConfirmation && this.pendingConfirmation.scene !== 'add-to-cart') {
+              this.pendingConfirmation.scene = 'add-to-cart'
+              this.emitStatus(`已加入购物车|SCENE:add-to-cart|`)
+            }
+          }
+        }
         const onNavigate = () => {
           if (this.pendingConfirmation && this.pendingConfirmation.id === id && !win.isDestroyed()) {
             const newUrl = win.webContents.getURL()
             console.log(`[Taobao] Confirmation window navigated: ${this.pendingConfirmation.windowUrl} -> ${newUrl}`)
             debugLog(`Confirmation window navigated: ${this.pendingConfirmation.windowUrl} -> ${newUrl}`)
             this.pendingConfirmation.windowUrl = newUrl
-            if (this.isCheckoutOrPayPage(newUrl) || newUrl.includes('buy.tmall.com') || newUrl.includes('buy.taobao.com') || newUrl.includes('alipay.com')) {
-              if (this.pendingConfirmation.scene !== 'payment') {
-                console.log(`[Taobao] Confirmation window navigated to payment page, updating scene from ${this.pendingConfirmation.scene} to payment`)
-                this.pendingConfirmation.scene = 'payment'
-                this.emitStatus(`已进入支付页面，请在窗口中完成支付|SCENE:payment|`)
-              }
-            }
+            updateSceneFromUrl(newUrl)
           }
         }
         const onNavigateInPage = () => {
           if (this.pendingConfirmation && this.pendingConfirmation.id === id && !win.isDestroyed()) {
             const newUrl = win.webContents.getURL()
             this.pendingConfirmation.windowUrl = newUrl
-            if (this.isCheckoutOrPayPage(newUrl) || newUrl.includes('buy.tmall.com') || newUrl.includes('buy.taobao.com') || newUrl.includes('alipay.com')) {
-              if (this.pendingConfirmation.scene !== 'payment') {
-                this.pendingConfirmation.scene = 'payment'
-                this.emitStatus(`已进入支付页面，请在窗口中完成支付|SCENE:payment|`)
-              }
-            }
+            updateSceneFromUrl(newUrl)
           }
         }
-        const onClosed = () => {
+        const onClosed = async () => {
           if (!resolved) {
             debugLog(`Confirmation window closed by user, id: ${id}, lastUrl: ${this.pendingConfirmation?.windowUrl || 'unknown'}`)
             const closedUrl = this.pendingConfirmation?.windowUrl || ''
@@ -600,7 +609,8 @@ export class TaobaoPlatform implements PlatformAdapter {
               this.emitStatus(`操作窗口已关闭，结算/支付页面无法恢复，任务已自动取消|SCENE:${currentScene}|`)
               safeResolve(false)
             } else {
-              this.emitStatus(`操作窗口已关闭|SCENE:${currentScene}|`)
+              const detectedScene = await this.detectCurrentPageScene(currentScene)
+              this.emitStatus(`操作窗口已关闭|SCENE:${detectedScene}|`)
             }
           }
           if (!win.isDestroyed()) {
@@ -629,6 +639,36 @@ export class TaobaoPlatform implements PlatformAdapter {
     })
   }
 
+  private async detectCurrentPageScene(fallbackScene: string): Promise<string> {
+    try {
+      if (this.shopWindow && !this.shopWindow.isDestroyed()) {
+        const url = this.shopWindow.webContents.getURL()
+        if (this.isCheckoutOrPayPage(url) || url.includes('buy.tmall.com') || url.includes('buy.taobao.com')) {
+          return 'payment'
+        }
+        if (url.includes('cart.taobao.com')) {
+          return 'add-to-cart'
+        }
+        if (url.includes('item.taobao.com') || url.includes('detail.tmall.com')) {
+          return 'add-to-cart'
+        }
+      }
+      if (this.page && !this.page.isClosed()) {
+        const pwUrl = this.page.url()
+        if (this.isCheckoutOrPayPage(pwUrl) || pwUrl.includes('buy.tmall.com') || pwUrl.includes('buy.taobao.com')) {
+          return 'payment'
+        }
+        if (pwUrl.includes('cart.taobao.com')) {
+          return 'add-to-cart'
+        }
+        if (pwUrl.includes('item.taobao.com') || pwUrl.includes('detail.tmall.com')) {
+          return 'add-to-cart'
+        }
+      }
+    } catch { /* ignore */ }
+    return fallbackScene
+  }
+
   async resolveConfirmation(confirmed: boolean): Promise<boolean> {
     if (this.pendingConfirmation) {
       const pending = this.pendingConfirmation
@@ -649,12 +689,41 @@ export class TaobaoPlatform implements PlatformAdapter {
     return false
   }
 
+  private getCurrentShopWindowUrl(): string {
+    try {
+      if (this.shopWindow && !this.shopWindow.isDestroyed()) {
+        const url = this.shopWindow.webContents.getURL()
+        if (url && url !== 'about:blank') return url
+      }
+    } catch { /* ignore */ }
+    try {
+      if (this.page && !this.page.isClosed()) {
+        const url = this.page.url()
+        if (url && url !== 'about:blank') return url
+      }
+    } catch { /* ignore */ }
+    return ''
+  }
+
   async reopenConfirmationWindow(): Promise<boolean> {
     if (!this.pendingConfirmation) return false
-    const { windowUrl, windowTitle, bannerMessage } = this.pendingConfirmation
+    const { windowTitle, bannerMessage } = this.pendingConfirmation
 
-    console.log(`[Taobao] Reopening confirmation window, URL: ${windowUrl}`)
-    debugLog(`Reopening confirmation window, URL: ${windowUrl}`)
+    let currentUrl = this.pendingConfirmation.windowUrl
+    try {
+      if (this.shopWindow && !this.shopWindow.isDestroyed()) {
+        const shopUrl = this.shopWindow.webContents.getURL()
+        if (shopUrl && shopUrl !== 'about:blank') currentUrl = shopUrl
+      }
+      if (this.page && !this.page.isClosed()) {
+        const pwUrl = this.page.url()
+        if (pwUrl && pwUrl !== 'about:blank') currentUrl = pwUrl
+      }
+    } catch { /* ignore */ }
+
+    this.pendingConfirmation.windowUrl = currentUrl
+    console.log(`[Taobao] Reopening confirmation window, URL: ${currentUrl}`)
+    debugLog(`Reopening confirmation window, URL: ${currentUrl}`)
 
     this.lastCookieToElectronSyncTime = 0
     await this.syncCookiesToElectron()
@@ -716,7 +785,7 @@ export class TaobaoPlatform implements PlatformAdapter {
       })
     })
 
-    win.loadURL(windowUrl)
+    win.loadURL(currentUrl)
     this.injectOverlayBanner(win, bannerMessage, true)
     this.injectCenterToast(win, bannerMessage.replace(/^[🛒🔐💳🔑⚠️📋💰]\s*自动购物助手[：:]\s*/, ''))
     win.show()
@@ -2490,9 +2559,9 @@ export class TaobaoPlatform implements PlatformAdapter {
                     clearTimeout(timeout)
                     clearInterval(checkInterval)
                     if (!this.shopWindow?.isDestroyed()) this.shopWindow?.hide()
-                    this.shopWindow = newWindow
+                    if (!newWindow.isDestroyed()) this.shopWindow = newWindow
                     await this.syncCookiesFromElectron()
-                    const afterVerifyUrl = newWindow.webContents.getURL()
+                    const afterVerifyUrl = !newWindow.isDestroyed() ? newWindow.webContents.getURL() : this.getCurrentShopWindowUrl()
                     if (afterVerifyUrl.includes('cart.taobao.com')) {
                       this.emitStatus('已加入购物车')
                       resolve({ success: true, directToPay: false })
@@ -2577,9 +2646,9 @@ export class TaobaoPlatform implements PlatformAdapter {
                     clearTimeout(timeout)
                     clearInterval(checkInterval)
                     if (!this.shopWindow?.isDestroyed()) this.shopWindow?.hide()
-                    this.shopWindow = newWindow
+                    if (!newWindow.isDestroyed()) this.shopWindow = newWindow
                     await this.syncCookiesFromElectron()
-                    const afterVerifyUrl = newWindow.webContents.getURL()
+                    const afterVerifyUrl = !newWindow.isDestroyed() ? newWindow.webContents.getURL() : this.getCurrentShopWindowUrl()
                     if (afterVerifyUrl.includes('cart.taobao.com')) {
                       this.emitStatus('已加入购物车')
                       resolve({ success: true, directToPay: false })

@@ -630,11 +630,16 @@ export default function ShoppingAssistantPanel({
 
     const sceneFromLog = (() => {
       if (!hasProgressLog) return 'add-to-cart' as const
-      const closedMsg = [...safeProgressLog].reverse().find(msg => typeof msg === 'string' && (msg.includes('操作窗口已关闭') || msg.includes('|SCENE:')))
-      if (!closedMsg || typeof closedMsg !== 'string') return 'add-to-cart' as const
-      const sceneMatch = closedMsg.match(/\|SCENE:(verification|add-to-cart|payment)\|/)
-      if (sceneMatch) return sceneMatch[1] as 'verification' | 'add-to-cart' | 'payment'
-      if (closedMsg.includes('结算/支付')) return 'payment' as const
+      const reversedLog = [...safeProgressLog].reverse()
+      const sceneMsg = reversedLog.find(msg => typeof msg === 'string' && msg.includes('|SCENE:'))
+      if (sceneMsg && typeof sceneMsg === 'string') {
+        const sceneMatch = sceneMsg.match(/\|SCENE:(verification|add-to-cart|payment)\|/)
+        if (sceneMatch) return sceneMatch[1] as 'verification' | 'add-to-cart' | 'payment'
+      }
+      const closedMsg = reversedLog.find(msg => typeof msg === 'string' && msg.includes('操作窗口已关闭'))
+      if (closedMsg && typeof closedMsg === 'string') {
+        if (closedMsg.includes('结算/支付')) return 'payment' as const
+      }
       return 'add-to-cart' as const
     })()
 
@@ -654,7 +659,7 @@ export default function ShoppingAssistantPanel({
         noun: '购买',
         action: '完成购买',
         reopenBtn: '🪟 重新打开商品页面',
-        confirmBtn: '✓ 已加入购物车',
+        confirmBtn: '✓ 我已完成购买',
         failBtn: '✗ 商品无法购买',
         closedTitle: '商品页面已关闭',
         closedHint: '如需继续购买，请点击"重新打开商品页面"；如商品无法购买，请点击"商品无法购买"取消当前任务',
