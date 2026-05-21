@@ -2962,6 +2962,7 @@ export class TaobaoPlatform implements PlatformAdapter {
       })
 
       let resolved = false
+      let buyClickAttempted = false
       const timeout = setTimeout(() => {
         if (!resolved) {
           resolved = true
@@ -3509,7 +3510,7 @@ export class TaobaoPlatform implements PlatformAdapter {
             this.emitStatus('已加入购物车')
             resolve({ success: true, directToPay: false })
           } else if (url.includes('item.taobao.com') || url.includes('detail.tmall.com')) {
-            const offShelfCheck = await this.execJS(this.shopWindow, `
+            const productPageDiag = await this.execJS(this.shopWindow, `
               (function() {
                 var bodyText = (document.body?.innerText || '');
                 var keywords = ['已下架', '商品已下架', '宝贝不存在', '商品不存在', '已失效', '商品已失效', '已卖完', '暂时缺货', '该商品已下架', '商品已售罄', '此商品已下架', '页面不存在', '无法购买'];
@@ -3520,19 +3521,117 @@ export class TaobaoPlatform implements PlatformAdapter {
                     break;
                   }
                 }
-                if (!matchedKeyword) return '';
-                var buyFound = _hs.findVisible(['button', 'a', '[class*="btn"]', '[class*="Button"]', '[role="button"]', '[class*="action"]', '[class*="submit"]'], ['领券购买', '立即购买', '加入购物车', '马上抢', '立刻购买', '加购', '去购买']);
-                if (buyFound.length > 0) return '';
-                return matchedKeyword;
+                if (matchedKeyword) {
+                  var buyFound = _hs.findVisible(['button', 'a', '[class*="btn"]', '[class*="Button"]', '[role="button"]', '[class*="action"]', '[class*="submit"]'], ['领券购买', '立即购买', '加入购物车', '马上抢', '立刻购买', '加购', '去购买']);
+                  if (buyFound.length > 0) matchedKeyword = '';
+                }
+                var buyTargets = ${cartOnly} ? ['加入购物车', '加购'] : ['立即购买', '领券购买', '马上抢', '立刻购买', '去购买'];
+                var excludeTexts = ['万人加购', '人加购', '人购买', '万人团', '人收货', '人付款'];
+                var found = _hs.findVisible(['button', 'a', '[class*="btn"]', '[class*="Button"]', '[role="button"]', '[class*="action"]', '[class*="submit"]'], buyTargets);
+                var bestMatch = null;
+                for (var fi = 0; fi < found.length; fi++) {
+                  var normalized = found[fi].text.replace(/\\s+/g, '');
+                  var isExcluded = excludeTexts.some(function(e) { return normalized.includes(e); });
+                  if (isExcluded) continue;
+                  if (!bestMatch || found[fi].area < bestMatch.area) {
+                    bestMatch = { el: found[fi].el, area: found[fi].area, text: found[fi].text.substring(0, 30) };
+                  }
+                }
+                return { offShelfKeyword: matchedKeyword, hasBuyBtn: !!bestMatch, buyBtnText: bestMatch ? bestMatch.text : '' };
               })()
-            `).catch(() => '')
-            if (offShelfCheck) {
+            `).catch(() => ({ offShelfKeyword: '', hasBuyBtn: false, buyBtnText: '' }))
+
+            if (productPageDiag.offShelfKeyword) {
               resolved = true
               clearTimeout(timeout)
               clearInterval(checkInterval)
               this.closeShopWindow()
-              this.emitStatus(`商品不可购买（${offShelfCheck}）`)
-              resolve({ success: false, error: `商品不可购买（${offShelfCheck}）` })
+              this.emitStatus(`商品不可购买（${productPageDiag.offShelfKeyword}）`)
+              resolve({ success: false, error: `商品不可购买（${productPageDiag.offShelfKeyword}）` })
+            } else if (productPageDiag.hasBuyBtn && !buyClickAttempted) {
+              buyClickAttempted = true
+              console.log(`[Taobao] Product page detected in checkInterval, clicking buy button: ${productPageDiag.buyBtnText}`)
+              this.emitStatus(cartOnly ? '正在点击加入购物车...' : `正在点击${productPageDiag.buyBtnText}...`)
+              const clickResult = await this.execJS(this.shopWindow, `
+                (function() {
+                  var buyTargets = ${cartOnly} ? ['加入购物车', '加购'] : ['立即购买', '领券购买', '马上抢', '立刻购买', '去购买'];
+                  var excludeTexts = ['万人加购', '人加购', '人购买', '万人团', '人收货', '人付款'];
+                  var found = _hs.findVisible(['button', 'a', '[class*="btn"]', '[class*="Button"]', '[role="button"]', '[class*="action"]', '[class*="submit"]'], buyTargets);
+                  var bestMatch = null;
+                  for (var fi = 0; fi < found.length; fi++) {
+                    var normalized = found[fi].text.replace(/\\s+/g, '');
+                    var isExcluded = excludeTexts.some(function(e) { return normalized.includes(e); });
+                    if (isExcluded) continue;
+                    if (!bestMatch || found[fi].area < bestMatch.area) {
+                      bestMatch = found[fi];
+                    }
+                  }
+                  if (bestMatch) { _hs.click(bestMatch.el); return { clicked: true, text: bestMatch.text.substring(0, 30) }; }
+                  return { clicked: false };
+                })()
+              `).catch(() => ({ clicked: false }))
+              debugLog(`[Taobao] checkInterval buy click result: ${JSON.stringify(clickResult)}`)
+              if (clickResult?.clicked) {
+                await this.humanDelay(3000)
+                const afterBuyUrl = this.shopWindow?.webContents.getURL()
+                if (afterBuyUrl && (afterBuyUrl.includes('item.taobao.com') || afterBuyUrl.includes('detail.tmall.com'))) {
+                  const afterBuyDiag = await this.execJS(this.shopWindow, `
+                    (function() {
+                      var selectHints = ['请选择', '选择商品信息', '请选择规格', '请选择商品', '请选择您要的', '选择颜色', '选择尺寸'];
+                      var bodyText = (document.body?.innerText || '').substring(0, 500);
+                      var matchedHint = '';
+                      for (var i = 0; i < selectHints.length; i++) {
+                        if (bodyText.includes(selectHints[i])) { matchedHint = selectHints[i]; break; }
+                      }
+                      var captchaSelectors = ['#nocaptcha', '#nc_1_wrapper', '[class*="nc-container"]', '[class*="slider"]', '[class*="captcha"]'];
+                      var hasCaptcha = false;
+                      for (var ci = 0; ci < captchaSelectors.length; ci++) {
+                        var cel = document.querySelector(captchaSelectors[ci]);
+                        if (cel) { var cr = cel.getBoundingClientRect(); if (cr.width > 50 && cr.height > 20) { hasCaptcha = true; break; } }
+                      }
+                      return { needSelect: matchedHint !== '', hint: matchedHint, hasCaptcha: hasCaptcha };
+                    })()
+                  `).catch(() => ({ needSelect: false, hint: '', hasCaptcha: false }))
+                  debugLog(`[Taobao] After buy click still on product page, diag: ${JSON.stringify(afterBuyDiag)}`)
+
+                  if (afterBuyDiag.hasCaptcha || afterBuyDiag.needSelect) {
+                    const actionText = cartOnly ? '点击加入购物车' : '点击购买'
+                    const reason = afterBuyDiag.hasCaptcha ? '淘宝要求安全验证' : '需要选择商品规格'
+                    this.shopWindow?.setSize(1100, 800)
+                    this.shopWindow?.setTitle(`${reason} - 请手动操作`)
+                    if (this.mainWindow) this.shopWindow?.setParentWindow(this.mainWindow)
+                    const bannerMsg = `⚠️ 自动购物助手：${reason}，请手动${actionText}后点击"已完成"`
+                    this.injectOverlayBanner(this.shopWindow!, bannerMsg, true)
+                    this.shopWindow?.show()
+                    const confirmed = await this.waitForUserConfirmation(
+                      this.shopWindow!,
+                      `${reason}，请在弹出的窗口中手动操作，完成后点击"已完成"`,
+                      `${reason} - 请手动操作`,
+                      bannerMsg,
+                      'add-to-cart',
+                    )
+                    if (confirmed) {
+                      resolved = true
+                      clearTimeout(timeout)
+                      clearInterval(checkInterval)
+                      await this.syncCookiesFromElectron()
+                      const finalUrl = this.shopWindow?.webContents.getURL()
+                      if (finalUrl?.includes('cart.taobao.com')) {
+                        this.emitStatus('已加入购物车')
+                        resolve({ success: true, directToPay: false })
+                      } else {
+                        this.emitStatus('已进入结算页面')
+                        resolve({ success: true, directToPay: true })
+                      }
+                    } else {
+                      resolved = true
+                      clearTimeout(timeout)
+                      clearInterval(checkInterval)
+                      resolve({ success: false, error: '用户取消操作' })
+                    }
+                  }
+                }
+              }
             }
           }
         } catch { /* ignore */ }
