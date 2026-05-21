@@ -2,6 +2,53 @@ export const HUMAN_SIM_JS = `
   if (!window._hs) {
   var _hs = {
     rand: function(min, max) { return Math.floor(Math.random() * (max - min + 1)) + min; },
+    gaussRand: function() {
+      var u1 = Math.random(), u2 = Math.random();
+      return Math.sqrt(-2 * Math.log(Math.max(u1, 1e-10))) * Math.cos(2 * Math.PI * u2);
+    },
+    bezierPoint: function(t, p0, p1, p2, p3) {
+      var mt = 1 - t;
+      return mt * mt * mt * p0 + 3 * mt * mt * t * p1 + 3 * mt * t * t * p2 + t * t * t * p3;
+    },
+    moveMouseTo: function(targetX, targetY, callback) {
+      var startX = window._lastMouseX || 0;
+      var startY = window._lastMouseY || 0;
+      var dx = targetX - startX;
+      var dy = targetY - startY;
+      var dist = Math.sqrt(dx * dx + dy * dy);
+      if (dist < 5) {
+        window._lastMouseX = targetX;
+        window._lastMouseY = targetY;
+        if (callback) callback();
+        return;
+      }
+      var cp1x = startX + dx * 0.25 + (_hs.gaussRand() * dist * 0.1);
+      var cp1y = startY + dy * 0.25 + (_hs.gaussRand() * dist * 0.1);
+      var cp2x = startX + dx * 0.75 + (_hs.gaussRand() * dist * 0.1);
+      var cp2y = startY + dy * 0.75 + (_hs.gaussRand() * dist * 0.1);
+      var steps = Math.max(8, Math.min(40, Math.floor(dist / 8)));
+      var step = 0;
+      function animateStep() {
+        if (step > steps) {
+          window._lastMouseX = targetX;
+          window._lastMouseY = targetY;
+          if (callback) callback();
+          return;
+        }
+        var t = step / steps;
+        var ease = t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
+        var x = _hs.bezierPoint(ease, startX, cp1x, cp2x, targetX) + _hs.gaussRand() * 1.5;
+        var y = _hs.bezierPoint(ease, startY, cp1y, cp2y, targetY) + _hs.gaussRand() * 1.5;
+        var evt = new MouseEvent('mousemove', { view: window, bubbles: true, cancelable: true, clientX: x, clientY: y });
+        document.elementFromPoint(x, y)?.dispatchEvent(evt);
+        window._lastMouseX = x;
+        window._lastMouseY = y;
+        step++;
+        var delay = 8 + Math.abs(_hs.gaussRand()) * 12;
+        setTimeout(animateStep, delay);
+      }
+      animateStep();
+    },
     click: function(el) {
       if (!el) return false;
       var rect = el.getBoundingClientRect();
@@ -27,7 +74,7 @@ export const HUMAN_SIM_JS = `
       return true;
     },
     scrollSmooth: function(targetY, duration) {
-      duration = duration || _hs.rand(300, 800);
+      duration = duration || _hs.rand(400, 900);
       var startY = window.pageYOffset;
       var diff = targetY - startY;
       var start = null;
@@ -43,8 +90,40 @@ export const HUMAN_SIM_JS = `
         requestAnimationFrame(step);
       });
     },
+    scrollFriction: function(distance, duration) {
+      distance = distance || _hs.rand(300, 600);
+      duration = duration || _hs.rand(600, 1200);
+      var startY = window.pageYOffset;
+      var targetY = startY + distance;
+      var start = null;
+      return new Promise(function(resolve) {
+        function step(ts) {
+          if (!start) start = ts;
+          var elapsed = ts - start;
+          var progress = Math.min(elapsed / duration, 1);
+          var friction = 1 - Math.pow(1 - progress, 3);
+          var currentY = startY + distance * friction;
+          window.scrollTo(0, currentY);
+          if (progress < 1) {
+            requestAnimationFrame(step);
+          } else {
+            var overshoot = _hs.gaussRand() * 15;
+            window.scrollTo(0, targetY + overshoot);
+            setTimeout(function() {
+              window.scrollTo(0, targetY);
+              resolve();
+            }, _hs.rand(50, 150));
+          }
+        }
+        requestAnimationFrame(step);
+      });
+    },
     delay: function(min, max) {
-      return new Promise(function(r) { setTimeout(r, _hs.rand(min, max)); });
+      var base = (min + max) / 2;
+      var sigma = (max - min) / 6;
+      var ms = base + _hs.gaussRand() * sigma;
+      ms = Math.max(min, Math.min(max, ms));
+      return new Promise(function(r) { setTimeout(r, Math.round(ms)); });
     },
     findVisible: function(selectors, textTargets) {
       var results = [];

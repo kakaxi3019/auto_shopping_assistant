@@ -106,6 +106,39 @@ export class TaskExecutor {
                   if (!checkoutResult.success) {
                     result.error = checkoutResult.error || '结算失败'
                   } else {
+                    const lastPrice = order.price
+                    const currentPrice = checkoutResult.currentPrice
+                    if (currentPrice && currentPrice > 0 && lastPrice > 0 && paymentMode !== 'checkout_only' && paymentMode !== 'cart_only') {
+                      const priceIncreaseRate = (currentPrice - lastPrice * item.quantity) / (lastPrice * item.quantity)
+                      const protectionThreshold = parseFloat(this.db.getSetting('price_protection_threshold') || '0.15')
+                      if (priceIncreaseRate >= protectionThreshold) {
+                        onProgress(`❌ 资金拦截："${item.name}" 当前价 (¥${currentPrice.toFixed(2)}) 较上次 (¥${(lastPrice * item.quantity).toFixed(2)}) 暴涨了 ${(priceIncreaseRate * 100).toFixed(0)}%，已紧急熔断拦截！`)
+                        const confirmationId = this.db.createPendingConfirmation({
+                          taskId,
+                          productName: item.name,
+                          originalPrice: lastPrice,
+                          failureReason: 'price_anomaly',
+                          searchKeyword: item.name,
+                          candidates: JSON.stringify([{
+                            platform: platform.name,
+                            productName: order.productName,
+                            price: currentPrice,
+                            imageUrl: order.imageUrl,
+                            productUrl: searchUrl,
+                            shopName: order.shopName,
+                          }]),
+                          orderId: order.id,
+                        })
+                        result.status = 'pending'
+                        result.pendingConfirmationId = confirmationId
+                        result.currentPrice = currentPrice
+                        result.lastPrice = lastPrice
+                        itemResults.push(result)
+                        if (platform.cleanup) await platform.cleanup()
+                        continue
+                      }
+                    }
+
                     const totalAmount = order.price * item.quantity
                     if (paymentMode === 'checkout_only') {
                       onProgress(`已到达结算页面，请在弹出的窗口中确认金额并完成支付`)
@@ -118,15 +151,15 @@ export class TaskExecutor {
                       }
                     } else {
                       onProgress(totalAmount > 0
-                        ? `正在支付（¥${totalAmount.toFixed(2)}）...`
-                        : `正在支付...`
+                        ? `正在支付 "${item.name}"（¥${totalAmount.toFixed(2)}）...`
+                        : `正在支付 "${item.name}"...`
                       )
-                      const payResult = await platform.pay(order.price, false, paymentMode)
-                      if (payResult.success) {
+                      const payResult = await platform.pay(totalAmount, dryRun, paymentMode)
+                      if (!payResult.success) {
+                        result.error = payResult.error || '支付失败'
+                      } else {
                         result.matchedProduct = order.productName
                         result.status = 'success'
-                      } else {
-                        result.error = payResult.error || '支付失败'
                       }
                     }
                   }
@@ -150,6 +183,39 @@ export class TaskExecutor {
           if (!checkoutResult.success) {
             result.error = checkoutResult.error || '结算失败'
           } else {
+            const lastPrice = order.price
+            const currentPrice = checkoutResult.currentPrice
+            if (currentPrice && currentPrice > 0 && lastPrice > 0 && paymentMode !== 'checkout_only' && paymentMode !== 'cart_only') {
+              const priceIncreaseRate = (currentPrice - lastPrice * item.quantity) / (lastPrice * item.quantity)
+              const protectionThreshold = parseFloat(this.db.getSetting('price_protection_threshold') || '0.15')
+              if (priceIncreaseRate >= protectionThreshold) {
+                onProgress(`❌ 资金拦截："${item.name}" 当前价 (¥${currentPrice.toFixed(2)}) 较上次 (¥${(lastPrice * item.quantity).toFixed(2)}) 暴涨了 ${(priceIncreaseRate * 100).toFixed(0)}%，已紧急熔断拦截！`)
+                const confirmationId = this.db.createPendingConfirmation({
+                  taskId,
+                  productName: item.name,
+                  originalPrice: lastPrice,
+                  failureReason: 'price_anomaly',
+                  searchKeyword: item.name,
+                  candidates: JSON.stringify([{
+                    platform: platform.name,
+                    productName: order.productName,
+                    price: currentPrice,
+                    imageUrl: order.imageUrl,
+                    productUrl: url,
+                    shopName: order.shopName,
+                  }]),
+                  orderId: order.id,
+                })
+                result.status = 'pending'
+                result.pendingConfirmationId = confirmationId
+                result.currentPrice = currentPrice
+                result.lastPrice = lastPrice
+                itemResults.push(result)
+                if (platform.cleanup) await platform.cleanup()
+                continue
+              }
+            }
+
             const totalAmount = order.price * item.quantity
             if (paymentMode === 'checkout_only') {
               onProgress(`已到达结算页面，请在弹出的窗口中确认金额并完成支付`)
@@ -177,9 +243,15 @@ export class TaskExecutor {
         }
       } catch (e) {
         console.log(`[TaskExecutor] purchase failed for order ${order.orderId}: ${e}`)
-        result.error = String(e)
+        const errMsg = String(e)
+        if (errMsg.includes('Object has been destroyed') || errMsg.includes('destroyed')) {
+          result.error = '操作窗口已关闭'
+        } else if (errMsg.includes('timeout') || errMsg.includes('Timeout') || errMsg.includes('超时')) {
+          result.error = '操作超时'
+        } else {
+          result.error = errMsg
+        }
       }
-
       itemResults.push(result)
 
       if (platform.cleanup) {
@@ -511,7 +583,92 @@ export class TaskExecutor {
     try {
       const cartResult: AddToCartResult = await platform.addToCart(url, item.sku, order.orderId, isCartOnly)
       if (!cartResult.success) {
-        result.error = cartResult.error || '再来一单失败'
+        const searchParts = [order.productName]
+        if (order.shopName) searchParts.push(order.shopName)
+        if (item.sku) searchParts.push(item.sku)
+        const searchKeyword = searchParts.join(' ')
+        onProgress(`再买一单失败（${cartResult.error}），正在打开搜索页面，请在搜索结果中找到对应商品并点击进入...`)
+        try {
+          const searchUrl = await platform.openSearchPage(searchKeyword)
+          if (searchUrl) {
+            const purchaseResult = await platform.purchaseFromUrl(searchUrl)
+            if (purchaseResult.success) {
+              if (isCartOnly) {
+                onProgress(`已将商品加入购物车`)
+                result.matchedProduct = order.productName
+                result.status = 'success'
+              } else {
+                onProgress(`正在结算...`)
+                const checkoutResult = await platform.checkout(purchaseResult.directToPay, item.quantity)
+                if (!checkoutResult.success) {
+                  result.error = checkoutResult.error || '结算失败'
+                } else {
+                  const lastPrice = order.price
+                  const currentPrice = checkoutResult.currentPrice
+                  if (currentPrice && currentPrice > 0 && lastPrice > 0 && paymentMode !== 'checkout_only' && paymentMode !== 'cart_only') {
+                    const priceIncreaseRate = (currentPrice - lastPrice * item.quantity) / (lastPrice * item.quantity)
+                    const protectionThreshold = parseFloat(this.db.getSetting('price_protection_threshold') || '0.15')
+                    if (priceIncreaseRate >= protectionThreshold) {
+                      onProgress(`❌ 资金拦截："${item.name}" 当前价 (¥${currentPrice.toFixed(2)}) 较上次 (¥${(lastPrice * item.quantity).toFixed(2)}) 暴涨了 ${(priceIncreaseRate * 100).toFixed(0)}%，已紧急熔断拦截！`)
+                      const confirmationId = this.db.createPendingConfirmation({
+                        taskId,
+                        productName: item.name,
+                        originalPrice: lastPrice,
+                        failureReason: 'price_anomaly',
+                        searchKeyword: item.name,
+                        candidates: JSON.stringify([{
+                          platform: platform.name,
+                          productName: order.productName,
+                          price: currentPrice,
+                          imageUrl: order.imageUrl,
+                          productUrl: searchUrl,
+                          shopName: order.shopName,
+                        }]),
+                        orderId: order.id,
+                      })
+                      result.status = 'pending'
+                      result.pendingConfirmationId = confirmationId
+                      result.currentPrice = currentPrice
+                      result.lastPrice = lastPrice
+                      if (platform.cleanup) await platform.cleanup()
+                      return result
+                    }
+                  }
+
+                  const totalAmount = order.price * item.quantity
+                  if (paymentMode === 'checkout_only') {
+                    onProgress(`已到达结算页面，请在弹出的窗口中确认金额并完成支付`)
+                    const payWindowResult = await platform.showPaymentWindow()
+                    if (payWindowResult.paid) {
+                      result.matchedProduct = order.productName
+                      result.status = 'success'
+                    } else {
+                      result.error = '支付未完成'
+                    }
+                  } else {
+                    onProgress(totalAmount > 0
+                      ? `正在支付 "${item.name}"（¥${totalAmount.toFixed(2)}）...`
+                      : `正在支付 "${item.name}"...`
+                    )
+                    const payResult = await platform.pay(totalAmount, dryRun, paymentMode)
+                    if (!payResult.success) {
+                      result.error = payResult.error || '支付失败'
+                    } else {
+                      result.matchedProduct = order.productName
+                      result.status = 'success'
+                    }
+                  }
+                }
+              }
+            } else {
+              result.error = '商品页面无法购买'
+            }
+          } else {
+            result.error = cartResult.error || '未找到商品'
+          }
+        } catch (e: any) {
+          result.error = e.message || '打开搜索页面失败'
+        }
       } else if (isCartOnly) {
         onProgress(`已将 "${item.name}" 加入购物车`)
         result.matchedProduct = order.productName
@@ -522,6 +679,21 @@ export class TaskExecutor {
         if (!checkoutResult.success) {
           result.error = checkoutResult.error || '结算失败'
         } else {
+          const lastPrice = order.price
+          const currentPrice = checkoutResult.currentPrice
+          if (currentPrice && currentPrice > 0 && lastPrice > 0 && paymentMode !== 'checkout_only' && paymentMode !== 'cart_only') {
+            const priceIncreaseRate = (currentPrice - lastPrice * item.quantity) / (lastPrice * item.quantity)
+            const protectionThreshold = parseFloat(this.db.getSetting('price_protection_threshold') || '0.15')
+            if (priceIncreaseRate >= protectionThreshold) {
+              onProgress(`❌ 资金拦截："${item.name}" 当前价 (¥${currentPrice.toFixed(2)}) 较上次 (¥${(lastPrice * item.quantity).toFixed(2)}) 暴涨了 ${(priceIncreaseRate * 100).toFixed(0)}%，已紧急熔断拦截！`)
+              result.status = 'pending'
+              result.currentPrice = currentPrice
+              result.lastPrice = lastPrice
+              if (platform.cleanup) await platform.cleanup()
+              return result
+            }
+          }
+
           const totalAmount = order.price * item.quantity
           if (paymentMode === 'checkout_only') {
             onProgress(`已到达结算页面，请在弹出的窗口中确认金额并完成支付`)
@@ -549,7 +721,14 @@ export class TaskExecutor {
       }
     } catch (e) {
       console.log(`[TaskExecutor] retry failed for order ${order.orderId}: ${e}`)
-      result.error = String(e)
+      const errMsg = String(e)
+      if (errMsg.includes('Object has been destroyed') || errMsg.includes('destroyed')) {
+        result.error = '操作窗口已关闭'
+      } else if (errMsg.includes('timeout') || errMsg.includes('Timeout') || errMsg.includes('超时')) {
+        result.error = '操作超时'
+      } else {
+        result.error = errMsg
+      }
     }
 
     if (platform.cleanup) {

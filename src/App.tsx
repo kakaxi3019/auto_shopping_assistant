@@ -144,7 +144,17 @@ export default function App() {
             onRejectAction={async () => { const r = await api.rejectAction() as boolean; return r }}
             onReopenWindow={async () => { const r = await api.reopenConfirmationWindow() as boolean; return r }}
             onRetryItem={retryTaskItem}
+            onCancelTask={cancelTask}
           />
+        )}
+        {!panelOpen && activeTaskId && tasks.some(t => t.id === activeTaskId && (t.status === 'running' || t.status === 'partial')) && (
+          <button
+            onClick={() => openTaskPanel(activeTaskId)}
+            className="fixed bottom-6 right-6 z-40 flex items-center gap-2 px-4 py-3 bg-blue-600 text-white rounded-full shadow-lg hover:bg-blue-700 transition-all hover:scale-105 active:scale-95"
+          >
+            <span className="w-2 h-2 bg-green-400 rounded-full animate-pulse" />
+            <span className="text-sm font-medium">购买助手</span>
+          </button>
         )}
       </ToastProvider>
     </ErrorBoundary>

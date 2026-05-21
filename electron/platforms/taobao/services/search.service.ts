@@ -62,8 +62,9 @@ export class SearchService {
                 }
                 var cards = document.querySelectorAll('[class*="Card--"], [class*="item-card"], [class*="ItemCard"]');
                 if (cards.length > 0) return true;
-                var loading = document.querySelector('[class*="loading"], [class*="Loading"]');
-                if (!loading && document.body && document.body.innerText.length > 200) return true;
+                var loading = document.querySelector('[class*="loading"], [class*="Loading"], [class*="loadingBox"]');
+                if (loading) return false;
+                if (document.body && document.body.innerText.length > 200) return true;
                 return false;
               })()
             `)
@@ -81,8 +82,10 @@ export class SearchService {
             clearInterval(checkInterval)
             resolve()
           }
-        }, 15000)
+        }, 30000)
       })
+
+      await new Promise<void>(r => setTimeout(r, 3000))
 
       const results = await searchWindow.webContents.executeJavaScript(`
         (function() {

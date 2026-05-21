@@ -1620,14 +1620,18 @@ export class TaobaoPlatform implements PlatformAdapter {
         if (old) old.remove();
         var toast = document.createElement('div');
         toast.id = '__auto_shop_toast__';
-        toast.style.cssText = 'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:2147483647;padding:20px 32px;border-radius:12px;background:rgba(0,0,0,0.65);color:#fff;font-size:16px;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;text-align:center;line-height:1.6;pointer-events:none;opacity:0;transition:opacity 0.4s ease;max-width:360px;backdrop-filter:blur(8px);box-shadow:0 8px 32px rgba(0,0,0,0.3);';
+        toast.style.cssText = 'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%) scale(0.9);z-index:2147483647;padding:24px 40px;border-radius:16px;background:linear-gradient(135deg,rgba(37,99,235,0.95),rgba(29,78,216,0.95));color:#fff;font-size:18px;font-weight:600;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;text-align:center;line-height:1.6;pointer-events:none;opacity:0;transition:opacity 0.5s ease,transform 0.5s ease;max-width:420px;backdrop-filter:blur(12px);box-shadow:0 12px 40px rgba(37,99,235,0.4),0 0 0 1px rgba(255,255,255,0.1);border:1px solid rgba(255,255,255,0.15);text-shadow:0 1px 2px rgba(0,0,0,0.2);';
         toast.textContent = ${JSON.stringify(message)};
         document.documentElement.appendChild(toast);
-        requestAnimationFrame(function() { toast.style.opacity = '1'; });
+        requestAnimationFrame(function() {
+          toast.style.opacity = '1';
+          toast.style.transform = 'translate(-50%,-50%) scale(1)';
+        });
         setTimeout(function() {
           toast.style.opacity = '0';
-          setTimeout(function() { toast.remove(); }, 400);
-        }, 3000);
+          toast.style.transform = 'translate(-50%,-50%) scale(0.95)';
+          setTimeout(function() { toast.remove(); }, 500);
+        }, 8000);
       })();
     `;
     win.webContents.executeJavaScript(js).catch(() => {});

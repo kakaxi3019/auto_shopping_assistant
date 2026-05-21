@@ -1500,6 +1500,9 @@ export class CartService {
       })
 
       let resolved = false
+      let sameUrlCount = 0
+      let rebuyRetryCount = 0
+      const MAX_REBUY_RETRIES = 3
       const timeout = setTimeout(() => {
         if (!resolved) {
           resolved = true
@@ -1833,6 +1836,60 @@ export class CartService {
           return
         }
 
+        if (url.includes('detail.tmall.com') || url.includes('item.taobao.com') || url.includes('detail.1688.com')) {
+          debugLog(`[Taobao] Product detail page detected after rebuy click, showing to user`)
+          this.emitStatus('再买一单后跳转到商品详情页，请在弹出的窗口中选择规格并购买')
+          sw!.setSize(1100, 800)
+          sw!.setTitle('请选择规格并购买')
+          const mw = this.windowManager.getMainWindow()
+          if (mw) sw!.setParentWindow(mw)
+          injectOverlayBanner(sw!, '🛒 自动购物助手：请选择规格并点击"立即购买"或"加入购物车"')
+          injectCenterToast(sw!, '请选择规格并购买')
+          sw!.show()
+          const confirmed = await this.interactionService.waitForUserConfirmation(
+            sw!,
+            '已进入商品详情页，请在弹出的窗口中选择规格并购买，完成后点击"已完成"',
+            '选择规格并购买',
+            '🛒 请选择规格并购买',
+            'add-to-cart',
+          )
+          if (!confirmed || sw!.isDestroyed()) {
+            resolved = true
+            clearTimeout(timeout)
+            clearInterval(checkInterval)
+            if (!sw!.isDestroyed()) this.windowManager.closeShopWindow(async () => { await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth) })
+            resolve({ success: false, error: '用户取消了购买' })
+            return
+          }
+          let afterUrl = ''
+          try { afterUrl = sw!.webContents.getURL() } catch { /* window destroyed */ }
+          if (isCheckoutOrPayPage(afterUrl) || afterUrl.includes('buy.tmall.com') || afterUrl.includes('buy.taobao.com')) {
+            resolved = true
+            clearTimeout(timeout)
+            clearInterval(checkInterval)
+            await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth)
+            this.emitStatus('已进入结算页面')
+            resolve({ success: true, directToPay: true })
+            return
+          }
+          if (afterUrl.includes('cart.taobao.com')) {
+            resolved = true
+            clearTimeout(timeout)
+            clearInterval(checkInterval)
+            await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth)
+            this.emitStatus('已加入购物车')
+            resolve({ success: true, directToPay: false })
+            return
+          }
+          resolved = true
+          clearTimeout(timeout)
+          clearInterval(checkInterval)
+          await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth)
+          this.emitStatus('已加入购物车')
+          resolve({ success: true, directToPay: false })
+          return
+        }
+
         let rebuyBtnFound = false
         const btnSearchTargets = cartOnly ? ['加入购物车', '加购', '再买一单', '再次购买', '再来一单', '重新购买', '去购买', '立即购买', '再次下单', '追加购买'] : ['再买一单', '再次购买', '再来一单', '重新购买', '去购买', '立即购买', '再次下单', '追加购买']
         for (let retry = 0; retry < 10 && !this.isDestroyed(); retry++) {
@@ -1958,6 +2015,27 @@ export class CartService {
               } catch { /* ignore */ }
             }
           }
+          if (url.includes('trade.tmall.com') || url.includes('trade.taobao.com') || url.includes('buyertrade.taobao.com')) {
+            sameUrlCount++
+            if (sameUrlCount >= 15) {
+              rebuyRetryCount++
+              if (rebuyRetryCount > MAX_REBUY_RETRIES) {
+                debugLog(`[Taobao] checkInterval: Max rebuy retries reached, giving up`)
+                resolved = true
+                clearTimeout(timeout)
+                clearInterval(checkInterval)
+                this.windowManager.closeShopWindow(async () => { await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth) })
+                this.emitStatus('多次点击再买一单后页面未跳转，请尝试搜索购买')
+                resolve({ success: false, error: '多次点击再买一单后页面未跳转' })
+                return
+              }
+              debugLog(`[Taobao] checkInterval: Page still on order detail after ${sameUrlCount * 2}s, retrying rebuy click (${rebuyRetryCount}/${MAX_REBUY_RETRIES})`)
+              sameUrlCount = 0
+              tryClickRebuy()
+            }
+          } else {
+            sameUrlCount = 0
+          }
         } catch { /* ignore */ }
 
         if (offShelfResult?.offShelf) {
@@ -1971,6 +2049,126 @@ export class CartService {
         }
 
         await tryClickRebuy()
+      })
+
+      currentSw.webContents.on('did-navigate', async (_event, navUrl: string) => {
+        if (resolved) return
+        debugLog(`[Taobao] Hidden window navigated: ${navUrl}`)
+        await humanDelay(1500)
+        const sw = this.windowManager.getShopWindow()
+        if (!sw || sw.isDestroyed()) return
+        const url = sw.webContents.getURL()
+
+        if (isCheckoutOrPayPage(url) || url.includes('buy.tmall.com') || url.includes('buy.taobao.com')) {
+          resolved = true
+          clearTimeout(timeout)
+          clearInterval(checkInterval)
+          await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth)
+          if (cartOnly) {
+            this.windowManager.closeShopWindow()
+            this.emitStatus('该商品不支持加入购物车，点击后直接进入了结算页面')
+            resolve({ success: false, error: '该商品不支持加入购物车，点击后直接进入了结算页面' })
+          } else {
+            this.emitStatus('已进入结算页面')
+            resolve({ success: true, directToPay: true })
+          }
+          return
+        }
+
+        if (url.includes('cart.taobao.com')) {
+          resolved = true
+          clearTimeout(timeout)
+          clearInterval(checkInterval)
+          await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth)
+          this.emitStatus('已加入购物车')
+          resolve({ success: true, directToPay: false })
+          return
+        }
+
+        if (url.includes('detail.tmall.com') || url.includes('item.taobao.com') || url.includes('detail.1688.com')) {
+          debugLog(`[Taobao] did-navigate: Product detail page detected, showing to user`)
+          this.emitStatus('再买一单后跳转到商品详情页，请在弹出的窗口中选择规格并购买')
+          sw.setSize(1100, 800)
+          sw.setTitle('请选择规格并购买')
+          const mw = this.windowManager.getMainWindow()
+          if (mw) sw.setParentWindow(mw)
+          injectOverlayBanner(sw, '🛒 自动购物助手：请选择规格并点击"立即购买"或"加入购物车"')
+          injectCenterToast(sw, '请选择规格并购买')
+          sw.show()
+          const confirmed = await this.interactionService.waitForUserConfirmation(
+            sw,
+            '已进入商品详情页，请在弹出的窗口中选择规格并购买，完成后点击"已完成"',
+            '选择规格并购买',
+            '🛒 请选择规格并购买',
+            'add-to-cart',
+          )
+          if (!confirmed || sw.isDestroyed()) {
+            resolved = true
+            clearTimeout(timeout)
+            clearInterval(checkInterval)
+            if (!sw.isDestroyed()) this.windowManager.closeShopWindow(async () => { await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth) })
+            resolve({ success: false, error: '用户取消了购买' })
+            return
+          }
+          let afterUrl = ''
+          try { afterUrl = sw.webContents.getURL() } catch { /* window destroyed */ }
+          if (isCheckoutOrPayPage(afterUrl) || afterUrl.includes('buy.tmall.com') || afterUrl.includes('buy.taobao.com')) {
+            resolved = true
+            clearTimeout(timeout)
+            clearInterval(checkInterval)
+            await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth)
+            this.emitStatus('已进入结算页面')
+            resolve({ success: true, directToPay: true })
+            return
+          }
+          if (afterUrl.includes('cart.taobao.com')) {
+            resolved = true
+            clearTimeout(timeout)
+            clearInterval(checkInterval)
+            await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth)
+            this.emitStatus('已加入购物车')
+            resolve({ success: true, directToPay: false })
+            return
+          }
+          resolved = true
+          clearTimeout(timeout)
+          clearInterval(checkInterval)
+          await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth)
+          this.emitStatus('已加入购物车')
+          resolve({ success: true, directToPay: false })
+          return
+        }
+
+        if (url.includes('tradearchive.taobao.com')) {
+          debugLog(`[Taobao] did-navigate: tradearchive page detected, no rebuy button available`)
+          resolved = true
+          clearTimeout(timeout)
+          clearInterval(checkInterval)
+          this.windowManager.closeShopWindow(async () => { await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth) })
+          this.emitStatus('未找到再买一单入口')
+          resolve({ success: false, error: '未找到再买一单入口' })
+          return
+        }
+
+        if (isLoginPage(url)) {
+          if (loginRetryCount < 1) {
+            loginRetryCount++
+            debugLog(`[Taobao] did-navigate: Login page detected, re-syncing cookies and retrying...`)
+            this.emitStatus('检测到登录页面，正在重新同步登录状态...')
+            this.cookieManager.resetToElectronSyncTimer()
+            await this.cookieManager.syncCookiesToElectron(this.getContext(), this.auth)
+            await humanDelay(500)
+            sw.loadURL(detailUrl)
+            return
+          }
+          resolved = true
+          clearTimeout(timeout)
+          clearInterval(checkInterval)
+          this.windowManager.closeShopWindow(async () => { await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth) })
+          this.emitStatus('登录已过期，请重新登录')
+          resolve({ success: false, error: '登录已过期' })
+          return
+        }
       })
 
       const checkInterval = setInterval(async () => {
@@ -2049,7 +2247,7 @@ export class CartService {
             await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth)
             this.emitStatus('已加入购物车')
             resolve({ success: true, directToPay: false })
-          } else if (url.includes('item.taobao.com') || url.includes('detail.tmall.com')) {
+          } else if (url.includes('item.taobao.com') || url.includes('detail.tmall.com') || url.includes('detail.1688.com')) {
             const offShelfCheck = await execJS(sw, `
               (function() {
                 var bodyText = (document.body?.innerText || '');
@@ -2074,6 +2272,58 @@ export class CartService {
               this.windowManager.closeShopWindow(async () => { await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth) })
               this.emitStatus(`商品不可购买（${offShelfCheck}）`)
               resolve({ success: false, error: `商品不可购买（${offShelfCheck}）` })
+            } else {
+              debugLog(`[Taobao] checkInterval: Product detail page detected, showing to user`)
+              this.emitStatus('再买一单后跳转到商品详情页，请在弹出的窗口中选择规格并购买')
+              sw!.setSize(1100, 800)
+              sw!.setTitle('请选择规格并购买')
+              const mw = this.windowManager.getMainWindow()
+              if (mw) sw!.setParentWindow(mw)
+              injectOverlayBanner(sw!, '🛒 自动购物助手：请选择规格并点击"立即购买"或"加入购物车"')
+              injectCenterToast(sw!, '请选择规格并购买')
+              sw!.show()
+              const confirmed = await this.interactionService.waitForUserConfirmation(
+                sw!,
+                '已进入商品详情页，请在弹出的窗口中选择规格并购买，完成后点击"已完成"',
+                '选择规格并购买',
+                '🛒 请选择规格并购买',
+                'add-to-cart',
+              )
+              if (!confirmed || sw!.isDestroyed()) {
+                resolved = true
+                clearTimeout(timeout)
+                clearInterval(checkInterval)
+                if (!sw!.isDestroyed()) this.windowManager.closeShopWindow(async () => { await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth) })
+                resolve({ success: false, error: '用户取消了购买' })
+                return
+              }
+              let afterUrl = ''
+              try { afterUrl = sw!.webContents.getURL() } catch { /* window destroyed */ }
+              if (isCheckoutOrPayPage(afterUrl) || afterUrl.includes('buy.tmall.com') || afterUrl.includes('buy.taobao.com')) {
+                resolved = true
+                clearTimeout(timeout)
+                clearInterval(checkInterval)
+                await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth)
+                this.emitStatus('已进入结算页面')
+                resolve({ success: true, directToPay: true })
+                return
+              }
+              if (afterUrl.includes('cart.taobao.com')) {
+                resolved = true
+                clearTimeout(timeout)
+                clearInterval(checkInterval)
+                await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth)
+                this.emitStatus('已加入购物车')
+                resolve({ success: true, directToPay: false })
+                return
+              }
+              resolved = true
+              clearTimeout(timeout)
+              clearInterval(checkInterval)
+              await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth)
+              this.emitStatus('已加入购物车')
+              resolve({ success: true, directToPay: false })
+              return
             }
           }
         } catch { /* ignore */ }

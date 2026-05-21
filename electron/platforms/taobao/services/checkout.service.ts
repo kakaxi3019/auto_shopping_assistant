@@ -195,8 +195,9 @@ export class CheckoutService {
           if (quantity > 1) {
             await this.setQuantity(quantity)
           }
+          const currentPrice = await this.extractCheckoutPrice(shopWindow)
           this.emitStatus('已到达确认订单页面')
-          return { success: true }
+          return { success: true, currentPrice }
         }
       } catch (e) {
         console.log(`[Taobao] waitForCheckoutPage error: ${e}`)
@@ -405,6 +406,58 @@ export class CheckoutService {
     }
 
     return { clicked: false }
+  }
+
+  private async extractCheckoutPrice(shopWindow: BrowserWindow): Promise<number | undefined> {
+    try {
+      const priceStr = await shopWindow.webContents.executeJavaScript(`
+        (function() {
+          var selectors = [
+            '[class*="realPrice"]', '[class*="real-price"]',
+            '[class*="totalPrice"]', '[class*="total-price"]',
+            '[class*="payPrice"]', '[class*="pay-price"]',
+            '[class*="amount"]', '[class*="Amount"]',
+            '[class*="sumPrice"]', '[class*="sum-price"]',
+            '[class*="orderPrice"]', '[class*="order-price"]',
+          ];
+          for (var i = 0; i < selectors.length; i++) {
+            var els = document.querySelectorAll(selectors[i]);
+            for (var j = 0; j < els.length; j++) {
+              var text = (els[j].textContent || '').trim();
+              var m = text.match(/¥?([\\d,]+\\.?\\d*)/);
+              if (m) {
+                var val = parseFloat(m[1].replace(/,/g, ''));
+                if (val > 0 && val < 999999) return String(val);
+              }
+            }
+          }
+          var bodyText = document.body?.innerText || '';
+          var patterns = [
+            /实付[：:]\\s*¥?([\\d,]+\\.?\\d*)/,
+            /应付[：:]\\s*¥?([\\d,]+\\.?\\d*)/,
+            /合计[：:]\\s*¥?([\\d,]+\\.?\\d*)/,
+            /总计[：:]\\s*¥?([\\d,]+\\.?\\d*)/,
+            /付款[：:]\\s*¥?([\\d,]+\\.?\\d*)/,
+          ];
+          for (var k = 0; k < patterns.length; k++) {
+            var pm = bodyText.match(patterns[k]);
+            if (pm) {
+              var pv = parseFloat(pm[1].replace(/,/g, ''));
+              if (pv > 0 && pv < 999999) return String(pv);
+            }
+          }
+          return null;
+        })()
+      `)
+      if (priceStr) {
+        const price = parseFloat(priceStr)
+        console.log(`[Taobao] extractCheckoutPrice: ${price}`)
+        return price
+      }
+    } catch (e) {
+      console.log(`[Taobao] extractCheckoutPrice error: ${e}`)
+    }
+    return undefined
   }
 
   private async closeShopWindow() {

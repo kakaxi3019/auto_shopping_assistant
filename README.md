@@ -114,25 +114,26 @@
 │  │ 任务调度器  │ │ 数据库   │ │  平台注册中心  │           │
 │  └─────┬─────┘ └──────────┘ └───┬──────────┘            │
 │        │                        │                         │
-│  ┌─────▼─────┐          ┌──────▼───────────┐             │
-│  │TaskExecutor│          │TaobaoPlatform    │             │
-│  │ 任务执行器  │          │ 淘宝平台适配器    │             │
-│  └─────┬─────┘          │ ├─ Auth 认证     │             │
-│        │                │ ├─ BrowserWindow  │             │
-│  ┌─────▼─────┐          │ ├─ Playwright    │             │
-│  │LlmParser  │          │ └─ Selectors     │             │
-│  │ LLM解析器  │          └──────────────────┘             │
-│  └───────────┘                                           │
-│                                                          │
-│  ┌──────────────────┐                                    │
-│  │ScheduledTaskRunner│                                   │
-│  │ 定时任务运行器     │                                   │
-│  └──────────────────┘                                    │
+│  ┌─────▼─────┐          ┌──────▼────────────────────────┐│
+│  │TaskExecutor│          │TaobaoPlatform (协调器)         ││
+│  │ 任务执行器  │          │                                ││
+│  └─────┬─────┘          │ ┌──────────┐ ┌──────────────┐ ││
+│        │                │ │基础设施层 │ │  服务层       │ ││
+│  ┌─────▼─────┐          │ │BrowserMgr│ │OrderService  │ ││
+│  │LlmParser  │          │ │WindowMgr │ │SearchService │ ││
+│  │ LLM解析器  │          │ │CookieMgr │ │CartService   │ ││
+│  └───────────┘          │ │Auth      │ │CheckoutSvc   │ ││
+│                         │ └──────────┘ │PaymentSvc    │ ││
+│  ┌──────────────────┐   │              │VerifySvc     │ ││
+│  │ScheduledTaskRunner│   │              │InteractionSvc│ ││
+│  │ 定时任务运行器     │   │              └──────────────┘ ││
+│  └──────────────────┘   └────────────────────────────────┘│
 └──────────────────────────────────────────────────────────┘
 ```
 
 几个关键设计点：
 
+- **分层架构**：平台适配器分为基础设施层（浏览器/窗口/Cookie管理）、服务层（订单/搜索/购物车/结算/支付等业务逻辑）、协调层（流程编排）
 - **双引擎浏览器**：主力用 Electron BrowserWindow，搞不定就换 Playwright Chromium 兜底
 - **Cookie 双向同步**：Electron Session、本地文件、Playwright Context 三者之间实时同步登录态，保证每个窗口都是登录状态
 - **事件驱动更新**：后端通过 `webContents.send` 推送任务状态，前端实时响应
@@ -173,9 +174,28 @@ auto_shopping/
 │   ├── platforms/
 │   │   ├── registry.ts          # 平台适配器注册中心
 │   │   └── taobao/
-│   │       ├── taobao.auth.ts   # 淘宝登录态管理
-│   │       ├── taobao.platform.ts # 淘宝平台实现（核心购买逻辑）
-│   │       └── taobao.selectors.ts # 页面选择器定义
+│   │       ├── taobao.platform.ts # 淘宝平台协调器（流程编排）
+│   │       ├── taobao.auth.ts     # 淘宝登录态管理
+│   │       ├── taobao.selectors.ts # 页面选择器定义
+│   │       ├── index.ts           # 统一导出
+│   │       ├── infrastructure/    # 基础设施层
+│   │       │   ├── browser-manager.ts  # Playwright浏览器管理
+│   │       │   ├── window-manager.ts   # Electron窗口管理
+│   │       │   └── cookie-manager.ts   # Cookie增量同步
+│   │       ├── services/          # 服务层
+│   │       │   ├── order.service.ts      # 订单服务
+│   │       │   ├── search.service.ts     # 搜索服务
+│   │       │   ├── cart.service.ts       # 购物车服务（多路径购买）
+│   │       │   ├── checkout.service.ts   # 结算服务
+│   │       │   ├── payment.service.ts    # 支付服务
+│   │       │   ├── verification.service.ts # 安全验证服务
+│   │       │   └── interaction.service.ts  # 用户交互服务
+│   │       └── utils/             # 工具类
+│   │           ├── constants.ts     # 常量定义
+│   │           ├── human-sim.ts     # 人类行为模拟脚本
+│   │           ├── anti-detect.ts   # 反检测脚本
+│   │           ├── page-helper.ts   # 页面操作辅助
+│   │           └── url-helper.ts    # URL判断辅助
 │   └── scheduler/
 │       ├── task-scheduler.ts    # 任务调度器
 │       ├── task-executor.ts     # 任务执行器

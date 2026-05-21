@@ -31,17 +31,12 @@ interface TaskListProps {
   onOpenTaskPanel?: (taskId: number) => void
 }
 
-const COMPLETED_VISIBLE_MS = 15000
-const FADE_OUT_DURATION_MS = 500
-
 function isTerminalStatus(status: string): boolean {
   return ['success', 'failed', 'cancelled'].includes(status)
 }
 
 export default function TaskList({ tasks, loading, onCancel, onRetryItem, onReExecute, onDelete, onDeleteBatch, onClearHistory, scrollToFilter, onScrollHandled, onOpenTaskPanel }: TaskListProps) {
   const [showHistory, setShowHistory] = useState(false)
-  const [recentlyCompletedIds, setRecentlyCompletedIds] = useState<Set<number>>(new Set())
-  const [fadingOutIds, setFadingOutIds] = useState<Set<number>>(new Set())
   const [batchMode, setBatchMode] = useState(false)
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
   const [confirmClear, setConfirmClear] = useState(false)
@@ -98,10 +93,10 @@ export default function TaskList({ tasks, loading, onCancel, onRetryItem, onReEx
   }, [scrollToFilter])
 
   const allActiveTasks = tasks.filter(t =>
-    t.status === 'pending' || t.status === 'running' || t.status === 'partial' || recentlyCompletedIds.has(t.id)
+    t.status === 'pending' || t.status === 'running' || t.status === 'partial'
   )
   const allCompletedTasks = tasks.filter(t =>
-    ['success', 'failed', 'cancelled'].includes(t.status) && !recentlyCompletedIds.has(t.id)
+    ['success', 'failed', 'cancelled'].includes(t.status)
   ).sort((a, b) => {
     const timeA = a.completedAt || a.createdAt
     const timeB = b.completedAt || b.createdAt
@@ -109,7 +104,7 @@ export default function TaskList({ tasks, loading, onCancel, onRetryItem, onReEx
   })
 
   const activeTasks = statusFilter
-    ? allActiveTasks.filter(t => t.status === statusFilter || (statusFilter === 'running' && (t.status === 'pending' || t.status === 'partial')) || recentlyCompletedIds.has(t.id))
+    ? allActiveTasks.filter(t => t.status === statusFilter || (statusFilter === 'running' && (t.status === 'pending' || t.status === 'partial')))
     : allActiveTasks
   const completedTasks = statusFilter
     ? allCompletedTasks.filter(t => t.status === statusFilter)
@@ -136,53 +131,28 @@ export default function TaskList({ tasks, loading, onCancel, onRetryItem, onReEx
     })
 
     if (newIds.length > 0) {
-      setRecentlyCompletedIds(prev => {
-        const next = new Set(prev)
-        newIds.forEach(id => next.add(id))
-        return next
-      })
-
       newIds.forEach(id => {
-        setTimeout(() => {
-          setFadingOutIds(prev => {
-            const next = new Set(prev)
-            next.add(id)
-            return next
-          })
-          setTimeout(() => {
-            const task = tasks.find(t => t.id === id)
-            const instruction = task?.instruction || ''
-            const truncatedInstruction = instruction.length > 20 ? instruction.slice(0, 20) + '…' : instruction
-            const isSuccess = task?.status === 'success'
-            showToast({
-              type: isSuccess ? 'success' : 'error',
-              message: isSuccess
-                ? `「${truncatedInstruction}」已完成，已归档到历史任务`
-                : `「${truncatedInstruction}」任务失败，已归档到历史任务`,
-              action: {
-                label: '查看',
-                onClick: () => {
-                  const el = document.getElementById(`task-card-${id}`)
-                  if (el) {
-                    el.scrollIntoView({ behavior: 'smooth', block: 'center' })
-                  }
-                },
-              },
-            })
-            setRecentlyCompletedIds(prev => {
-              const next = new Set(prev)
-              next.delete(id)
-              return next
-            })
-            setFadingOutIds(prev => {
-              const next = new Set(prev)
-              next.delete(id)
-              return next
-            })
-            setShowHistory(true)
-          }, FADE_OUT_DURATION_MS)
-        }, COMPLETED_VISIBLE_MS)
+        const task = tasks.find(t => t.id === id)
+        const instruction = task?.instruction || ''
+        const truncatedInstruction = instruction.length > 20 ? instruction.slice(0, 20) + '…' : instruction
+        const isSuccess = task?.status === 'success'
+        showToast({
+          type: isSuccess ? 'success' : 'error',
+          message: isSuccess
+            ? `「${truncatedInstruction}」已完成`
+            : `「${truncatedInstruction}」任务失败`,
+          action: {
+            label: '查看',
+            onClick: () => {
+              const el = document.getElementById(`task-card-${id}`)
+              if (el) {
+                el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+              }
+            },
+          },
+        })
       })
+      setShowHistory(true)
     }
   }, [tasks])
 
@@ -240,7 +210,7 @@ export default function TaskList({ tasks, loading, onCancel, onRetryItem, onReEx
           </h3>
           <div className="space-y-3">
             {activeTasks.map((task) => (
-              <TaskCard key={task.id} task={task} onCancel={onCancel} onRetryItem={onRetryItem} onReExecute={onReExecute} recentlyCompleted={recentlyCompletedIds.has(task.id)} fadingOut={fadingOutIds.has(task.id)} onOpenPanel={onOpenTaskPanel ? () => onOpenTaskPanel(task.id) : undefined} />
+              <TaskCard key={task.id} task={task} onCancel={onCancel} onRetryItem={onRetryItem} onReExecute={onReExecute} onOpenPanel={onOpenTaskPanel ? () => onOpenTaskPanel(task.id) : undefined} />
             ))}
           </div>
         </div>

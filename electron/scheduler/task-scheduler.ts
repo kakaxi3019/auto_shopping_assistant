@@ -102,7 +102,7 @@ export class TaskScheduler {
     return this.simplifyProgress(last) === this.simplifyProgress(progress)
   }
 
-  private emitUpdate(taskId: number, status: string, error?: string, progress?: string, itemResults?: string) {
+  private emitUpdate(taskId: number, status: string, error?: string, progress?: string, itemResults?: string, instruction?: string) {
     if (progress) {
       if (!this.isDuplicateProgress(taskId, progress)) {
         this.db.appendTaskProgressLog(taskId, progress)
@@ -123,16 +123,14 @@ export class TaskScheduler {
       console.warn(`[Scheduler] emitUpdate: mainWindow not available (destroyed=${this.mainWindow?.isDestroyed()}, crashed=${this.mainWindow?.webContents?.isCrashed()})`)
     }
 
-    if (['success', 'failed', 'partial', 'cancelled'].includes(status)) {
+    if (['failed', 'partial', 'cancelled'].includes(status)) {
       const dnd = this.db.getSetting('do_not_disturb')
       if (dnd !== 'true') {
-        const task = this.db.getTaskById(taskId)
-        const instruction = task?.instruction || `任务 #${taskId}`
+        const displayInstruction = instruction || this.db.getTaskById(taskId)?.instruction || `任务 #${taskId}`
         const statusMessages: Record<string, { title: string; body: string }> = {
-          success: { title: '任务完成', body: instruction },
-          failed: { title: '任务失败', body: error || instruction },
-          partial: { title: '待处理', body: `${instruction} - 有商品需要您确认` },
-          cancelled: { title: '任务已取消', body: instruction },
+          failed: { title: '任务失败', body: error || displayInstruction },
+          partial: { title: '待处理', body: `${displayInstruction} - 有商品需要您确认` },
+          cancelled: { title: '任务已取消', body: displayInstruction },
         }
         const msg = statusMessages[status]
         if (msg) {
@@ -237,13 +235,13 @@ export class TaskScheduler {
         }
         const error = execResult.error
         this.db.updateTaskStatus(taskId, status, error)
+        this.emitUpdate(taskId, status, error, undefined, undefined, instruction)
         this.db.updateTaskItemResults(taskId, JSON.stringify(execResult.itemResults))
-        this.emitUpdate(taskId, status, error)
       } catch (e) {
         const errorMsg = e instanceof Error ? e.message : String(e)
         schedulerLog(`[Scheduler] executeTask taskId=${taskId}: execution ERROR: ${errorMsg}`)
         this.db.updateTaskStatus(taskId, 'failed', errorMsg)
-        this.emitUpdate(taskId, 'failed', errorMsg)
+        this.emitUpdate(taskId, 'failed', errorMsg, undefined, undefined, instruction)
       } finally {
         unsubscribe()
       }

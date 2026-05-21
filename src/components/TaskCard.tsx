@@ -103,7 +103,8 @@ function cleanLogTags(msg: string): string {
     .replace(/\|SCENE:(verification|add-to-cart|payment)\|/g, '')
 }
 
-function renderMsgWithLinks(msg: string) {
+function renderMsgWithLinks(msg: string | undefined) {
+  if (!msg || typeof msg !== 'string') return ''
   const cleaned = msg.replace(/\|REOPEN:(.+?)\|(.+?)\|REOPEN_END\|/g, '$2').replace(/\|SCENE:(verification|add-to-cart|payment)\|/g, '')
 
   const parts: (string | { url: string; text: string })[] = []
@@ -413,8 +414,6 @@ export default function TaskCard({ task, onCancel, onRetryItem, onReExecute, onD
     return () => clearInterval(timer)
   }, [isRunning])
 
-  const isStuck = isRunning && elapsed > 10 * 60
-
   const formatElapsed = (seconds: number) => {
     if (seconds < 60) return `${seconds} 秒`
     const m = Math.floor(seconds / 60)
@@ -645,7 +644,7 @@ export default function TaskCard({ task, onCancel, onRetryItem, onReExecute, onD
                 {String(task.progressLog.length).padStart(2, '0')}
               </span>
               <span className="text-sm leading-relaxed text-blue-700 font-medium">
-                {renderMsgWithLinks(task.progressLog![task.progressLog!.length - 1])}
+                {renderMsgWithLinks(task.progressLog?.[task.progressLog.length - 1])}
               </span>
             </div>
             {task.progressLog.length > 1 && (
@@ -687,13 +686,13 @@ export default function TaskCard({ task, onCancel, onRetryItem, onReExecute, onD
             <div className="mt-3">
               <p className="text-sm font-medium text-gray-500 mb-2">执行过程</p>
               <div className="max-h-60 overflow-y-auto rounded-lg bg-gray-50 border border-gray-100 px-3 py-2 space-y-1 scroll-smooth">
-                {deduplicateLogs(task.progressLog!).map((entry, idx) => (
+                {deduplicateLogs(task.progressLog ?? []).map((entry, idx) => (
                   <div key={idx} className="flex items-start gap-2">
                     <span className="text-xs text-gray-300 flex-shrink-0 mt-0.5 font-mono">
                       {String(idx + 1).padStart(2, '0')}
                     </span>
                     <span className="text-sm leading-relaxed text-gray-600">
-                      {renderMsgWithLinks(task.progressLog![entry.originalIndex])}
+                      {renderMsgWithLinks(task.progressLog?.[entry.originalIndex])}
                     </span>
                   </div>
                 ))}
@@ -961,28 +960,17 @@ export default function TaskCard({ task, onCancel, onRetryItem, onReExecute, onD
               查看详情
             </button>
           )}
-          {(task.status === 'pending' || task.status === 'running') && !hasPendingConfirmation && (
+          {(task.status === 'pending' || task.status === 'running') && (
             <button
               onClick={(e) => {
                 e.stopPropagation()
-                onCancel(task.id)
-              }}
-              className="text-sm text-red-500 hover:text-red-700 transition-colors"
-            >
-              取消
-            </button>
-          )}
-          {isStuck && (
-            <button
-              onClick={(e) => {
-                e.stopPropagation()
-                if (confirm('任务已运行超过10分钟，可能已卡住。是否强制终止？')) {
+                if (confirm('确定要停止当前任务吗？')) {
                   onCancel(task.id)
                 }
               }}
               className="px-3 py-1.5 text-sm font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 transition-colors"
             >
-              ⚠ 强制终止
+              停止任务
             </button>
           )}
           {task.status === 'partial' && (

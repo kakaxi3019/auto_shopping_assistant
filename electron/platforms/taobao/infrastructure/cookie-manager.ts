@@ -6,14 +6,35 @@ export class CookieManager {
   private lastCookieSyncTime = 0
   private lastCookieToElectronSyncTime = 0
   private cookieSyncInProgress = false
+  private pendingSyncTimer: ReturnType<typeof setTimeout> | null = null
+  private pendingSyncResolve: (() => void) | null = null
 
   resetToElectronSyncTimer() {
     this.lastCookieToElectronSyncTime = 0
   }
 
   async syncCookiesToElectron(context: BrowserContext | null, auth: TaobaoAuth): Promise<void> {
+    if (this.pendingSyncTimer) {
+      await new Promise<void>(resolve => {
+        this.pendingSyncResolve = resolve
+      })
+      return
+    }
+
+    await new Promise<void>(resolve => {
+      this.pendingSyncTimer = setTimeout(() => {
+        this.pendingSyncTimer = null
+        resolve()
+      }, 1500)
+    })
+
+    if (this.pendingSyncResolve) {
+      this.pendingSyncResolve()
+      this.pendingSyncResolve = null
+    }
+
     const now = Date.now()
-    if (now - this.lastCookieToElectronSyncTime < 500) return
+    if (now - this.lastCookieToElectronSyncTime < 1500) return
 
     try {
       let sourceCookies: { name: string; value: string; domain: string; path: string; secure: boolean; httpOnly?: boolean; sameSite?: string; expires?: number }[] = []

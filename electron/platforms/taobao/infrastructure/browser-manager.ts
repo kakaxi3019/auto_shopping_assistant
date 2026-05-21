@@ -10,6 +10,9 @@ export class BrowserManager {
   private browser: Browser | null = null
   private context: BrowserContext | null = null
   private page: Page | null = null
+  private heartbeatTimer: ReturnType<typeof setInterval> | null = null
+  private static readonly HEARTBEAT_INTERVAL = 5 * 60 * 1000
+  private static readonly HEARTBEAT_URL = 'https://www.taobao.com'
 
   async ensureBrowser(
     auth: TaobaoAuth,
@@ -64,6 +67,7 @@ export class BrowserManager {
       await cookieManager.syncCookiesToElectron(this.context, auth)
 
       this.page = await this.context.newPage()
+      this.startHeartbeat()
       emitStatus('自动化引擎已就绪')
     }
 
@@ -87,9 +91,41 @@ export class BrowserManager {
   }
 
   cleanup() {
+    this.stopHeartbeat()
     this.page = null
     this.context = null
     this.browser = null
+  }
+
+  private startHeartbeat() {
+    this.stopHeartbeat()
+    this.heartbeatTimer = setInterval(async () => {
+      if (!this.context || !this.browser?.isConnected()) {
+        this.stopHeartbeat()
+        return
+      }
+      try {
+        const heartbeatPage = await this.context.newPage()
+        await heartbeatPage.goto(BrowserManager.HEARTBEAT_URL, {
+          waitUntil: 'domcontentloaded',
+          timeout: 30000,
+        })
+        await heartbeatPage.waitForTimeout(2000)
+        await heartbeatPage.close()
+        console.log('[Taobao] Heartbeat: session keep-alive ping completed')
+      } catch (e) {
+        console.log(`[Taobao] Heartbeat: keep-alive ping failed: ${e}`)
+      }
+    }, BrowserManager.HEARTBEAT_INTERVAL)
+    console.log('[Taobao] Heartbeat: session keep-alive started (5 min interval)')
+  }
+
+  private stopHeartbeat() {
+    if (this.heartbeatTimer) {
+      clearInterval(this.heartbeatTimer)
+      this.heartbeatTimer = null
+      console.log('[Taobao] Heartbeat: session keep-alive stopped')
+    }
   }
 
   async close() {

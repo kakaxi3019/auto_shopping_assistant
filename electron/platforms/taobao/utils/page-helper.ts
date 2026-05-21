@@ -75,14 +75,40 @@ export async function humanClickAt(win: BrowserWindow, x: number, y: number): Pr
   if (win.isDestroyed()) return
   const jitterX = x + Math.floor(Math.random() * 6) - 3
   const jitterY = y + Math.floor(Math.random() * 6) - 3
-  win.webContents.sendInputEvent({ type: 'mouseEnter', x: jitterX, y: jitterY })
+
+  const prevX = (win as any).__lastMouseX ?? jitterX - rand(50, 200)
+  const prevY = (win as any).__lastMouseY ?? jitterY - rand(50, 200)
+  const dx = jitterX - prevX
+  const dy = jitterY - prevY
+  const dist = Math.sqrt(dx * dx + dy * dy)
+  const steps = Math.max(5, Math.min(20, Math.floor(dist / 15)))
+
+  const cp1x = prevX + dx * 0.25 + (gaussRand() * dist * 0.08)
+  const cp1y = prevY + dy * 0.25 + (gaussRand() * dist * 0.08)
+  const cp2x = prevX + dx * 0.75 + (gaussRand() * dist * 0.08)
+  const cp2y = prevY + dy * 0.75 + (gaussRand() * dist * 0.08)
+
+  win.webContents.sendInputEvent({ type: 'mouseEnter', x: prevX, y: prevY })
+  await new Promise(r => setTimeout(r, rand(20, 50)))
+
+  for (let i = 0; i <= steps; i++) {
+    const t = i / steps
+    const ease = t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t
+    const mt = 1 - ease
+    const px = Math.round(mt * mt * mt * prevX + 3 * mt * mt * ease * cp1x + 3 * mt * ease * ease * cp2x + ease * ease * ease * jitterX)
+    const py = Math.round(mt * mt * mt * prevY + 3 * mt * mt * ease * cp1y + 3 * mt * ease * ease * cp2y + ease * ease * ease * jitterY)
+    win.webContents.sendInputEvent({ type: 'mouseMove', x: px, y: py })
+    await new Promise(r => setTimeout(r, 6 + Math.abs(gaussRand()) * 10))
+  }
+
   await new Promise(r => setTimeout(r, rand(30, 80)))
-  win.webContents.sendInputEvent({ type: 'mouseMove', x: jitterX, y: jitterY })
-  await new Promise(r => setTimeout(r, rand(50, 150)))
   win.webContents.sendInputEvent({ type: 'mouseDown', x: jitterX, y: jitterY, button: 'left', clickCount: 1 })
   await new Promise(r => setTimeout(r, rand(50, 120)))
   win.webContents.sendInputEvent({ type: 'mouseUp', x: jitterX, y: jitterY, button: 'left', clickCount: 1 })
   await new Promise(r => setTimeout(r, rand(30, 60)))
+
+  ;(win as any).__lastMouseX = jitterX
+  ;(win as any).__lastMouseY = jitterY
 }
 
 export async function humanClickElement(win: BrowserWindow, selectors: string[], textTargets?: string[]): Promise<{ clicked: boolean; text?: string; x?: number; y?: number }> {
@@ -108,13 +134,16 @@ export function rand(min: number, max: number): number {
   return Math.floor(Math.random() * (max - min + 1)) + min
 }
 
-export async function humanDelay(base: number, jitter?: number): Promise<void> {
-  const range = jitter ?? Math.ceil(base * 0.4)
+export function gaussRand(): number {
   const u1 = Math.random()
   const u2 = Math.random()
-  const normal = Math.sqrt(-2 * Math.log(Math.max(u1, 1e-10))) * Math.cos(2 * Math.PI * u2)
-  const ms = base + Math.round(normal * range * 0.5)
-  await new Promise(r => setTimeout(r, Math.max(150, ms)))
+  return Math.sqrt(-2 * Math.log(Math.max(u1, 1e-10))) * Math.cos(2 * Math.PI * u2)
+}
+
+export async function humanDelay(base: number, jitter?: number): Promise<void> {
+  const range = jitter ?? Math.ceil(base * 0.4)
+  const ms = base + Math.round(gaussRand() * range * 0.5)
+  await new Promise(r => setTimeout(r, Math.max(200, ms)))
 }
 
 export function injectOverlayBanner(win: BrowserWindow, message: string) {
@@ -156,14 +185,18 @@ export function injectCenterToast(win: BrowserWindow, message: string) {
       if (old) old.remove();
       var toast = document.createElement('div');
       toast.id = '__auto_shop_toast__';
-      toast.style.cssText = 'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:2147483647;padding:20px 32px;border-radius:12px;background:rgba(0,0,0,0.65);color:#fff;font-size:16px;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;text-align:center;line-height:1.6;pointer-events:none;opacity:0;transition:opacity 0.4s ease;max-width:360px;backdrop-filter:blur(8px);box-shadow:0 8px 32px rgba(0,0,0,0.3);';
+      toast.style.cssText = 'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%) scale(0.9);z-index:2147483647;padding:24px 40px;border-radius:16px;background:linear-gradient(135deg,rgba(37,99,235,0.95),rgba(29,78,216,0.95));color:#fff;font-size:18px;font-weight:600;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;text-align:center;line-height:1.6;pointer-events:none;opacity:0;transition:opacity 0.5s ease,transform 0.5s ease;max-width:420px;backdrop-filter:blur(12px);box-shadow:0 12px 40px rgba(37,99,235,0.4),0 0 0 1px rgba(255,255,255,0.1);border:1px solid rgba(255,255,255,0.15);text-shadow:0 1px 2px rgba(0,0,0,0.2);';
       toast.textContent = ${JSON.stringify(message)};
       document.documentElement.appendChild(toast);
-      requestAnimationFrame(function() { toast.style.opacity = '1'; });
+      requestAnimationFrame(function() {
+        toast.style.opacity = '1';
+        toast.style.transform = 'translate(-50%,-50%) scale(1)';
+      });
       setTimeout(function() {
         toast.style.opacity = '0';
-        setTimeout(function() { toast.remove(); }, 400);
-      }, 3000);
+        toast.style.transform = 'translate(-50%,-50%) scale(0.95)';
+        setTimeout(function() { toast.remove(); }, 500);
+      }, 8000);
     })();
   `;
   win.webContents.executeJavaScript(js).catch(() => {});

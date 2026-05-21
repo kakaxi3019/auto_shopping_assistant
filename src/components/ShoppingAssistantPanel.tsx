@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { api } from '../lib/api'
 
 type AmbiguityLevel = 'none' | 'low' | 'high'
@@ -64,6 +64,7 @@ interface ShoppingAssistantPanelProps {
   onRejectAction: () => Promise<boolean>
   onReopenWindow: () => Promise<boolean>
   onRetryItem: (taskId: number, itemName: string) => Promise<void>
+  onCancelTask: (taskId: number) => void
 }
 
 const matchMethodLabels: Record<string, { label: string; color: string; bg: string }> = {
@@ -110,6 +111,14 @@ const errorRetryable: Record<ErrorCategory, boolean> = {
   other: true,
 }
 
+interface SearchResult {
+  title: string
+  price: number
+  imageUrl?: string
+  url: string
+  shopName?: string
+}
+
 function cleanLogTags(msg: string): string {
   return msg
     .replace(/\|REOPEN:(.+?)\|(.+?)\|REOPEN_END\|/g, '$2')
@@ -118,10 +127,11 @@ function cleanLogTags(msg: string): string {
 }
 
 function renderLogWithLinks(
-  msg: string,
+  msg: string | undefined,
   _onReopenWindow: () => Promise<boolean>,
   onOpenUrl: (url: string) => Promise<void>,
 ) {
+  if (!msg || typeof msg !== 'string') return ''
   const cleaned = msg.replace(/\|REOPEN:(.+?)\|(.+?)\|REOPEN_END\|/g, '$2').replace(/\|SCENE:(verification|add-to-cart|payment)\|/g, '')
 
   const parts: (string | { url: string; text: string })[] = []
@@ -190,6 +200,14 @@ export default function ShoppingAssistantPanel({
   const [confirming, setConfirming] = useState(false)
   const [confirmActionStatus, setConfirmActionStatus] = useState<'idle' | 'loading' | 'success' | 'failed'>('idle')
   const [retryingItem, setRetryingItem] = useState<string | null>(null)
+  const [tick, setTick] = useState(0)
+  const [candidatesMap, setCandidatesMap] = useState<Record<number, SearchResult[]>>({})
+  const [originalPriceMap, setOriginalPriceMap] = useState<Record<number, number>>({})
+  const [orderIdMap, setOrderIdMap] = useState<Record<number, number>>({})
+  const [confirmingPurchase, setConfirmingPurchase] = useState<number | null>(null)
+  const [openingUrl, setOpeningUrl] = useState<string | null>(null)
+  const [openedUrl, setOpenedUrl] = useState<string | null>(null)
+  const [excludingOrderId, setExcludingOrderId] = useState<number | null>(null)
   const [expandedItems, setExpandedItems] = useState<Set<number>>(new Set())
   const [editingIndex, setEditingIndex] = useState<number | null>(null)
   const [editQuantity, setEditQuantity] = useState<number>(1)
@@ -269,6 +287,119 @@ export default function ShoppingAssistantPanel({
       }
     }
   }
+
+  const loadCandidates = useCallback(async (confirmationId: number) => {
+    if (candidatesMap[confirmationId]) return
+    try {
+      const result = await api.getPendingConfirmationById(confirmationId) as any
+      if (result) {
+        let candidates: SearchResult[] = []
+        try { candidates = JSON.parse(result.candidates) } catch { /* ignore */ }
+        setCandidatesMap(prev => ({ ...prev, [confirmationId]: candidates }))
+        if (result.originalPrice && result.originalPrice > 0) {
+          setOriginalPriceMap(prev => ({ ...prev, [confirmationId]: result.originalPrice }))
+        }
+        if (result.orderId) {
+          setOrderIdMap(prev => ({ ...prev, [confirmationId]: result.orderId }))
+        }
+      }
+    } catch { /* ignore */ }
+  }, [candidatesMap])
+
+  const handlePurchaseCandidate = async (confirmationId: number, candidate: SearchResult) => {
+    if (!activeTask) return
+    setOpeningUrl(candidate.url)
+    try {
+      const taskPaymentMode = activeTask.paymentMode || 'auto_pay'
+      const result = await api.purchaseCandidate(confirmationId, candidate.url, {
+        platform: 'taobao',
+        productName: candidate.title,
+        price: candidate.price,
+        imageUrl: candidate.imageUrl,
+        productUrl: candidate.url,
+        shopName: candidate.shopName,
+      }, taskPaymentMode) as { success: boolean; stage?: string; error?: string; autoPurchaseFailed?: string }
+      if (result.success) {
+        if (result.stage === 'auto_pay' || result.stage === 'cart_only') {
+          setCandidatesMap(prev => {
+            const next = { ...prev }
+            delete next[confirmationId]
+            return next
+          })
+        } else {
+          setOpenedUrl(candidate.url)
+        }
+      }
+    } catch (e) {
+      console.error('打开商品页面失败:', e)
+    } finally {
+      setOpeningUrl(null)
+    }
+  }
+
+  const handleConfirmPurchase = async (confirmationId: number, candidate: SearchResult) => {
+    setConfirmingPurchase(confirmationId)
+    try {
+      await api.confirmPurchaseFromSearch(confirmationId, {
+        platform: 'taobao',
+        productName: candidate.title,
+        price: candidate.price,
+        imageUrl: candidate.imageUrl,
+        productUrl: candidate.url,
+        shopName: candidate.shopName,
+      })
+      setCandidatesMap(prev => {
+        const next = { ...prev }
+        delete next[confirmationId]
+        return next
+      })
+    } finally {
+      setConfirmingPurchase(null)
+    }
+  }
+
+  const handleExcludeOrder = async (confirmationId: number, orderId: number) => {
+    setExcludingOrderId(orderId)
+    try {
+      await api.markOrderUnavailable(orderId)
+    } finally {
+      setExcludingOrderId(null)
+    }
+  }
+
+  const handleBatchIgnoreOutOfStock = async (items: { pendingConfirmationId?: number }[]) => {
+    for (const item of items) {
+      if (item.pendingConfirmationId) {
+        try {
+          await api.dismissPendingConfirmation(item.pendingConfirmationId)
+        } catch { /* ignore */ }
+      }
+    }
+    setCandidatesMap(prev => {
+      const next = { ...prev }
+      items.forEach(item => {
+        if (item.pendingConfirmationId) delete next[item.pendingConfirmationId]
+      })
+      return next
+    })
+  }
+
+  useEffect(() => {
+    if (!activeTask?.itemResults) return
+    let results: { status: string; pendingConfirmationId?: number }[] = []
+    try { results = JSON.parse(activeTask.itemResults) } catch { return }
+    for (const item of results) {
+      if ((item.status === 'failed' || item.status === 'pending') && item.pendingConfirmationId) {
+        loadCandidates(item.pendingConfirmationId)
+      }
+    }
+  }, [activeTask?.itemResults, loadCandidates])
+
+  useEffect(() => {
+    if (mode !== 'progress' || !activeTask || (activeTask.status !== 'running' && activeTask.status !== 'partial')) return
+    const timer = setInterval(() => setTick(t => t + 1), 1000)
+    return () => clearInterval(timer)
+  }, [mode, activeTask?.status])
 
   const handleConfirm = async () => {
     if (!preview) return
@@ -680,11 +811,15 @@ export default function ShoppingAssistantPanel({
     }
     const labels = sceneLabels[sceneFromLog]
 
-    let itemResults: { name: string; quantity: number; status: string; error?: string }[] = safeItemResults
+    let itemResults: { name: string; quantity: number; status: string; error?: string; pendingConfirmationId?: number; currentPrice?: number; lastPrice?: number }[] = safeItemResults
 
     const successCount = itemResults.filter(r => r.status === 'success').length
     const failedCount = itemResults.filter(r => r.status === 'failed').length
     const pendingCount = itemResults.filter(r => r.status === 'pending').length
+
+    const outOfStockItems = itemResults.filter(r =>
+      (r.status === 'failed' || r.status === 'pending') && r.pendingConfirmationId
+    )
 
     return (
       <div className="flex-1 overflow-y-auto p-5 space-y-4">
@@ -773,6 +908,27 @@ export default function ShoppingAssistantPanel({
           </div>
         </div>
 
+        {isRunning && (
+            <button
+              onClick={() => {
+                if (confirm('确定要停止当前任务吗？')) {
+                  onCancelTask(activeTask.id)
+                }
+              }}
+              className="px-3 py-1.5 text-sm font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 transition-colors"
+            >
+              停止任务
+            </button>
+        )}
+        {activeTask.status === 'partial' && (
+          <button
+            onClick={() => onCancelTask(activeTask.id)}
+            className="px-3 py-1.5 text-sm font-medium text-gray-500 bg-gray-50 rounded-lg hover:bg-gray-100 hover:text-red-600 transition-colors"
+          >
+            放弃待处理项
+          </button>
+        )}
+
         {hasProgressLog && (
           <div>
             <p className="text-sm font-medium text-gray-500 mb-2">执行过程</p>
@@ -794,27 +950,167 @@ export default function ShoppingAssistantPanel({
         {itemResults.length > 0 && (
           <div>
             <p className="text-sm font-medium text-gray-500 mb-2">商品结果</p>
+            {outOfStockItems.length > 0 && (
+              <div className="mb-2">
+                <button
+                  onClick={() => handleBatchIgnoreOutOfStock(outOfStockItems)}
+                  className="px-3 py-1.5 text-sm font-medium text-gray-500 bg-gray-50 rounded-lg hover:bg-gray-100 hover:text-gray-700 transition-colors"
+                >
+                  忽略所有缺货商品，继续购买其余项
+                </button>
+              </div>
+            )}
             <div className="space-y-1.5">
               {itemResults.map((item, i) => {
                 const errCat = item.status === 'failed' ? categorizeError(item.error) : null
                 const retryable = errCat ? errorRetryable[errCat] : false
+                const candidates = item.pendingConfirmationId ? candidatesMap[item.pendingConfirmationId] : undefined
                 return (
-                  <div key={i} className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm ${
-                    item.status === 'success' ? 'bg-green-50 text-green-700' :
-                    item.status === 'pending' ? 'bg-amber-50 text-amber-600' :
-                    'bg-red-50 text-red-600'
-                  }`}>
-                    <span>{item.status === 'success' ? '✓' : item.status === 'pending' ? '⏳' : '✗'}</span>
-                    <span className="truncate flex-1">{item.name} x{item.quantity}</span>
-                    {item.error && <span className="text-xs text-gray-400 truncate max-w-[120px]" title={item.error}>{item.error}</span>}
-                    {item.status === 'failed' && retryable && (
-                      <button
-                        onClick={() => handleRetry(item.name)}
-                        disabled={retryingItem === item.name || activeTask?.status === 'running'}
-                        className="flex-shrink-0 px-2 py-0.5 text-xs font-medium text-blue-600 bg-blue-50 rounded hover:bg-blue-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                      >
-                        {retryingItem === item.name ? '重试中...' : '重试'}
-                      </button>
+                  <div key={i}>
+                    <div className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm ${
+                      item.status === 'success' ? 'bg-green-50 text-green-700' :
+                      item.status === 'pending' ? 'bg-amber-50 text-amber-600' :
+                      'bg-red-50 text-red-600'
+                    }`}>
+                      <span>{item.status === 'success' ? '✓' : item.status === 'pending' ? '⏳' : '✗'}</span>
+                      <span className="truncate flex-1">{item.name} x{item.quantity}</span>
+                      {item.status === 'pending' && item.currentPrice && item.currentPrice > 0 && item.lastPrice && item.lastPrice > 0 && (
+                        <span className="text-xs text-amber-500 flex-shrink-0">
+                          ¥{item.currentPrice.toFixed(2)}
+                          {(() => {
+                            const diff = item.currentPrice! - item.lastPrice!
+                            const pct = Math.abs(diff / item.lastPrice! * 100)
+                            if (Math.abs(diff) < 0.01) return null
+                            return diff > 0
+                              ? <span className="text-red-400 ml-1">↑{pct.toFixed(0)}%</span>
+                              : <span className="text-green-500 ml-1">↓{pct.toFixed(0)}%</span>
+                          })()}
+                        </span>
+                      )}
+                      {item.error && <span className="text-xs text-gray-400 truncate max-w-[120px]" title={item.error}>{item.error}</span>}
+                      {item.status === 'failed' && retryable && (
+                        <button
+                          onClick={() => handleRetry(item.name)}
+                          disabled={retryingItem === item.name || activeTask?.status === 'running'}
+                          className="flex-shrink-0 px-2 py-0.5 text-xs font-medium text-blue-600 bg-blue-50 rounded hover:bg-blue-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          {retryingItem === item.name ? '重试中...' : '重试'}
+                        </button>
+                      )}
+                      {item.status === 'failed' && errCat === 'out_of_stock' && item.pendingConfirmationId && orderIdMap[item.pendingConfirmationId] && (
+                        <button
+                          onClick={() => handleExcludeOrder(item.pendingConfirmationId!, orderIdMap[item.pendingConfirmationId!])}
+                          disabled={excludingOrderId === orderIdMap[item.pendingConfirmationId!]}
+                          className="flex-shrink-0 px-2 py-0.5 text-xs font-medium text-gray-500 bg-gray-50 rounded hover:bg-gray-100 hover:text-gray-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                          title="忽略此商品，后续搜索时不再匹配"
+                        >
+                          {excludingOrderId === orderIdMap[item.pendingConfirmationId!] ? '处理中...' : '忽略'}
+                        </button>
+                      )}
+                    </div>
+
+                    {(item.status === 'failed' || item.status === 'pending') && candidates && candidates.length > 0 && (
+                      <div className="mt-2 ml-4">
+                        <div className="flex items-center gap-2 mb-2">
+                          <p className="text-sm font-medium text-orange-600">找到 {candidates.length} 个替代商品，请选择：</p>
+                          {item.pendingConfirmationId && originalPriceMap[item.pendingConfirmationId] && originalPriceMap[item.pendingConfirmationId] > 0 && (
+                            <span className="text-sm text-gray-400">原价 ¥{originalPriceMap[item.pendingConfirmationId].toFixed(2)}</span>
+                          )}
+                          <button
+                            onClick={async () => {
+                              if (item.pendingConfirmationId) {
+                                try { await api.dismissPendingConfirmation(item.pendingConfirmationId) } catch { /* ignore */ }
+                                setCandidatesMap(prev => {
+                                  const next = { ...prev }
+                                  delete next[item.pendingConfirmationId!]
+                                  return next
+                                })
+                              }
+                            }}
+                            className="ml-auto px-2.5 py-0.5 text-xs font-medium text-gray-400 bg-gray-50 rounded hover:bg-gray-100 hover:text-gray-600 transition-colors"
+                          >
+                            不想买了
+                          </button>
+                        </div>
+                        <div className="space-y-2 max-h-72 overflow-y-auto">
+                          {candidates.map((c, ci) => {
+                            const isOpening = openingUrl === c.url
+                            const isOpened = openedUrl === c.url
+                            return (
+                              <div key={ci} className={`flex gap-3 p-2.5 bg-white rounded-lg border transition-colors ${
+                                isOpened ? 'border-blue-300 bg-blue-50/30' :
+                                'border-orange-100 hover:border-orange-300'
+                              }`}>
+                                {c.imageUrl && (
+                                  <img src={c.imageUrl} alt={c.title} className="w-14 h-14 object-cover rounded-md flex-shrink-0" />
+                                )}
+                                <div className="flex-1 min-w-0">
+                                  <p className="text-sm font-medium text-gray-800 truncate" title={c.title}>{c.title}</p>
+                                  <div className="flex items-center gap-2 mt-0.5">
+                                    <span className="text-sm font-bold text-red-500">¥{c.price.toFixed(2)}</span>
+                                    {item.pendingConfirmationId && originalPriceMap[item.pendingConfirmationId] && originalPriceMap[item.pendingConfirmationId] > 0 && (() => {
+                                      const origPrice = originalPriceMap[item.pendingConfirmationId!]
+                                      const diff = c.price - origPrice
+                                      const pct = Math.abs(diff / origPrice * 100)
+                                      if (Math.abs(diff) < 0.01) return <span className="text-sm text-green-500 font-medium">价格相同</span>
+                                      return diff > 0
+                                        ? <span className="text-sm text-red-400 font-medium">↑ ¥{diff.toFixed(2)}（贵 {pct.toFixed(0)}%）</span>
+                                          : <span className="text-sm text-green-500 font-medium">↓ ¥{Math.abs(diff).toFixed(2)}（省 {pct.toFixed(0)}%）</span>
+                                    })()}
+                                    {c.shopName && <span className="text-sm text-gray-400 truncate">{c.shopName}</span>}
+                                  </div>
+                                  {!isOpened && (
+                                    <div className="mt-1.5">
+                                      <button
+                                        onClick={() => handlePurchaseCandidate(item.pendingConfirmationId!, c)}
+                                        disabled={isOpening}
+                                        className="px-3 py-1 text-sm font-medium text-white bg-orange-500 rounded hover:bg-orange-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                                      >
+                                        {isOpening ? '正在打开...' : '选择购买'}
+                                      </button>
+                                    </div>
+                                  )}
+                                  {isOpened && (
+                                    <div className="mt-1.5 space-y-1.5">
+                                      <p className="text-sm text-blue-600 font-medium">已打开商品页面，请在弹出的窗口中选择规格并购买</p>
+                                      <div className="flex items-center gap-2">
+                                        <button
+                                          onClick={() => handleConfirmPurchase(item.pendingConfirmationId!, c)}
+                                          disabled={confirmingPurchase === item.pendingConfirmationId}
+                                          className="px-3 py-1 text-sm font-medium text-white bg-green-500 rounded hover:bg-green-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                                        >
+                                          {confirmingPurchase === item.pendingConfirmationId ? '处理中...' : '加入历史订单'}
+                                        </button>
+                                      </div>
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            )
+                          })}
+                        </div>
+                      </div>
+                    )}
+
+                    {(item.status === 'failed' || item.status === 'pending') && item.pendingConfirmationId && candidates && candidates.length === 0 && (
+                      <div className="mt-2 ml-4 p-2.5 bg-gray-50 rounded-lg flex items-center justify-between">
+                        <p className="text-sm text-gray-500">未找到替代商品，请手动搜索购买</p>
+                        <button
+                          onClick={async () => {
+                            if (item.pendingConfirmationId) {
+                              try { await api.dismissPendingConfirmation(item.pendingConfirmationId) } catch { /* ignore */ }
+                              setCandidatesMap(prev => {
+                                const next = { ...prev }
+                                delete next[item.pendingConfirmationId!]
+                                return next
+                              })
+                            }
+                          }}
+                          className="px-2.5 py-0.5 text-xs font-medium text-gray-400 bg-white rounded hover:bg-gray-100 hover:text-gray-600 transition-colors"
+                        >
+                          不想买了
+                        </button>
+                      </div>
                     )}
                   </div>
                 )
