@@ -5,6 +5,8 @@ process.on('warning', (warning) => {
 })
 
 import { app, BrowserWindow, ipcMain, Menu, session } from 'electron'
+
+app.commandLine.appendSwitch('disable-blink-features', 'AutomationControlled')
 import { join } from 'path'
 import { Database } from './db/database'
 import { registerIpcHandlers } from './ipc/handlers'
@@ -41,6 +43,36 @@ function createWindow() {
 
   mainWindow.webContents.on('did-fail-load', (_event, errorCode, errorDesc, validatedURL) => {
     console.error(`[Startup] Page failed to load: ${errorCode} ${errorDesc} ${validatedURL}`)
+  })
+
+  mainWindow.webContents.on('crashed', (_event, killed) => {
+    console.error(`[DIAG] mainWindow webContents CRASHED! killed=${killed}`)
+  })
+
+  mainWindow.webContents.on('render-process-gone', (_event, details) => {
+    console.error(`[DIAG] mainWindow render-process-gone! reason=${details.reason} exitCode=${details.exitCode}`)
+  })
+
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    const allowedPrefixes = [
+      'http://localhost:',
+      'file://',
+    ]
+    const isAllowed = allowedPrefixes.some(p => url.startsWith(p))
+    if (!isAllowed) {
+      console.error(`[DIAG] mainWindow will-navigate BLOCKED: ${url}`)
+      event.preventDefault()
+    } else {
+      console.log(`[DIAG] mainWindow will-navigate allowed: ${url}`)
+    }
+  })
+
+  mainWindow.webContents.on('did-navigate', (_event, url) => {
+    console.log(`[DIAG] mainWindow did-navigate: ${url}`)
+  })
+
+  mainWindow.webContents.on('did-navigate-in-page', (_event, url) => {
+    console.log(`[DIAG] mainWindow did-navigate-in-page: ${url}`)
   })
 
   if (process.env.VITE_DEV_SERVER_URL) {

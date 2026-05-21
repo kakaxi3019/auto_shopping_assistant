@@ -52,9 +52,9 @@ interface TaskCardProps {
   onOpenPanel?: () => void
 }
 
-const statusConfig: Record<string, { label: string; color: string; bg: string }> = {
-  pending: { label: '等待中', color: 'text-gray-600', bg: 'bg-gray-100' },
-  running: { label: '执行中', color: 'text-blue-600', bg: 'bg-blue-50' },
+const statusConfig: Record<string, { label: string; color: string; bg: string; icon?: string }> = {
+  pending: { label: '排队中', color: 'text-gray-500', bg: 'bg-gray-100', icon: '⏳' },
+  running: { label: '执行中', color: 'text-blue-600', bg: 'bg-blue-50', icon: '▶' },
   success: { label: '成功', color: 'text-green-600', bg: 'bg-green-50' },
   failed: { label: '失败', color: 'text-red-600', bg: 'bg-red-50' },
   partial: { label: '待确认', color: 'text-amber-600', bg: 'bg-amber-50' },
@@ -100,40 +100,28 @@ function cleanLogTags(msg: string): string {
   return msg
     .replace(/\|REOPEN:(.+?)\|(.+?)\|REOPEN_END\|/g, '$2')
     .replace(/\|LINK:(.+?)\|(.+?)\|LINK_END\|/g, '$2')
+    .replace(/\|SCENE:(verification|add-to-cart|payment)\|/g, '')
 }
 
 function renderMsgWithLinks(msg: string) {
-  const parts: (string | { url: string; text: string; isReopen?: boolean })[] = []
-  let remaining = msg
+  const cleaned = msg.replace(/\|REOPEN:(.+?)\|(.+?)\|REOPEN_END\|/g, '$2').replace(/\|SCENE:(verification|add-to-cart|payment)\|/g, '')
 
-  const reopenRegex = /\|REOPEN:(.+?)\|(.+?)\|REOPEN_END\|/g
+  const parts: (string | { url: string; text: string })[] = []
+  const linkRegex = /\|LINK:(.+?)\|(.+?)\|LINK_END\|/g
   let lastIndex = 0
   let match: RegExpExecArray | null
-  while ((match = reopenRegex.exec(remaining)) !== null) {
+  while ((match = linkRegex.exec(cleaned)) !== null) {
     if (match.index > lastIndex) {
-      parts.push(remaining.substring(lastIndex, match.index))
+      parts.push(cleaned.substring(lastIndex, match.index))
     }
-    parts.push({ url: match[1], text: match[2], isReopen: true })
+    parts.push({ url: match[1], text: match[2] })
     lastIndex = match.index + match[0].length
   }
-  if (lastIndex < remaining.length) {
-    const rest = remaining.substring(lastIndex)
-    const linkRegex = /\|LINK:(.+?)\|(.+?)\|LINK_END\|/g
-    let linkLastIndex = 0
-    let linkMatch: RegExpExecArray | null
-    while ((linkMatch = linkRegex.exec(rest)) !== null) {
-      if (linkMatch.index > linkLastIndex) {
-        parts.push(rest.substring(linkLastIndex, linkMatch.index))
-      }
-      parts.push({ url: linkMatch[1], text: linkMatch[2] })
-      linkLastIndex = linkMatch.index + linkMatch[0].length
-    }
-    if (linkLastIndex < rest.length) {
-      parts.push(rest.substring(linkLastIndex))
-    }
+  if (lastIndex < cleaned.length) {
+    parts.push(cleaned.substring(lastIndex))
   }
 
-  if (parts.length === 0) return cleanLogTags(msg)
+  if (parts.length === 0) return cleaned
 
   const handleOpenWindow = async (e: React.MouseEvent, url: string) => {
     e.stopPropagation()
@@ -147,33 +135,10 @@ function renderMsgWithLinks(msg: string) {
     }
   }
 
-  const handleReopen = async (e: React.MouseEvent) => {
-    e.stopPropagation()
-    try {
-      const result = await api.reopenConfirmationWindow() as boolean
-      if (!result) {
-        alert('无法重新打开窗口，请点击"操作失败"取消当前任务，然后重新下单。')
-      }
-    } catch (e) {
-      alert('重新打开窗口失败: ' + String(e))
-    }
-  }
-
   return (
     <>
       {parts.map((part, i) => {
-        if (typeof part === 'string') return cleanLogTags(part)
-        if (part.isReopen) {
-          return (
-            <button
-              key={i}
-              onClick={handleReopen}
-              className="text-blue-500 hover:text-blue-700 underline underline-offset-2"
-            >
-              {part.text}
-            </button>
-          )
-        }
+        if (typeof part === 'string') return part
         return (
           <button
             key={i}
@@ -283,7 +248,10 @@ export default function TaskCard({ task, onCancel, onRetryItem, onReExecute, onD
     r.status === 'failed' && categorizeError(r.error) === 'out_of_stock' && r.pendingConfirmationId
   )
 
+  const isRunning = task.status === 'running'
   let displayStatus = task.status
+  const isQueued = isRunning && task.progress === '排队中，等待前一个任务完成...'
+  if (isQueued) displayStatus = 'pending'
 
   const config = statusConfig[displayStatus] || statusConfig.pending
   const isTerminal = ['success', 'failed', 'cancelled'].includes(displayStatus)
@@ -432,19 +400,8 @@ export default function TaskCard({ task, onCancel, onRetryItem, onReExecute, onD
     }
   }
 
-  const handleMarkUnpaid = async (itemName: string) => {
-    setConfirmingPayment(itemName)
-    try {
-      await api.markUnpaid(task.id, itemName)
-    } finally {
-      setConfirmingPayment(null)
-    }
-  }
-
-  const isRunning = task.status === 'running'
   const hasPendingConfirmation = isRunning && task.progressLog?.some(msg => msg.includes('|REOPEN:')) === true
   const isWindowClosed = hasPendingConfirmation && (task.progressLog?.some(msg => msg.includes('操作窗口已关闭')) === true)
-  const [confirmActionStatus, setConfirmActionStatus] = useState<'idle' | 'loading' | 'success' | 'failed'>('idle')
   const [elapsed, setElapsed] = useState(() => {
     if (!isRunning || !task.startedAt) return 0
     return Math.floor((Date.now() - new Date(task.startedAt).getTime()) / 1000)
@@ -456,55 +413,7 @@ export default function TaskCard({ task, onCancel, onRetryItem, onReExecute, onD
     return () => clearInterval(timer)
   }, [isRunning])
 
-  useEffect(() => {
-    if (hasPendingConfirmation && confirmActionStatus !== 'idle') {
-      setConfirmActionStatus('idle')
-    }
-  }, [hasPendingConfirmation])
-
   const isStuck = isRunning && elapsed > 10 * 60
-
-  const handleConfirmAction = async (e: React.MouseEvent) => {
-    e.stopPropagation()
-    setConfirmActionStatus('loading')
-    try {
-      const result = await api.confirmAction() as boolean
-      if (result) {
-        setConfirmActionStatus('success')
-      } else {
-        setConfirmActionStatus('failed')
-      }
-    } catch {
-      setConfirmActionStatus('failed')
-    }
-  }
-
-  const handleRejectAction = async (e: React.MouseEvent) => {
-    e.stopPropagation()
-    setConfirmActionStatus('loading')
-    try {
-      const result = await api.rejectAction() as boolean
-      if (result) {
-        setConfirmActionStatus('success')
-      } else {
-        setConfirmActionStatus('failed')
-      }
-    } catch {
-      setConfirmActionStatus('failed')
-    }
-  }
-
-  const handleReopenWindow = async (e: React.MouseEvent) => {
-    e.stopPropagation()
-    try {
-      const result = await api.reopenConfirmationWindow() as boolean
-      if (!result) {
-        alert('无法重新打开窗口，请点击"操作失败"取消当前任务，然后重新下单。')
-      }
-    } catch {
-      alert('重新打开窗口失败，请点击"操作失败"取消当前任务，然后重新下单。')
-    }
-  }
 
   const formatElapsed = (seconds: number) => {
     if (seconds < 60) return `${seconds} 秒`
@@ -539,8 +448,11 @@ export default function TaskCard({ task, onCancel, onRetryItem, onReExecute, onD
     return 0
   })()
 
-  const cardStyle = isRunning
-    ? 'bg-gradient-to-r from-blue-50 to-white border-2 border-blue-400 shadow-blue-100 shadow-md animate-breathing-glow'
+  const isPending = task.status === 'pending' || isQueued
+  const cardStyle = isQueued
+    ? 'bg-white/60 border border-gray-200 border-l-4 border-l-gray-300'
+    : isRunning
+      ? 'bg-gradient-to-r from-blue-50 to-white border-2 border-blue-400 shadow-blue-100 shadow-md animate-breathing-glow'
     : recentlyCompleted && task.status === 'success'
       ? 'bg-gradient-to-r from-green-50 to-white border-2 border-green-400 shadow-green-100 shadow-md'
       : recentlyCompleted && (task.status === 'failed' || task.status === 'partial')
@@ -553,7 +465,9 @@ export default function TaskCard({ task, onCancel, onRetryItem, onReExecute, onD
               ? 'bg-white border border-gray-100 border-l-4 border-l-gray-300 hover:shadow-md'
               : task.status === 'partial'
                 ? 'bg-white border border-gray-100 border-l-4 border-l-amber-400 hover:shadow-md'
-                : 'bg-white border border-gray-100 hover:shadow-md'
+                : isPending
+                  ? 'bg-white/60 border border-gray-200 border-l-4 border-l-gray-300'
+                  : 'bg-white border border-gray-100 hover:shadow-md'
 
   return (
     <div id={`task-card-${task.id}`} ref={cardRef} className={`relative rounded-xl shadow-sm transition-all duration-500 ${fadingOut ? 'opacity-0 -translate-y-2 scale-[0.98] pointer-events-none' : 'opacity-100 translate-y-0 scale-100'} ${cardStyle} ${shaking ? 'animate-shake' : ''}`}>
@@ -568,7 +482,15 @@ export default function TaskCard({ task, onCancel, onRetryItem, onReExecute, onD
           />
         </div>
       )}
-      {isRunning && (
+      {isQueued && (
+        <div className="px-4 pt-3 pb-2">
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-gray-400">⏳</span>
+            <span className="text-sm text-gray-400">排队中，等待前一个任务完成...</span>
+          </div>
+        </div>
+      )}
+      {isRunning && !isQueued && (
         <div className="px-4 pt-3 pb-2">
           <div className="flex items-center justify-between mb-2">
             <div className="flex items-center gap-2">
@@ -657,7 +579,7 @@ export default function TaskCard({ task, onCancel, onRetryItem, onReExecute, onD
         <div className="flex items-start justify-between">
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2">
-              <p className="text-base font-medium text-gray-900 truncate">{task.instruction}</p>
+              <p className={`text-base font-medium truncate ${isPending ? 'text-gray-500' : 'text-gray-900'}`}>{task.instruction}</p>
               {canExpand && (
                 <svg
                   className={`w-4 h-4 text-gray-400 transition-transform flex-shrink-0 ${expanded ? 'rotate-180' : ''}`}
@@ -709,6 +631,7 @@ export default function TaskCard({ task, onCancel, onRetryItem, onReExecute, onD
             )}
           </div>
           <span className={`ml-3 flex-shrink-0 px-2.5 py-1 rounded-full text-sm font-medium ${config.bg} ${config.color}`}>
+            {config.icon && <span className="mr-1">{config.icon}</span>}
             {config.label}
           </span>
         </div>
@@ -734,69 +657,25 @@ export default function TaskCard({ task, onCancel, onRetryItem, onReExecute, onD
 
       {hasPendingConfirmation && (
         <div className="mx-4 mb-2 p-3 rounded-lg bg-amber-50 border border-amber-200">
-          {isWindowClosed ? (
-            <>
-              <div className="flex items-center gap-2 mb-2">
-                <span className="text-base">🪟</span>
-                <span className="text-sm font-semibold text-amber-700">操作窗口已关闭</span>
-              </div>
-              <p className="text-sm text-amber-600 mb-2">如需继续操作，请点击"重新打开窗口"，或点击"操作失败"取消当前任务</p>
-            </>
-          ) : (
-            <>
-              <div className="flex items-center gap-2 mb-2">
-                <span className="text-base">⏸️</span>
-                <span className="text-sm font-semibold text-amber-700">请在弹出的窗口中完成操作</span>
-              </div>
-              <p className="text-sm text-amber-600 mb-2">系统已打开操作窗口，请在窗口中完成规格选择或付款，完成后点击下方按钮继续</p>
-            </>
-          )}
-          {confirmActionStatus === 'success' && (
-            <div className="flex items-start gap-2 mb-2 p-2 bg-green-50 rounded-md border border-green-200">
-              <span className="text-sm">✅</span>
-              <div>
-                <p className="text-sm font-medium text-green-600">操作已确认</p>
-                <p className="text-xs text-green-500 mt-0.5">系统正在继续执行，请稍候...</p>
-              </div>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <span className="text-base">{isWindowClosed ? '🪟' : '⏸️'}</span>
+              <span className="text-sm font-semibold text-amber-700">
+                {isWindowClosed ? '操作窗口已关闭' : '等待操作确认'}
+              </span>
             </div>
-          )}
-          {confirmActionStatus === 'failed' && (
-            <div className="flex items-start gap-2 mb-2 p-2 bg-red-50 rounded-md border border-red-200">
-              <span className="text-sm">⚠️</span>
-              <div>
-                <p className="text-sm font-medium text-red-600">操作未生效</p>
-                <p className="text-xs text-red-500 mt-0.5">操作会话可能已过期，请点击"操作失败"取消当前任务后重新下单</p>
-              </div>
-            </div>
-          )}
-          <div className="flex items-center gap-2">
-            {isWindowClosed && (
-              <button
-                onClick={handleReopenWindow}
-                disabled={confirmActionStatus === 'loading'}
-                className="px-3 py-1.5 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors"
-              >
-                🪟 重新打开窗口
-              </button>
-            )}
             <button
-              onClick={handleConfirmAction}
-              disabled={confirmActionStatus !== 'idle'}
-              className="px-3 py-1.5 text-sm font-medium text-white bg-green-600 rounded-lg hover:bg-green-700 transition-colors"
+              onClick={(e) => {
+                e.stopPropagation()
+                if (onOpenPanel) {
+                  onOpenPanel()
+                } else {
+                  setExpanded(true)
+                }
+              }}
+              className="px-3 py-1.5 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors"
             >
-              {confirmActionStatus === 'loading' ? (
-                <span className="flex items-center gap-1.5">
-                  <span className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                  处理中...
-                </span>
-              ) : confirmActionStatus === 'success' ? '✅ 已确认' : '✓ 已完成操作'}
-            </button>
-            <button
-              onClick={handleRejectAction}
-              disabled={confirmActionStatus === 'loading' || confirmActionStatus === 'success'}
-              className="px-3 py-1.5 text-sm font-medium text-white bg-red-500 rounded-lg hover:bg-red-600 transition-colors"
-            >
-              ✗ 操作失败
+              📋 助手面板
             </button>
           </div>
         </div>
@@ -929,7 +808,7 @@ export default function TaskCard({ task, onCancel, onRetryItem, onReExecute, onD
                           </button>
                         )}
                         {item.status === 'success' && item.pendingPayment && (
-                          <div className="ml-2 flex-shrink-0 flex items-center gap-1.5">
+                          <div className="ml-2 flex-shrink-0">
                             <button
                               onClick={(e) => {
                                 e.stopPropagation()
@@ -939,16 +818,6 @@ export default function TaskCard({ task, onCancel, onRetryItem, onReExecute, onD
                               className="px-2.5 py-1 text-sm font-medium text-green-600 bg-green-50 rounded-md hover:bg-green-100 transition-colors disabled:opacity-50"
                             >
                               {confirmingPayment === item.name ? '处理中...' : '确认已付款'}
-                            </button>
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation()
-                                handleMarkUnpaid(item.name)
-                              }}
-                              disabled={confirmingPayment === item.name}
-                              className="px-2.5 py-1 text-sm font-medium text-gray-500 bg-gray-50 rounded-md hover:bg-gray-100 transition-colors disabled:opacity-50"
-                            >
-                              未付款
                             </button>
                           </div>
                         )}
@@ -1023,15 +892,6 @@ export default function TaskCard({ task, onCancel, onRetryItem, onReExecute, onD
                                         >
                                           {confirmingPurchase === item.pendingConfirmationId ? '处理中...' : '加入历史订单'}
                                         </button>
-                                        <button
-                                          onClick={(e) => {
-                                            e.stopPropagation()
-                                            setOpenedUrl(null)
-                                          }}
-                                          className="px-3 py-1 text-sm font-medium text-gray-500 bg-gray-100 rounded hover:bg-gray-200 transition-colors"
-                                        >
-                                          取消
-                                        </button>
                                       </div>
                                     </div>
                                   )}
@@ -1094,48 +954,12 @@ export default function TaskCard({ task, onCancel, onRetryItem, onReExecute, onD
             <button
               onClick={(e) => {
                 e.stopPropagation()
-                if (onOpenPanel) {
-                  onOpenPanel()
-                } else {
-                  setExpanded(true)
-                }
+                setExpanded(true)
               }}
               className="text-sm text-blue-500 hover:text-blue-700 transition-colors"
             >
-              {onOpenPanel && isRunning ? '📋 助手面板' : '查看详情'}
+              查看详情
             </button>
-          )}
-          {hasPendingConfirmation && (
-            <>
-              {isWindowClosed && (
-                <button
-                  onClick={handleReopenWindow}
-                  disabled={confirmActionStatus === 'loading'}
-                  className="px-3 py-1.5 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors"
-                >
-                  🪟 重新打开
-                </button>
-              )}
-              <button
-                onClick={handleConfirmAction}
-                disabled={confirmActionStatus !== 'idle'}
-                className="px-3 py-1.5 text-sm font-medium text-white bg-green-600 rounded-lg hover:bg-green-700 transition-colors"
-              >
-                {confirmActionStatus === 'loading' ? (
-                  <span className="flex items-center gap-1.5">
-                    <span className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                    处理中
-                  </span>
-                ) : confirmActionStatus === 'success' ? '✅ 已确认' : '✓ 已完成'}
-              </button>
-              <button
-                onClick={handleRejectAction}
-                disabled={confirmActionStatus === 'loading' || confirmActionStatus === 'success'}
-                className="px-3 py-1.5 text-sm font-medium text-white bg-red-500 rounded-lg hover:bg-red-600 transition-colors"
-              >
-                ✗ 失败
-              </button>
-            </>
           )}
           {(task.status === 'pending' || task.status === 'running') && !hasPendingConfirmation && (
             <button

@@ -114,66 +114,37 @@ function cleanLogTags(msg: string): string {
   return msg
     .replace(/\|REOPEN:(.+?)\|(.+?)\|REOPEN_END\|/g, '$2')
     .replace(/\|LINK:(.+?)\|(.+?)\|LINK_END\|/g, '$2')
+    .replace(/\|SCENE:(verification|add-to-cart|payment)\|/g, '')
 }
 
 function renderLogWithLinks(
   msg: string,
-  onReopenWindow: () => Promise<boolean>,
+  _onReopenWindow: () => Promise<boolean>,
   onOpenUrl: (url: string) => Promise<void>,
 ) {
-  const parts: (string | { url: string; text: string; isReopen?: boolean })[] = []
-  let remaining = msg
+  const cleaned = msg.replace(/\|REOPEN:(.+?)\|(.+?)\|REOPEN_END\|/g, '$2').replace(/\|SCENE:(verification|add-to-cart|payment)\|/g, '')
 
-  const reopenRegex = /\|REOPEN:(.+?)\|(.+?)\|REOPEN_END\|/g
+  const parts: (string | { url: string; text: string })[] = []
+  const linkRegex = /\|LINK:(.+?)\|(.+?)\|LINK_END\|/g
   let lastIndex = 0
   let match: RegExpExecArray | null
-  while ((match = reopenRegex.exec(remaining)) !== null) {
+  while ((match = linkRegex.exec(cleaned)) !== null) {
     if (match.index > lastIndex) {
-      parts.push(remaining.substring(lastIndex, match.index))
+      parts.push(cleaned.substring(lastIndex, match.index))
     }
-    parts.push({ url: match[1], text: match[2], isReopen: true })
+    parts.push({ url: match[1], text: match[2] })
     lastIndex = match.index + match[0].length
   }
-  if (lastIndex < remaining.length) {
-    const rest = remaining.substring(lastIndex)
-    const linkRegex = /\|LINK:(.+?)\|(.+?)\|LINK_END\|/g
-    let linkLastIndex = 0
-    let linkMatch: RegExpExecArray | null
-    while ((linkMatch = linkRegex.exec(rest)) !== null) {
-      if (linkMatch.index > linkLastIndex) {
-        parts.push(rest.substring(linkLastIndex, linkMatch.index))
-      }
-      parts.push({ url: linkMatch[1], text: linkMatch[2] })
-      linkLastIndex = linkMatch.index + linkMatch[0].length
-    }
-    if (linkLastIndex < rest.length) {
-      parts.push(rest.substring(linkLastIndex))
-    }
+  if (lastIndex < cleaned.length) {
+    parts.push(cleaned.substring(lastIndex))
   }
 
-  if (parts.length === 0) return cleanLogTags(msg)
+  if (parts.length === 0) return cleaned
 
   return (
     <>
       {parts.map((part, i) => {
-        if (typeof part === 'string') return cleanLogTags(part)
-        if (part.isReopen) {
-          return (
-            <button
-              key={i}
-              onClick={async (e) => {
-                e.stopPropagation()
-                const result = await onReopenWindow()
-                if (!result) {
-                  alert('无法重新打开窗口，请点击"操作失败"取消当前任务，然后重新下单。')
-                }
-              }}
-              className="text-blue-500 hover:text-blue-700 underline underline-offset-2"
-            >
-              {part.text}
-            </button>
-          )
-        }
+        if (typeof part === 'string') return part
         return (
           <button
             key={i}
@@ -236,7 +207,8 @@ export default function ShoppingAssistantPanel({
   const mode: PanelMode = preview ? 'preview' : 'progress'
 
   const hasPendingConfirmation = activeTask?.status === 'running' &&
-    activeTask?.progressLog?.some(msg => msg.includes('|REOPEN:')) === true
+    Array.isArray(activeTask?.progressLog) &&
+    activeTask.progressLog.some(msg => typeof msg === 'string' && msg.includes('|REOPEN:')) === true
 
   useEffect(() => {
     if (logRef.current) {
@@ -303,9 +275,12 @@ export default function ShoppingAssistantPanel({
     const matchedItems = preview.items.filter(i => i.matched)
     if (matchedItems.length === 0) return
     setConfirming(true)
+    console.log('[ShoppingAssistantPanel] handleConfirm START', { matchedCount: matchedItems.length, paymentMode, dryRun })
     try {
       await onConfirm(preview.instruction, preview.items, dryRun, paymentMode)
-    } catch {
+      console.log('[ShoppingAssistantPanel] handleConfirm SUCCESS')
+    } catch (e) {
+      console.error('[ShoppingAssistantPanel] handleConfirm ERROR:', e)
       setConfirming(false)
     }
   }
@@ -639,16 +614,68 @@ export default function ShoppingAssistantPanel({
       )
     }
 
+    const safeProgressLog = Array.isArray(activeTask.progressLog) ? activeTask.progressLog : []
+    const safeItemResults = (() => {
+      try {
+        if (activeTask.itemResults) return JSON.parse(activeTask.itemResults)
+      } catch { /* ignore */ }
+      return []
+    })()
+
     const isRunning = activeTask.status === 'running'
     const isTerminal = ['success', 'failed', 'cancelled'].includes(activeTask.status)
-    const hasProgressLog = (activeTask.progressLog?.length ?? 0) > 0
+    const hasProgressLog = safeProgressLog.length > 0
     const isWindowClosed = hasPendingConfirmation && hasProgressLog &&
-      activeTask.progressLog!.some(msg => msg.includes('操作窗口已关闭'))
+      safeProgressLog.some(msg => typeof msg === 'string' && msg.includes('操作窗口已关闭'))
 
-    let itemResults: { name: string; quantity: number; status: string; error?: string }[] = []
-    try {
-      if (activeTask.itemResults) itemResults = JSON.parse(activeTask.itemResults)
-    } catch { /* ignore */ }
+    const sceneFromLog = (() => {
+      if (!hasProgressLog) return 'add-to-cart' as const
+      const closedMsg = [...safeProgressLog].reverse().find(msg => typeof msg === 'string' && (msg.includes('操作窗口已关闭') || msg.includes('|SCENE:')))
+      if (!closedMsg || typeof closedMsg !== 'string') return 'add-to-cart' as const
+      const sceneMatch = closedMsg.match(/\|SCENE:(verification|add-to-cart|payment)\|/)
+      if (sceneMatch) return sceneMatch[1] as 'verification' | 'add-to-cart' | 'payment'
+      if (closedMsg.includes('结算/支付')) return 'payment' as const
+      return 'add-to-cart' as const
+    })()
+
+    const sceneLabels: Record<string, { noun: string; action: string; reopenBtn: string; confirmBtn: string; failBtn: string; closedTitle: string; closedHint: string; openTitle: string; openHint: string }> = {
+      'verification': {
+        noun: '验证',
+        action: '完成验证',
+        reopenBtn: '🪟 重新打开验证窗口',
+        confirmBtn: '✓ 我已完成验证',
+        failBtn: '✗ 无法完成验证',
+        closedTitle: '验证窗口已关闭',
+        closedHint: '如需继续验证，请点击"重新打开验证窗口"；如无法完成验证，请点击"无法完成验证"取消当前任务',
+        openTitle: '请在弹出的窗口中完成验证',
+        openHint: '系统已打开验证窗口，请在窗口中拖动滑块完成验证后点击下方按钮继续',
+      },
+      'add-to-cart': {
+        noun: '购买',
+        action: '完成购买',
+        reopenBtn: '🪟 重新打开商品页面',
+        confirmBtn: '✓ 已加入购物车',
+        failBtn: '✗ 商品无法购买',
+        closedTitle: '商品页面已关闭',
+        closedHint: '如需继续购买，请点击"重新打开商品页面"；如商品无法购买，请点击"商品无法购买"取消当前任务',
+        openTitle: '请在弹出的窗口中选择规格并购买',
+        openHint: '系统已打开商品页面，请在窗口中选择规格并加入购物车后点击下方按钮继续',
+      },
+      'payment': {
+        noun: '支付',
+        action: '完成支付',
+        reopenBtn: '🪟 重新打开支付页面',
+        confirmBtn: '✓ 我已完成支付',
+        failBtn: '✗ 支付遇到问题',
+        closedTitle: '支付页面已关闭',
+        closedHint: '如需继续支付，请点击"重新打开支付页面"；如支付遇到问题，请点击"支付遇到问题"取消当前任务',
+        openTitle: '请在弹出的窗口中完成支付',
+        openHint: '系统已打开支付页面，请在窗口中确认金额并完成支付后点击下方按钮继续',
+      },
+    }
+    const labels = sceneLabels[sceneFromLog]
+
+    let itemResults: { name: string; quantity: number; status: string; error?: string }[] = safeItemResults
 
     const successCount = itemResults.filter(r => r.status === 'success').length
     const failedCount = itemResults.filter(r => r.status === 'failed').length
@@ -662,17 +689,17 @@ export default function ShoppingAssistantPanel({
               <>
                 <div className="flex items-center gap-2 mb-2">
                   <span className="text-base">🪟</span>
-                  <span className="text-sm font-semibold text-amber-700">操作窗口已关闭</span>
+                  <span className="text-sm font-semibold text-amber-700">{labels.closedTitle}</span>
                 </div>
-                <p className="text-sm text-amber-600 mb-2">如需继续操作，请点击"重新打开窗口"，或点击"操作失败"取消当前任务</p>
+                <p className="text-sm text-amber-600 mb-2">{labels.closedHint}</p>
               </>
             ) : (
               <>
                 <div className="flex items-center gap-2 mb-2">
                   <span className="text-base">⏸️</span>
-                  <span className="text-sm font-semibold text-amber-700">请在弹出的窗口中完成操作</span>
+                  <span className="text-sm font-semibold text-amber-700">{labels.openTitle}</span>
                 </div>
-                <p className="text-sm text-amber-600 mb-2">系统已打开操作窗口，请在窗口中完成操作后点击下方按钮继续</p>
+                <p className="text-sm text-amber-600 mb-2">{labels.openHint}</p>
               </>
             )}
             {confirmActionStatus === 'success' && (
@@ -688,8 +715,8 @@ export default function ShoppingAssistantPanel({
               <div className="flex items-start gap-2 mb-2 p-2 bg-red-50 rounded-md border border-red-200">
                 <span className="text-sm">⚠️</span>
                 <div>
-                  <p className="text-sm font-medium text-red-600">操作未生效</p>
-                  <p className="text-xs text-red-500 mt-0.5">操作会话可能已过期，请点击"操作失败"取消当前任务后重新下单</p>
+                  <p className="text-sm font-medium text-red-600">{labels.action}未生效</p>
+                  <p className="text-xs text-red-500 mt-0.5">操作会话可能已过期，请点击"{labels.failBtn.replace(/^[✗✘❌]\s*/, '')}"取消当前任务后重新下单</p>
                 </div>
               </div>
             )}
@@ -697,7 +724,7 @@ export default function ShoppingAssistantPanel({
               {isWindowClosed && (
                 <button onClick={handleReopenWindowClick} disabled={confirmActionStatus === 'loading'}
                   className="px-3 py-1.5 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors">
-                  🪟 重新打开窗口
+                  {labels.reopenBtn}
                 </button>
               )}
               <button onClick={handleConfirmActionClick} disabled={confirmActionStatus !== 'idle'}
@@ -707,11 +734,11 @@ export default function ShoppingAssistantPanel({
                     <span className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
                     处理中...
                   </span>
-                ) : confirmActionStatus === 'success' ? '✅ 已确认' : '✓ 已完成操作'}
+                ) : confirmActionStatus === 'success' ? '✅ 已确认' : labels.confirmBtn}
               </button>
               <button onClick={handleRejectActionClick} disabled={confirmActionStatus === 'loading' || confirmActionStatus === 'success'}
                 className="px-3 py-1.5 text-sm font-medium text-white bg-red-500 rounded-lg hover:bg-red-600 transition-colors">
-                ✗ 操作失败
+                {labels.failBtn}
               </button>
             </div>
           </div>
@@ -745,13 +772,13 @@ export default function ShoppingAssistantPanel({
           <div>
             <p className="text-sm font-medium text-gray-500 mb-2">执行过程</p>
             <div ref={logRef} className="max-h-64 overflow-y-auto rounded-lg bg-gray-50 border border-gray-100 px-3 py-2 space-y-1 scroll-smooth">
-              {deduplicateLogs(activeTask.progressLog!).map((entry, idx) => (
+              {deduplicateLogs(safeProgressLog).map((entry, idx) => (
                 <div key={idx} className="flex items-start gap-2">
                   <span className="text-xs text-gray-300 flex-shrink-0 mt-0.5 font-mono">
                     {String(idx + 1).padStart(2, '0')}
                   </span>
                   <span className="text-sm leading-relaxed text-gray-600">
-                    {renderLogWithLinks(activeTask.progressLog![entry.originalIndex], onReopenWindow, handleOpenUrl)}
+                    {renderLogWithLinks(safeProgressLog[entry.originalIndex], onReopenWindow, handleOpenUrl)}
                   </span>
                 </div>
               ))}

@@ -410,7 +410,17 @@ export class LlmParser {
   }
 
   private extractJson(text: string): string {
-    const trimmed = text.trim()
+    let trimmed = text.trim()
+
+    const thinkEnd = trimmed.indexOf('</think')
+    if (thinkEnd !== -1) {
+      const afterThink = trimmed.substring(thinkEnd)
+      const closeAngle = afterThink.indexOf('>')
+      if (closeAngle !== -1) {
+        trimmed = trimmed.substring(thinkEnd + closeAngle + 1).trim()
+      }
+    }
+
     if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
       try { JSON.parse(trimmed); return trimmed } catch { /* continue */ }
     }

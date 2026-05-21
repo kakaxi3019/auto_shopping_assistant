@@ -101,6 +101,7 @@ export interface PlatformAdapter {
   fetchOrderHistory(page?: number, timeRange?: { beginTime?: string; endTime?: string }): Promise<Order[]>
   searchOrders(keyword: string): Promise<Order[]>
   searchProduct(keyword: string): Promise<SearchResult[]>
+  openSearchPage(keyword: string): Promise<string | null>
   getProductUrl(order: Order): string
   addToCart(productUrl: string, sku?: string, orderId?: string, cartOnly?: boolean): Promise<AddToCartResult>
   openProductPage(productUrl: string): Promise<void>

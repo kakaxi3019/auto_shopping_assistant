@@ -91,6 +91,7 @@ export function useTasks() {
   useEffect(() => {
     const unsubscribe = api.onTaskStatusUpdate((data: unknown) => {
       const update = data as { taskId: number; status: string; error?: string; progress?: string; itemResults?: string }
+      console.log('[useTasks] onTaskStatusUpdate:', { taskId: update.taskId, status: update.status, hasProgress: !!update.progress, hasItemResults: !!update.itemResults, error: update.error })
       setTasks((prev) => {
         const existing = prev.find(t => t.id === update.taskId)
         if (!existing) {
@@ -155,6 +156,7 @@ export function useTasks() {
   }, [])
 
   const confirmTask = useCallback(async (instruction: string, items: PreviewItem[], dryRun?: boolean, paymentMode?: string) => {
+    console.log('[useTasks] confirmTask START', { instruction, itemCount: items.length, dryRun, paymentMode })
     const matchedItems = items.filter(item => item.matched)
     if (matchedItems.length === 0) {
       throw new Error('没有匹配的商品可以购买')
@@ -165,16 +167,22 @@ export function useTasks() {
       sku: item.sku,
       orderRef: item.orderRef,
     }))
+    console.log('[useTasks] confirmTask calling api.confirmTask...', { confirmItemsCount: confirmItems.length })
     const result = await api.confirmTask(instruction, confirmItems, undefined, dryRun, paymentMode) as { taskId?: number; error?: string }
+    console.log('[useTasks] confirmTask api result:', result)
     if (result && result.error) {
       throw new Error(result.error)
     }
     if (result && result.taskId) {
+      console.log('[useTasks] confirmTask setting activeTaskId:', result.taskId)
       setActiveTaskId(result.taskId)
     }
+    console.log('[useTasks] confirmTask clearing preview, opening panel...')
     setPreview(null)
     setPanelOpen(true)
+    console.log('[useTasks] confirmTask calling refresh...')
     await refresh()
+    console.log('[useTasks] confirmTask DONE')
   }, [refresh])
 
   const cancelPreview = useCallback(() => {

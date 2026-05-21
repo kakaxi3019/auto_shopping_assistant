@@ -113,7 +113,15 @@ export class TaskScheduler {
     if (itemResults !== undefined) {
       payload.itemResults = itemResults
     }
-    this.mainWindow?.webContents.send('task:status-update', payload)
+    if (this.mainWindow && !this.mainWindow.isDestroyed() && !this.mainWindow.webContents.isCrashed()) {
+      try {
+        this.mainWindow.webContents.send('task:status-update', payload)
+      } catch (e) {
+        console.error(`[Scheduler] emitUpdate failed to send to renderer:`, e)
+      }
+    } else {
+      console.warn(`[Scheduler] emitUpdate: mainWindow not available (destroyed=${this.mainWindow?.isDestroyed()}, crashed=${this.mainWindow?.webContents?.isCrashed()})`)
+    }
 
     if (['success', 'failed', 'partial', 'cancelled'].includes(status)) {
       const dnd = this.db.getSetting('do_not_disturb')
@@ -193,6 +201,7 @@ export class TaskScheduler {
 
   private async executeTask(taskId: number, parsedItems: ParsedShoppingItem[], platformName: string, instruction?: string, dryRun?: boolean, paymentMode?: PaymentMode) {
     this.lastProgressPerTask.delete(taskId)
+    schedulerLog(`[Scheduler] executeTask START: taskId=${taskId}, items=${parsedItems.length}, platform=${platformName}, dryRun=${dryRun}, paymentMode=${paymentMode}`)
     const taskFn = async () => {
       const platform = this.registry.get(platformName)
       if (!platform) {
@@ -203,6 +212,7 @@ export class TaskScheduler {
 
       this.db.updateTaskStatus(taskId, 'running')
       this.emitUpdate(taskId, 'running')
+      schedulerLog(`[Scheduler] executeTask taskId=${taskId}: platform ready, starting execution...`)
 
       const unsubscribe = platform.onStatusChange((status) => {
         this.emitUpdate(taskId, 'running', undefined, status)
@@ -212,6 +222,8 @@ export class TaskScheduler {
         const execResult = await this.executor.execute(taskId, parsedItems, platform, (msg) => {
           this.emitUpdate(taskId, 'running', undefined, msg)
         }, instruction, dryRun, paymentMode)
+
+        schedulerLog(`[Scheduler] executeTask taskId=${taskId}: execution completed, success=${execResult.success}, error=${execResult.error}`)
 
         const hasPending = execResult.itemResults.some(r => r.status === 'pending')
         const hasPendingPayment = execResult.itemResults.some(r => r.status === 'success' && r.pendingPayment)
@@ -229,6 +241,7 @@ export class TaskScheduler {
         this.emitUpdate(taskId, status, error)
       } catch (e) {
         const errorMsg = e instanceof Error ? e.message : String(e)
+        schedulerLog(`[Scheduler] executeTask taskId=${taskId}: execution ERROR: ${errorMsg}`)
         this.db.updateTaskStatus(taskId, 'failed', errorMsg)
         this.emitUpdate(taskId, 'failed', errorMsg)
       } finally {

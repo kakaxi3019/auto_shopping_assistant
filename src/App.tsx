@@ -5,6 +5,7 @@ import ShoppingInput from './components/ShoppingInput'
 import TaskList from './components/TaskList'
 import ShoppingAssistantPanel from './components/ShoppingAssistantPanel'
 import ToastProvider from './components/ToastProvider'
+import ErrorBoundary from './components/ErrorBoundary'
 import { useTasks } from './hooks/useTasks'
 import { api } from './lib/api'
 
@@ -118,32 +119,34 @@ export default function App() {
   }
 
   return (
-    <ToastProvider>
-      <Layout currentPage={page} onNavigate={setPage}>
-        {!backendReady && (
-          <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg text-sm text-blue-700 flex items-center gap-2" role="status" aria-live="polite">
-            <div className="w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" aria-hidden="true" />
-            正在初始化服务，请稍候...
-          </div>
+    <ErrorBoundary>
+      <ToastProvider>
+        <Layout currentPage={page} onNavigate={setPage}>
+          {!backendReady && (
+            <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg text-sm text-blue-700 flex items-center gap-2" role="status" aria-live="polite">
+              <div className="w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" aria-hidden="true" />
+              正在初始化服务，请稍候...
+            </div>
+          )}
+          {renderPage()}
+        </Layout>
+        {panelOpen && (
+          <ShoppingAssistantPanel
+            preview={preview}
+            activeTaskId={activeTaskId}
+            tasks={tasks}
+            onConfirm={confirmTask}
+            onCancelPreview={cancelPreview}
+            onUpdateItem={updatePreviewItem}
+            onRemoveItem={removePreviewItem}
+            onClose={closePanel}
+            onConfirmAction={async () => { const r = await api.confirmAction() as boolean; return r }}
+            onRejectAction={async () => { const r = await api.rejectAction() as boolean; return r }}
+            onReopenWindow={async () => { const r = await api.reopenConfirmationWindow() as boolean; return r }}
+            onRetryItem={retryTaskItem}
+          />
         )}
-        {renderPage()}
-      </Layout>
-      {panelOpen && (
-        <ShoppingAssistantPanel
-          preview={preview}
-          activeTaskId={activeTaskId}
-          tasks={tasks}
-          onConfirm={confirmTask}
-          onCancelPreview={cancelPreview}
-          onUpdateItem={updatePreviewItem}
-          onRemoveItem={removePreviewItem}
-          onClose={closePanel}
-          onConfirmAction={async () => { const r = await api.confirmAction() as boolean; return r }}
-          onRejectAction={async () => { const r = await api.rejectAction() as boolean; return r }}
-          onReopenWindow={async () => { const r = await api.reopenConfirmationWindow() as boolean; return r }}
-          onRetryItem={retryTaskItem}
-        />
-      )}
-    </ToastProvider>
+      </ToastProvider>
+    </ErrorBoundary>
   )
 }

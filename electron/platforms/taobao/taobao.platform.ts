@@ -43,6 +43,7 @@ const ANTI_DETECT_JS = `
   Object.defineProperty(document, 'visibilityState', { get: () => 'visible', configurable: true });
   Object.defineProperty(document, 'hidden', { get: () => false, configurable: true });
   window.addEventListener('visibilitychange', function(e) { e.stopImmediatePropagation(); }, true);
+  document.addEventListener('visibilitychange', function(e) { e.stopImmediatePropagation(); }, true);
 
   delete Object.getPrototypeOf(navigator).__proto__.webdriver;
   Object.defineProperty(navigator, 'webdriver', { get: () => undefined, configurable: true });
@@ -50,6 +51,36 @@ const ANTI_DETECT_JS = `
   Object.defineProperty(navigator, 'platform', { get: () => 'Win32', configurable: true });
   Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => 8, configurable: true });
   Object.defineProperty(navigator, 'maxTouchPoints', { get: () => 0, configurable: true });
+
+  Object.defineProperty(navigator, 'plugins', {
+    get: () => {
+      var plugins = [
+        { name: 'Chrome PDF Plugin', filename: 'internal-pdf-viewer', description: 'Portable Document Format' },
+        { name: 'Chrome PDF Viewer', filename: 'mhjfbmdgcfjbbpaeojofohoefgiehjai', description: '' },
+        { name: 'Native Client', filename: 'internal-nacl-plugin', description: '' }
+      ];
+      plugins.length = 3;
+      return plugins;
+    },
+    configurable: true
+  });
+  Object.defineProperty(navigator, 'mimeTypes', {
+    get: () => {
+      var mimes = [
+        { type: 'application/pdf', suffixes: 'pdf', description: 'Portable Document Format' },
+        { type: 'application/x-google-chrome-pdf', suffixes: 'pdf', description: 'Portable Document Format' },
+        { type: 'application/x-nacl', suffixes: '', description: 'Native Client Executable' }
+      ];
+      mimes.length = 3;
+      return mimes;
+    },
+    configurable: true
+  });
+
+  Object.defineProperty(navigator, 'connection', {
+    get: () => ({ effectiveType: '4g', rtt: 50, downlink: 10, saveData: false, onchange: null, addEventListener: function(){}, removeEventListener: function(){} }),
+    configurable: true
+  });
 
   var origQuery = window.navigator.permissions.query.bind(window.navigator.permissions);
   Object.defineProperty(window.navigator.permissions, 'query', {
@@ -62,6 +93,68 @@ const ANTI_DETECT_JS = `
   if (!window.chrome.app) { window.chrome.app = { isInstalled: false, InstallState: { DISABLED: 'disabled', INSTALLED: 'installed', NOT_INSTALLED: 'not_installed' }, RunningState: { CANNOT_RUN: 'cannot_run', READY_TO_RUN: 'ready_to_run', RUNNING: 'running' }, getDetails: function(){}, getIsInstalled: function(){ return false; } }; }
   if (!window.chrome.csi) { window.chrome.csi = function(){}; }
   if (!window.chrome.loadTimes) { window.chrome.loadTimes = function(){ return { commitLoadTime: Date.now()/1000, connectionInfo: 'h2', finishDocumentLoadTime: 0, finishLoadTime: 0, firstPaintAfterLoadTime: 0, firstPaintTime: 0, navigationType: 'Other', npnNegotiatedProtocol: 'h2', requestTime: Date.now()/1000 - 0.5, startLoadTime: Date.now()/1000 - 0.5, wasAlternateProtocolAvailable: false, wasFetchedViaSpdy: true, wasNpnNegotiated: true }; }; }
+
+  delete window.__electron__;
+  delete window.process;
+`
+
+const sceneFailLabels: Record<string, string> = {
+  'verification': '无法完成验证',
+  'add-to-cart': '商品无法购买',
+  'payment': '支付遇到问题',
+}
+
+function diagWindowState(label: string, mainWindow: BrowserWindow | null, shopWindow: BrowserWindow | null) {
+  const parts: string[] = [`[DIAG] ${label}`]
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    const mwBounds = mainWindow.getBounds()
+    parts.push(`mainWin: visible=${mainWindow.isVisible()} focused=${mainWindow.isFocused()} bounds=${JSON.stringify(mwBounds)}`)
+    try {
+      const mwUrl = mainWindow.webContents.getURL()
+      const mwLoading = mainWindow.webContents.isLoading()
+      const mwCrashed = mainWindow.webContents.isCrashed()
+      parts.push(`mainWin-webContents: url=${mwUrl.substring(0, 80)} loading=${mwLoading} crashed=${mwCrashed}`)
+    } catch (e: any) {
+      parts.push(`mainWin-webContents: ERROR ${e.message}`)
+    }
+  } else {
+    parts.push(`mainWin: ${mainWindow ? 'DESTROYED' : 'NULL'}`)
+  }
+  if (shopWindow && !shopWindow.isDestroyed()) {
+    const swBounds = shopWindow.getBounds()
+    parts.push(`shopWin: visible=${shopWindow.isVisible()} focused=${shopWindow.isFocused()} bounds=${JSON.stringify(swBounds)}`)
+    try {
+      const swUrl = shopWindow.webContents.getURL()
+      parts.push(`shopWin-webContents: url=${swUrl.substring(0, 80)}`)
+    } catch (e: any) {
+      parts.push(`shopWin-webContents: ERROR ${e.message}`)
+    }
+  } else {
+    parts.push(`shopWin: ${shopWindow ? 'DESTROYED' : 'NULL'}`)
+  }
+  debugLog(parts.join(' | '))
+}
+
+const IFRAME_ANTI_DETECT_JS = `
+  (function() {
+    function patchDoc(doc) {
+      try {
+        Object.defineProperty(doc, 'visibilityState', { get: () => 'visible', configurable: true });
+        Object.defineProperty(doc, 'hidden', { get: () => false, configurable: true });
+        doc.addEventListener('visibilitychange', function(e) { e.stopImmediatePropagation(); }, true);
+      } catch(e) {}
+    }
+    patchDoc(document);
+    try {
+      var iframes = document.querySelectorAll('iframe');
+      for (var i = 0; i < iframes.length; i++) {
+        try {
+          var iframeDoc = iframes[i].contentDocument || iframes[i].contentWindow?.document;
+          if (iframeDoc) patchDoc(iframeDoc);
+        } catch(e) {}
+      }
+    } catch(e) {}
+  })();
 `
 
 const CANVAS_NOISE_JS = `
@@ -261,6 +354,7 @@ export class TaobaoPlatform implements PlatformAdapter {
     windowUrl: string
     windowTitle: string
     bannerMessage: string
+    scene?: 'verification' | 'add-to-cart' | 'payment'
   } | null = null
   private mainWindow: BrowserWindow | null = null
   private loginWindow: BrowserWindow | null = null
@@ -275,6 +369,34 @@ export class TaobaoPlatform implements PlatformAdapter {
 
   setMainWindow(win: BrowserWindow) {
     this.mainWindow = win
+    win.webContents.on('render-process-gone', (_event, details) => {
+      debugLog(`[DIAG] mainWindow render-process-gone! reason=${details.reason} exitCode=${details.exitCode}`)
+    })
+    win.on('hide', () => {
+      debugLog(`[DIAG] mainWindow HIDDEN`)
+    })
+    win.on('show', () => {
+      debugLog(`[DIAG] mainWindow SHOWN`)
+    })
+    win.on('minimize', () => {
+      debugLog(`[DIAG] mainWindow MINIMIZED`)
+    })
+    win.on('restore', () => {
+      debugLog(`[DIAG] mainWindow RESTORED`)
+    })
+    win.on('blur', () => {
+      debugLog(`[DIAG] mainWindow LOST FOCUS`)
+    })
+    win.on('focus', () => {
+      debugLog(`[DIAG] mainWindow GOT FOCUS`)
+    })
+    win.webContents.on('did-navigate', (_event, url) => {
+      debugLog(`[DIAG] mainWindow did-navigate: ${url.substring(0, 100)}`)
+    })
+    win.webContents.on('did-navigate-in-page', (_event, url) => {
+      debugLog(`[DIAG] mainWindow did-navigate-in-page: ${url.substring(0, 100)}`)
+    })
+    debugLog(`[DIAG] mainWindow monitoring registered. Initial URL: ${win.webContents.getURL().substring(0, 100)}`)
   }
 
   destroy() {
@@ -311,6 +433,7 @@ export class TaobaoPlatform implements PlatformAdapter {
         webPreferences: {
           nodeIntegration: false,
           contextIsolation: true,
+          backgroundThrottling: false,
         },
       })
       this.setUserAgent(win)
@@ -358,6 +481,7 @@ export class TaobaoPlatform implements PlatformAdapter {
         win.setParentWindow(this.mainWindow)
       }
       this.injectOverlayBanner(win, "🛒 自动购物助手：需要选择商品规格，请在下方选择后点击对应按钮")
+      this.injectCenterToast(win, "请在下方选择商品规格")
       win.show()
       debugLog(`[Taobao] openInteractionWindow: window shown`)
       return { success: true }
@@ -405,6 +529,7 @@ export class TaobaoPlatform implements PlatformAdapter {
     statusMessage: string,
     windowTitle: string,
     bannerMessage: string,
+    scene?: 'verification' | 'add-to-cart' | 'payment',
   ): Promise<boolean> {
     const id = `confirm_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
     const windowUrl = win.webContents.getURL()
@@ -434,35 +559,58 @@ export class TaobaoPlatform implements PlatformAdapter {
         windowUrl,
         windowTitle,
         bannerMessage,
+        scene,
       }
 
       if (!win.isDestroyed()) {
-        win.webContents.on('did-navigate', () => {
+        const onNavigate = () => {
           if (this.pendingConfirmation && this.pendingConfirmation.id === id && !win.isDestroyed()) {
             const newUrl = win.webContents.getURL()
             console.log(`[Taobao] Confirmation window navigated: ${this.pendingConfirmation.windowUrl} -> ${newUrl}`)
             debugLog(`Confirmation window navigated: ${this.pendingConfirmation.windowUrl} -> ${newUrl}`)
             this.pendingConfirmation.windowUrl = newUrl
+            if (this.isCheckoutOrPayPage(newUrl) || newUrl.includes('buy.tmall.com') || newUrl.includes('buy.taobao.com') || newUrl.includes('alipay.com')) {
+              if (this.pendingConfirmation.scene !== 'payment') {
+                console.log(`[Taobao] Confirmation window navigated to payment page, updating scene from ${this.pendingConfirmation.scene} to payment`)
+                this.pendingConfirmation.scene = 'payment'
+                this.emitStatus(`已进入支付页面，请在窗口中完成支付|SCENE:payment|`)
+              }
+            }
           }
-        })
-        win.webContents.on('did-navigate-in-page', () => {
+        }
+        const onNavigateInPage = () => {
           if (this.pendingConfirmation && this.pendingConfirmation.id === id && !win.isDestroyed()) {
-            this.pendingConfirmation.windowUrl = win.webContents.getURL()
+            const newUrl = win.webContents.getURL()
+            this.pendingConfirmation.windowUrl = newUrl
+            if (this.isCheckoutOrPayPage(newUrl) || newUrl.includes('buy.tmall.com') || newUrl.includes('buy.taobao.com') || newUrl.includes('alipay.com')) {
+              if (this.pendingConfirmation.scene !== 'payment') {
+                this.pendingConfirmation.scene = 'payment'
+                this.emitStatus(`已进入支付页面，请在窗口中完成支付|SCENE:payment|`)
+              }
+            }
           }
-        })
-        win.on('closed', () => {
+        }
+        const onClosed = () => {
           if (!resolved) {
             debugLog(`Confirmation window closed by user, id: ${id}, lastUrl: ${this.pendingConfirmation?.windowUrl || 'unknown'}`)
             const closedUrl = this.pendingConfirmation?.windowUrl || ''
+            const currentScene = this.pendingConfirmation?.scene || scene || 'add-to-cart'
             if (this.isDisposableUrl(closedUrl)) {
               debugLog(`Disposable page closed, auto-resolving as false, URL: ${closedUrl}`)
-              this.emitStatus('操作窗口已关闭，结算/支付页面无法恢复，任务已自动取消')
+              this.emitStatus(`操作窗口已关闭，结算/支付页面无法恢复，任务已自动取消|SCENE:${currentScene}|`)
               safeResolve(false)
             } else {
-              this.emitStatus('操作窗口已关闭')
+              this.emitStatus(`操作窗口已关闭|SCENE:${currentScene}|`)
             }
           }
-        })
+          if (!win.isDestroyed()) {
+            win.webContents.removeListener('did-navigate', onNavigate)
+            win.webContents.removeListener('did-navigate-in-page', onNavigateInPage)
+          }
+        }
+        win.webContents.on('did-navigate', onNavigate)
+        win.webContents.on('did-navigate-in-page', onNavigateInPage)
+        win.on('closed', onClosed)
       }
 
       this.confirmationTimeout = setTimeout(() => {
@@ -516,7 +664,7 @@ export class TaobaoPlatform implements PlatformAdapter {
       title: windowTitle,
       icon: APP_ICON,
       autoHideMenuBar: true,
-      webPreferences: { nodeIntegration: false, contextIsolation: true },
+      webPreferences: { nodeIntegration: false, contextIsolation: true, backgroundThrottling: false },
     })
     this.setUserAgent(win)
     if (this.mainWindow) win.setParentWindow(this.mainWindow)
@@ -536,7 +684,8 @@ export class TaobaoPlatform implements PlatformAdapter {
           newWindow.setSize(500, 600)
           newWindow.setTitle('淘宝身份验证')
           if (this.mainWindow) newWindow.setParentWindow(this.mainWindow)
-          this.injectOverlayBanner(newWindow, "🔐 自动购物助手：淘宝要求身份验证，请在下方完成验证后继续")
+          this.injectOverlayBanner(newWindow, "🔐 自动购物助手：淘宝要求身份验证，请在下方完成验证后继续", true)
+          this.injectCenterToast(newWindow, "请完成身份验证")
           newWindow.show()
           return
         }
@@ -568,7 +717,8 @@ export class TaobaoPlatform implements PlatformAdapter {
     })
 
     win.loadURL(windowUrl)
-    this.injectOverlayBanner(win, bannerMessage)
+    this.injectOverlayBanner(win, bannerMessage, true)
+    this.injectCenterToast(win, bannerMessage.replace(/^[🛒🔐💳🔑⚠️📋💰]\s*自动购物助手[：:]\s*/, ''))
     win.show()
     this.pendingConfirmation.window = win
 
@@ -578,9 +728,10 @@ export class TaobaoPlatform implements PlatformAdapter {
       console.log(`[Taobao] Reopened confirmation window loaded: ${loadedUrl}`)
       debugLog(`Reopened confirmation window loaded: ${loadedUrl}`)
       if (this.isLoginPage(loadedUrl)) {
-        this.emitStatus('重新打开的页面已过期（跳转到了登录页），请点击"操作失败"取消当前任务，然后重新下单')
+        const failLabel = sceneFailLabels[this.pendingConfirmation.scene || 'add-to-cart']
+        this.emitStatus(`重新打开的页面已过期（跳转到了登录页），请点击"${failLabel}"取消当前任务，然后重新下单|SCENE:${this.pendingConfirmation.scene || 'add-to-cart'}|`)
         win.setTitle('页面已过期 - 请关闭此窗口')
-        this.injectOverlayBanner(win, '⚠️ 此页面已过期，请关闭此窗口并点击任务面板中的「操作失败」按钮，然后重新下单')
+        this.injectOverlayBanner(win, `⚠️ 此页面已过期，请关闭此窗口并点击任务面板中的「${failLabel}」按钮，然后重新下单`, true)
         return
       }
       try {
@@ -588,16 +739,17 @@ export class TaobaoPlatform implements PlatformAdapter {
         if (pageText.includes('系统繁忙') || pageText.includes('系统异常') || pageText.includes('页面已过期') || pageText.includes('session expired')) {
           console.log(`[Taobao] Reopened page shows error: ${pageText.substring(0, 100)}`)
           debugLog(`Reopened page shows error, URL: ${loadedUrl}, text: ${pageText.substring(0, 200)}`)
-          this.emitStatus('重新打开的页面已失效（系统繁忙/页面过期），请点击"操作失败"取消当前任务，然后重新下单')
+          const failLabel = sceneFailLabels[this.pendingConfirmation.scene || 'add-to-cart']
+          this.emitStatus(`重新打开的页面已失效（系统繁忙/页面过期），请点击"${failLabel}"取消当前任务，然后重新下单|SCENE:${this.pendingConfirmation.scene || 'add-to-cart'}|`)
           win.setTitle('页面已失效 - 请关闭此窗口')
-          this.injectOverlayBanner(win, '⚠️ 此页面已失效，请关闭此窗口并点击任务面板中的「操作失败」按钮，然后重新下单')
+          this.injectOverlayBanner(win, `⚠️ 此页面已失效，请关闭此窗口并点击任务面板中的「${failLabel}」按钮，然后重新下单`, true)
         }
       } catch { /* ignore */ }
     })
 
     win.on('closed', () => {
       if (this.pendingConfirmation) {
-        this.emitStatus('操作窗口已关闭')
+        this.emitStatus(`操作窗口已关闭|SCENE:${this.pendingConfirmation.scene || 'add-to-cart'}|`)
       }
     })
 
@@ -702,6 +854,7 @@ export class TaobaoPlatform implements PlatformAdapter {
           contextIsolation: true,
           nodeIntegration: false,
           sandbox: false,
+          backgroundThrottling: false,
         },
       })
 
@@ -821,16 +974,16 @@ export class TaobaoPlatform implements PlatformAdapter {
     const hiddenWindow = new BrowserWindow({
       width: 1280,
       height: 800,
-      show: true,
+      show: false,
       icon: APP_ICON,
       webPreferences: {
         contextIsolation: true,
         nodeIntegration: false,
         sandbox: false,
+        backgroundThrottling: false,
       },
     })
     this.setUserAgent(hiddenWindow)
-    hiddenWindow.minimize()
 
     const beginTime = timeRange?.beginTime || ''
     const endTime = timeRange?.endTime || ''
@@ -942,12 +1095,13 @@ export class TaobaoPlatform implements PlatformAdapter {
         contextIsolation: true,
         nodeIntegration: false,
         sandbox: false,
+        backgroundThrottling: false,
       },
     })
 
     try {
       const encodedKeyword = encodeURIComponent(keyword)
-      const searchUrl = `https://s.taobao.com/search?q=${encodedKeyword}`
+      const searchUrl = `https://s.taobao.com/search?page=1&q=${encodedKeyword}&tab=all`
 
       this.setUserAgent(searchWindow)
       await new Promise<void>((resolve, reject) => {
@@ -968,7 +1122,41 @@ export class TaobaoPlatform implements PlatformAdapter {
         return []
       }
 
-      await this.humanDelay(3000)
+      await new Promise<void>((resolve) => {
+        let resolved = false
+        const checkInterval = setInterval(async () => {
+          if (resolved) return
+          try {
+            const hasItems = await searchWindow.webContents.executeJavaScript(`
+              (function() {
+                var container = document.getElementById('content_items_wrapper');
+                if (container) {
+                  var items = container.querySelectorAll('[id^="item_id_"], [data-nid]');
+                  if (items.length > 0) return true;
+                }
+                var cards = document.querySelectorAll('[class*="Card--"], [class*="item-card"], [class*="ItemCard"]');
+                if (cards.length > 0) return true;
+                var loading = document.querySelector('[class*="loading"], [class*="Loading"]');
+                if (!loading && document.body && document.body.innerText.length > 200) return true;
+                return false;
+              })()
+            `)
+            if (hasItems) {
+              resolved = true
+              clearInterval(checkInterval)
+              clearTimeout(timeout)
+              resolve()
+            }
+          } catch {}
+        }, 1000)
+        const timeout = setTimeout(() => {
+          if (!resolved) {
+            resolved = true
+            clearInterval(checkInterval)
+            resolve()
+          }
+        }, 15000)
+      })
 
       const results = await searchWindow.webContents.executeJavaScript(`
         (function() {
@@ -981,16 +1169,51 @@ export class TaobaoPlatform implements PlatformAdapter {
 
           var searchResultContainer = document.getElementById('content_items_wrapper');
           if (!searchResultContainer) {
-            var bodyText = document.body ? document.body.innerText.substring(0, 500) : '';
-            return { items: [], debug: { url: window.location.href, bodyPreview: bodyText, elementCount: 0, linkCount: 0 } };
+            var containerSelectors = [
+              '[class*="ContentItemsWrapper"]',
+              '[class*="content--"]',
+              '[class*="search-result"]',
+              '[class*="SearchResult"]',
+              '[class*="m-itemlist"]',
+              '#m-itemlist',
+              '[data-spm="searchresult"]',
+              '[class*="items-wrapper"]',
+              '[class*="ItemsWrapper"]'
+            ];
+            for (var ci = 0; ci < containerSelectors.length; ci++) {
+              searchResultContainer = document.querySelector(containerSelectors[ci]);
+              if (searchResultContainer) break;
+            }
+          }
+          if (!searchResultContainer) {
+            var allDivs = document.querySelectorAll('div[id], div[class]');
+            var divInfo = [];
+            for (var di = 0; di < Math.min(allDivs.length, 30); di++) {
+              var d = allDivs[di];
+              var cls = d.className ? String(d.className).substring(0, 60) : '';
+              divInfo.push(d.id ? d.id + ':' + cls : cls);
+            }
+            var bodyText = document.body ? document.body.innerText.substring(0, 800) : '';
+            return { items: [], debug: { url: window.location.href, bodyPreview: bodyText, elementCount: 0, linkCount: 0, divInfo: divInfo } };
           }
 
-          var allItemElements = searchResultContainer.querySelectorAll('[id^="item_id_"], [data-nid], [data-spm-act-id]');
+          var allItemElements = searchResultContainer.querySelectorAll('[id^="item_id_"], [data-nid], [data-spm-act-id], [class*="Card--"], [class*="card--"], [class*="item-card"], [class*="ItemCard"]');
           debugInfo.elementCount = allItemElements.length;
+
+          if (allItemElements.length === 0) {
+            var childInfo = [];
+            var children = searchResultContainer.children;
+            for (var chi = 0; chi < Math.min(children.length, 10); chi++) {
+              var child = children[chi];
+              childInfo.push(child.tagName + '#' + (child.id || '') + '.' + (child.className ? String(child.className).substring(0, 60) : ''));
+            }
+            var bodyText2 = document.body ? document.body.innerText.substring(0, 500) : '';
+            return { items: [], debug: { url: window.location.href, bodyPreview: bodyText2, elementCount: 0, linkCount: 0, childInfo: childInfo } };
+          }
           var seenIds = {};
           for (var i = 0; i < allItemElements.length; i++) {
             var el = allItemElements[i];
-            var itemId = el.id.replace('item_id_', '') || el.getAttribute('data-nid') || el.getAttribute('data-spm-act-id');
+            var itemId = el.id.replace('item_id_', '') || el.getAttribute('data-nid') || el.getAttribute('data-spm-act-id') || el.getAttribute('data-id') || '';
             if (!itemId || seenIds[itemId]) continue;
             seenIds[itemId] = true;
 
@@ -1063,6 +1286,15 @@ export class TaobaoPlatform implements PlatformAdapter {
       if (results.debug) {
         debugLog(`[Search] URL: ${results.debug.url}, elementCount: ${results.debug.elementCount}, linkCount: ${results.debug.linkCount}`)
         debugLog(`[Search] items found: ${results.items?.length || 0}`)
+        if (results.debug.divInfo) {
+          debugLog(`[Search] divInfo: ${JSON.stringify(results.debug.divInfo)}`)
+        }
+        if (results.debug.childInfo) {
+          debugLog(`[Search] childInfo: ${JSON.stringify(results.debug.childInfo)}`)
+        }
+        if (results.debug.bodyPreview) {
+          debugLog(`[Search] bodyPreview: ${results.debug.bodyPreview.substring(0, 300)}`)
+        }
         if (results.items && results.items.length > 0) {
           results.items.forEach((item: SearchResult, idx: number) => {
             debugLog(`[Search] item[${idx}]: title="${item.title}", price=${item.price}, shop="${item.shopName}"`)
@@ -1079,6 +1311,77 @@ export class TaobaoPlatform implements PlatformAdapter {
     }
   }
 
+  async openSearchPage(keyword: string): Promise<string | null> {
+    await this.syncCookiesToElectron()
+
+    const searchWindow = new BrowserWindow({
+      width: 1280,
+      height: 800,
+      show: false,
+      autoHideMenuBar: true,
+      icon: APP_ICON,
+      webPreferences: {
+        contextIsolation: true,
+        nodeIntegration: false,
+        sandbox: false,
+        backgroundThrottling: false,
+      },
+    })
+    this.setUserAgent(searchWindow)
+
+    const encodedKeyword = encodeURIComponent(keyword)
+    const searchUrl = `https://s.taobao.com/search?page=1&q=${encodedKeyword}&tab=all`
+
+    return new Promise<string | null>((resolve) => {
+      let resolved = false
+      const safeResolve = (result: string | null) => {
+        if (resolved) return
+        resolved = true
+        resolve(result)
+      }
+
+      const timeout = setTimeout(() => {
+        safeResolve(null)
+        if (!searchWindow.isDestroyed()) searchWindow.close()
+      }, 600000)
+
+      const isProductUrl = (url: string) => {
+        return url.includes('item.taobao.com/item.htm') || url.includes('detail.tmall.com/item.htm') || url.includes('detail.1688.com/offer')
+      }
+
+      const handleUrl = (url: string) => {
+        if (resolved) return
+        if (isProductUrl(url)) {
+          clearTimeout(timeout)
+          safeResolve(url)
+          if (!searchWindow.isDestroyed()) searchWindow.close()
+        }
+      }
+
+      searchWindow.webContents.on('did-navigate', (_event, url) => handleUrl(url))
+      searchWindow.webContents.on('did-navigate-in-page', (_event, url) => handleUrl(url))
+
+      searchWindow.webContents.setWindowOpenHandler(({ url: openUrl }) => {
+        if (isProductUrl(openUrl)) {
+          handleUrl(openUrl)
+        }
+        return { action: 'allow' }
+      })
+
+      searchWindow.on('closed', () => {
+        safeResolve(null)
+      })
+
+      searchWindow.webContents.once('did-finish-load', () => {
+        this.injectOverlayBanner(searchWindow, '🔐 自动购物助手：请在搜索结果中找到对应商品并点击进入商品详情页', true)
+        this.injectCenterToast(searchWindow, "请找到对应商品并点击进入详情页")
+        searchWindow.show()
+      })
+
+      searchWindow.loadURL(searchUrl)
+    })
+  }
+
   getProductUrl(order: Order): string {
     return order.productUrl
   }
@@ -1091,6 +1394,7 @@ export class TaobaoPlatform implements PlatformAdapter {
   })()
 
   private setUserAgent(win: BrowserWindow) {
+    win.webContents.setMaxListeners(20)
     win.webContents.setUserAgent(this.CHROME_UA)
     this.injectHumanSim(win)
   }
@@ -1099,18 +1403,58 @@ export class TaobaoPlatform implements PlatformAdapter {
     const inject = () => {
       if (win.isDestroyed()) return
       const url = win.webContents.getURL()
-      const isCaptchaPage = url.includes('nocaptcha') || url.includes('captcha') || url.includes('slider') || url.includes('baxia') || url.includes('passport.taobao.com/iv')
-      win.webContents.executeJavaScript(ANTI_DETECT_JS).catch(() => {})
-      if (!isCaptchaPage) {
-        win.webContents.executeJavaScript(CANVAS_NOISE_JS).catch(() => {})
-        win.webContents.executeJavaScript(HUMAN_SIM_JS).catch(() => {})
-      }
+      const isCaptchaUrl = url.includes('nocaptcha') || url.includes('captcha') || url.includes('slider') || url.includes('baxia') || url.includes('passport.taobao.com/iv')
+      win.webContents.executeJavaScript(ANTI_DETECT_JS + '\n' + IFRAME_ANTI_DETECT_JS).catch(() => {})
+      win.webContents.executeJavaScript(`
+        (function() {
+          var captchaSelectors = ['#nocaptcha', '#nc_1_wrapper', '#nc_1__scale_text', '[class*="nc-container"]', '[class*="nc_wrapper"]', '#baxia-dialog-content', '[class*="baxia"]'];
+          for (var i = 0; i < captchaSelectors.length; i++) {
+            var el = document.querySelector(captchaSelectors[i]);
+            if (el) { var r = el.getBoundingClientRect(); if (r.width > 0 && r.height > 0) return true; }
+          }
+          var iframes = document.querySelectorAll('iframe');
+          for (var j = 0; j < iframes.length; j++) {
+            var src = iframes[j].src || '';
+            if (src.includes('nocaptcha') || src.includes('captcha') || src.includes('slider') || src.includes('baxia')) return true;
+          }
+          return false;
+        })()
+      `).then((hasCaptcha: boolean) => {
+        const isCaptchaPage = isCaptchaUrl || hasCaptcha
+        debugLog(`[Taobao] injectHumanSim: url=${url.substring(0, 80)}, isCaptchaUrl=${isCaptchaUrl}, hasCaptcha=${hasCaptcha}, isCaptchaPage=${isCaptchaPage}`)
+        if (isCaptchaPage) {
+          win.webContents.executeJavaScript(`
+            (function() {
+              var iframes = document.querySelectorAll('iframe');
+              var info = ['iframes: ' + iframes.length];
+              for (var i = 0; i < iframes.length; i++) {
+                info.push('iframe[' + i + ']: src=' + (iframes[i].src || '').substring(0, 60) + ', visible=' + (iframes[i].offsetParent !== null));
+              }
+              info.push('document.hidden=' + document.hidden + ', visibilityState=' + document.visibilityState);
+              info.push('navigator.webdriver=' + navigator.webdriver);
+              return info.join(' | ');
+            })()
+          `).then((result: string) => {
+            debugLog(`[Taobao] Captcha page diagnostic: ${result}`)
+          }).catch(() => {})
+        }
+        if (!isCaptchaPage) {
+          win.webContents.executeJavaScript(CANVAS_NOISE_JS + '\n' + HUMAN_SIM_JS).catch(() => {})
+        }
+      }).catch(() => {
+        if (!isCaptchaUrl) {
+          win.webContents.executeJavaScript(CANVAS_NOISE_JS + '\n' + HUMAN_SIM_JS).catch(() => {})
+        }
+      })
     }
-    win.webContents.on('did-start-navigation', () => {
-      if (win.isDestroyed()) return
-      win.webContents.executeJavaScript(ANTI_DETECT_JS).catch(() => {})
-    })
-    win.webContents.on('did-finish-load', inject)
+    if (!(win as any).__humanSimInjected) {
+      (win as any).__humanSimInjected = true
+      win.webContents.on('did-start-navigation', () => {
+        if (win.isDestroyed()) return
+        win.webContents.executeJavaScript(ANTI_DETECT_JS + '\n' + IFRAME_ANTI_DETECT_JS).catch(() => {})
+      })
+      win.webContents.on('did-finish-load', inject)
+    }
     if (!win.webContents.isLoading()) {
       inject()
     }
@@ -1168,7 +1512,7 @@ export class TaobaoPlatform implements PlatformAdapter {
     await new Promise(r => setTimeout(r, Math.max(150, ms)))
   }
 
-  private injectOverlayBanner(win: BrowserWindow, message: string) {
+  private injectOverlayBanner(win: BrowserWindow, message: string, isCaptchaPage: boolean = false) {
     const js = `
       (function() {
         var existing = document.getElementById('site-nav');
@@ -1176,17 +1520,17 @@ export class TaobaoPlatform implements PlatformAdapter {
         var nav = document.getElementById('site-nav') || document.body.firstChild;
         var hint = document.createElement('div');
         hint.setAttribute('data-hint', '1');
-        hint.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:2147483647;padding:10px 20px;background:rgba(37,99,235,0.9);color:#fff;font-size:14px;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;text-align:center;backdrop-filter:blur(4px);box-shadow:0 2px 8px rgba(0,0,0,0.15);line-height:1.5;';
+        hint.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:2147483647;padding:10px 20px;background:rgba(37,99,235,0.9);color:#fff;font-size:14px;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;text-align:center;box-shadow:0 2px 8px rgba(0,0,0,0.15);line-height:1.5;${isCaptchaPage ? 'pointer-events:none;' : ''}';
         hint.textContent = ${JSON.stringify(message)};
         var closeBtn = document.createElement('span');
         closeBtn.textContent = '✕';
-        closeBtn.style.cssText = 'position:absolute;right:12px;top:50%;transform:translateY(-50%);cursor:pointer;font-size:16px;opacity:0.7;';
+        closeBtn.style.cssText = 'position:absolute;right:12px;top:50%;transform:translateY(-50%);cursor:pointer;font-size:16px;opacity:0.7;${isCaptchaPage ? 'pointer-events:auto;' : ''}';
         closeBtn.onmouseover = function() { closeBtn.style.opacity = '1'; };
         closeBtn.onmouseout = function() { closeBtn.style.opacity = '0.7'; };
-        closeBtn.onclick = function() { hint.remove(); };
+        closeBtn.onclick = function() { hint.remove(); document.body.style.paddingTop = ''; };
         hint.appendChild(closeBtn);
         document.documentElement.appendChild(hint);
-        document.body.style.paddingTop = (hint.offsetHeight + 8) + 'px';
+        ${isCaptchaPage ? '' : "document.body.style.paddingTop = (hint.offsetHeight + 8) + 'px';"}
       })();
     `;
     win.webContents.executeJavaScript(js).catch(() => {});
@@ -1195,9 +1539,29 @@ export class TaobaoPlatform implements PlatformAdapter {
         win.webContents.executeJavaScript(js).catch(() => {});
       });
     });
-    win.webContents.on('did-navigate-in-page', () => {
+    win.webContents.once('did-navigate-in-page', () => {
       win.webContents.executeJavaScript(js).catch(() => {});
     });
+  }
+
+  private injectCenterToast(win: BrowserWindow, message: string) {
+    const js = `
+      (function() {
+        var old = document.getElementById('__auto_shop_toast__');
+        if (old) old.remove();
+        var toast = document.createElement('div');
+        toast.id = '__auto_shop_toast__';
+        toast.style.cssText = 'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:2147483647;padding:20px 32px;border-radius:12px;background:rgba(0,0,0,0.65);color:#fff;font-size:16px;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;text-align:center;line-height:1.6;pointer-events:none;opacity:0;transition:opacity 0.4s ease;max-width:360px;backdrop-filter:blur(8px);box-shadow:0 8px 32px rgba(0,0,0,0.3);';
+        toast.textContent = ${JSON.stringify(message)};
+        document.documentElement.appendChild(toast);
+        requestAnimationFrame(function() { toast.style.opacity = '1'; });
+        setTimeout(function() {
+          toast.style.opacity = '0';
+          setTimeout(function() { toast.remove(); }, 400);
+        }, 3000);
+      })();
+    `;
+    win.webContents.executeJavaScript(js).catch(() => {});
   }
 
   async addToCart(productUrl: string, sku?: string, orderId?: string, cartOnly?: boolean): Promise<AddToCartResult> {
@@ -1244,19 +1608,19 @@ export class TaobaoPlatform implements PlatformAdapter {
       this.shopWindow = new BrowserWindow({
         width: 1280,
         height: 800,
-        show: true,
+        show: false,
         autoHideMenuBar: true,
         icon: APP_ICON,
         webPreferences: {
           nodeIntegration: false,
           contextIsolation: true,
+          backgroundThrottling: false,
         },
       })
       this.setUserAgent(this.shopWindow)
       if (this.mainWindow) {
         this.shopWindow.setParentWindow(this.mainWindow)
       }
-      this.shopWindow.minimize()
 
       return new Promise<AddToCartResult>((resolve) => {
         let resolved = false
@@ -1331,7 +1695,8 @@ export class TaobaoPlatform implements PlatformAdapter {
               newWindow.setSize(500, 600)
               newWindow.setTitle('淘宝身份验证')
               if (this.mainWindow) newWindow.setParentWindow(this.mainWindow)
-              this.injectOverlayBanner(newWindow, "🔐 自动购物助手：淘宝要求身份验证，请在下方完成验证后继续")
+              this.injectOverlayBanner(newWindow, "🔐 自动购物助手：淘宝要求身份验证，请在下方完成验证后继续", true)
+              this.injectCenterToast(newWindow, "请完成身份验证")
               newWindow.show()
               return
             }
@@ -1491,6 +1856,7 @@ export class TaobaoPlatform implements PlatformAdapter {
                 this.shopWindow!.setTitle('请选择商品规格，选好后点击"加入购物车"')
                 if (this.mainWindow) this.shopWindow!.setParentWindow(this.mainWindow)
                 this.injectOverlayBanner(this.shopWindow!, "🛒 自动购物助手：需要选择商品规格，请在下方选择后点击\"加入购物车\"")
+                this.injectCenterToast(this.shopWindow!, "请选择规格后点击加入购物车")
                 this.shopWindow!.show()
 
                 this.shopWindow!.webContents.on('did-navigate', async (_evt, url: string) => {
@@ -1558,6 +1924,7 @@ export class TaobaoPlatform implements PlatformAdapter {
       webPreferences: {
         nodeIntegration: false,
         contextIsolation: true,
+        backgroundThrottling: false,
       },
     })
     this.setUserAgent(this.shopWindow)
@@ -1603,6 +1970,7 @@ export class TaobaoPlatform implements PlatformAdapter {
         webPreferences: {
           nodeIntegration: false,
           contextIsolation: true,
+          backgroundThrottling: false,
         },
       })
       this.setUserAgent(this.shopWindow)
@@ -1680,7 +2048,8 @@ export class TaobaoPlatform implements PlatformAdapter {
               newWindow.setSize(500, 600)
               newWindow.setTitle('淘宝身份验证')
               if (this.mainWindow) newWindow.setParentWindow(this.mainWindow)
-              this.injectOverlayBanner(newWindow, "🔐 自动购物助手：淘宝要求身份验证，请在下方完成验证后继续")
+              this.injectOverlayBanner(newWindow, "🔐 自动购物助手：淘宝要求身份验证，请在下方完成验证后继续", true)
+              this.injectCenterToast(newWindow, "请完成身份验证")
               newWindow.show()
               return
             }
@@ -1705,6 +2074,8 @@ export class TaobaoPlatform implements PlatformAdapter {
 
         this.shopWindow!.webContents.on('did-finish-load', async () => {
           if (resolved) return
+
+          if (!this.shopWindow?.isDestroyed()) this.shopWindow?.show()
 
           const currentUrl = this.shopWindow!.webContents.getURL()
           await handleNavigation(currentUrl)
@@ -1817,6 +2188,7 @@ export class TaobaoPlatform implements PlatformAdapter {
                 this.shopWindow!.setTitle('请选择商品规格，选好后点击"立即购买"')
                 if (this.mainWindow) this.shopWindow!.setParentWindow(this.mainWindow)
                 this.injectOverlayBanner(this.shopWindow!, "🛒 自动购物助手：需要选择商品规格，请在下方选择后点击\"立即购买\"")
+                this.injectCenterToast(this.shopWindow!, "请选择规格后点击立即购买")
                 this.shopWindow!.show()
 
                 this.shopWindow!.webContents.on('did-navigate', async (_evt, url: string) => {
@@ -1881,19 +2253,19 @@ export class TaobaoPlatform implements PlatformAdapter {
       this.shopWindow = new BrowserWindow({
         width: 1280,
         height: 800,
-        show: true,
+        show: false,
         autoHideMenuBar: true,
         icon: APP_ICON,
         webPreferences: {
           nodeIntegration: false,
           contextIsolation: true,
+          backgroundThrottling: false,
         },
       })
       this.setUserAgent(this.shopWindow)
       if (this.mainWindow) {
         this.shopWindow.setParentWindow(this.mainWindow)
       }
-      this.shopWindow.minimize()
       this.shopWindow.loadURL(detailUrl)
 
       this.shopWindow.webContents.setWindowOpenHandler(({ url: openUrl }) => {
@@ -1936,6 +2308,7 @@ export class TaobaoPlatform implements PlatformAdapter {
               newWindow.setParentWindow(this.mainWindow)
             }
             this.injectOverlayBanner(newWindow, "💳 自动购物助手：请确认订单信息并提交")
+            this.injectCenterToast(newWindow, "请确认订单信息并提交")
             newWindow.show()
             resolve({ success: true, directToPay: true })
             return
@@ -1961,7 +2334,8 @@ export class TaobaoPlatform implements PlatformAdapter {
             if (this.mainWindow) {
               newWindow.setParentWindow(this.mainWindow)
             }
-            this.injectOverlayBanner(newWindow, "🔐 自动购物助手：淘宝要求身份验证，请在下方完成验证后继续")
+            this.injectOverlayBanner(newWindow, "🔐 自动购物助手：淘宝要求身份验证，请在下方完成验证后继续", true)
+            this.injectCenterToast(newWindow, "请完成身份验证")
             newWindow.show()
             return
           }
@@ -2091,10 +2465,10 @@ export class TaobaoPlatform implements PlatformAdapter {
                   await newWindow.webContents.executeJavaScript(`
                     (function() {
                       try {
-                        Object.defineProperty(Document.prototype, 'visibilityState', { get: function() { return document.hidden ? 'hidden' : 'visible'; }, configurable: true });
-                        Object.defineProperty(Document.prototype, 'hidden', { get: function() { return !document.hasFocus(); }, configurable: true });
-                        Object.defineProperty(document, 'visibilityState', { get: function() { return document.hidden ? 'hidden' : 'visible'; }, configurable: true });
-                        Object.defineProperty(document, 'hidden', { get: function() { return !document.hasFocus(); }, configurable: true });
+                        Object.defineProperty(Document.prototype, 'visibilityState', { get: () => 'visible', configurable: true });
+                        Object.defineProperty(Document.prototype, 'hidden', { get: () => false, configurable: true });
+                        Object.defineProperty(document, 'visibilityState', { get: () => 'visible', configurable: true });
+                        Object.defineProperty(document, 'hidden', { get: () => false, configurable: true });
                       } catch(e) {}
                     })()
                   `).catch(() => {})
@@ -2102,13 +2476,14 @@ export class TaobaoPlatform implements PlatformAdapter {
                   newWindow.setTitle('淘宝安全验证')
                   if (this.mainWindow) newWindow.setParentWindow(this.mainWindow)
                   const captchaBanner = '🔐 自动购物助手：淘宝要求安全验证，请拖动滑块或完成验证后继续'
-                  this.injectOverlayBanner(newWindow, captchaBanner)
+                  this.injectOverlayBanner(newWindow, captchaBanner, true)
                   newWindow.show()
                   const verified = await this.waitForUserConfirmation(
                     newWindow,
                     '淘宝要求安全验证（滑块验证），请在弹出的窗口中完成验证，完成后点击"已完成"',
                     '淘宝安全验证',
                     captchaBanner,
+                    'verification',
                   )
                   if (verified) {
                     resolved = true
@@ -2188,13 +2563,14 @@ export class TaobaoPlatform implements PlatformAdapter {
                   newWindow.setTitle('淘宝安全验证')
                   if (this.mainWindow) newWindow.setParentWindow(this.mainWindow)
                   const captchaBanner = '🔐 自动购物助手：淘宝要求安全验证，请拖动滑块或完成验证后继续'
-                  this.injectOverlayBanner(newWindow, captchaBanner)
+                  this.injectOverlayBanner(newWindow, captchaBanner, true)
                   newWindow.show()
                   const captchaConfirmed = await this.waitForUserConfirmation(
                     newWindow,
                     '淘宝要求安全验证（滑块验证），请在弹出的窗口中完成验证，完成后点击"已完成"',
                     '淘宝安全验证',
                     captchaBanner,
+                    'verification',
                   )
                   if (captchaConfirmed) {
                     resolved = true
@@ -2232,7 +2608,7 @@ export class TaobaoPlatform implements PlatformAdapter {
                     newWindow.setParentWindow(this.mainWindow)
                   }
                   const bannerMsg = `⚠️ 自动购物助手：原商品规格信息已失效，请重新选择规格后${actionText}`
-                  this.injectOverlayBanner(newWindow, bannerMsg)
+                  this.injectOverlayBanner(newWindow, bannerMsg, true)
                   newWindow.show()
 
                   const confirmed = await this.waitForUserConfirmation(
@@ -2240,6 +2616,7 @@ export class TaobaoPlatform implements PlatformAdapter {
                     `原商品规格信息已失效，请在弹出的窗口中重新选择规格后${actionText}，完成后点击"已完成"`,
                     `请选择商品规格 - 选择后${actionText}`,
                     bannerMsg,
+                    'add-to-cart',
                   )
 
                   if (confirmed) {
@@ -2281,7 +2658,7 @@ export class TaobaoPlatform implements PlatformAdapter {
                   newWindow.setParentWindow(this.mainWindow)
                 }
                 const fallbackBanner = `⚠️ 自动购物助手：${fallbackReason}，请在下方手动完成购买操作`
-                this.injectOverlayBanner(newWindow, fallbackBanner)
+                this.injectOverlayBanner(newWindow, fallbackBanner, true)
                 newWindow.show()
 
                 const confirmed = await this.waitForUserConfirmation(
@@ -2289,6 +2666,7 @@ export class TaobaoPlatform implements PlatformAdapter {
                   `${fallbackReason}，请在弹出的窗口中手动完成购买操作，完成后点击"已完成"`,
                   '请手动完成购买操作',
                   fallbackBanner,
+                  'add-to-cart',
                 )
 
                 if (confirmed) {
@@ -2409,7 +2787,7 @@ export class TaobaoPlatform implements PlatformAdapter {
                       newWindow.setParentWindow(this.mainWindow)
                     }
                     const bannerMsg2 = `⚠️ 自动购物助手：原商品规格信息已失效，请重新选择规格后${actionText2}`
-                    this.injectOverlayBanner(newWindow, bannerMsg2)
+                    this.injectOverlayBanner(newWindow, bannerMsg2, true)
                     newWindow.show()
 
                     const confirmed = await this.waitForUserConfirmation(
@@ -2417,6 +2795,7 @@ export class TaobaoPlatform implements PlatformAdapter {
                       `原商品规格信息已失效，请在弹出的窗口中重新选择规格后${actionText2}，完成后点击"已完成"`,
                       `请选择商品规格 - 选择后${actionText2}`,
                       bannerMsg2,
+                      'add-to-cart',
                     )
 
                     if (confirmed) {
@@ -2466,7 +2845,7 @@ export class TaobaoPlatform implements PlatformAdapter {
                     newWindow.setParentWindow(this.mainWindow)
                   }
                   const fallbackBanner2 = `⚠️ 自动购物助手：${fallbackReason2}，请在下方手动完成购买操作`
-                  this.injectOverlayBanner(newWindow, fallbackBanner2)
+                  this.injectOverlayBanner(newWindow, fallbackBanner2, true)
                   newWindow.show()
 
                   const confirmed2 = await this.waitForUserConfirmation(
@@ -2474,6 +2853,7 @@ export class TaobaoPlatform implements PlatformAdapter {
                     `${fallbackReason2}，请在弹出的窗口中手动完成购买操作，完成后点击"已完成"`,
                     '请手动完成购买操作',
                     fallbackBanner2,
+                    'add-to-cart',
                   )
 
                   if (confirmed2) {
@@ -2824,23 +3204,25 @@ export class TaobaoPlatform implements PlatformAdapter {
           await this.shopWindow?.webContents.executeJavaScript(`
             (function() {
               try {
-                Object.defineProperty(Document.prototype, 'visibilityState', { get: function() { return document.hidden ? 'hidden' : 'visible'; }, configurable: true });
-                Object.defineProperty(Document.prototype, 'hidden', { get: function() { return !document.hasFocus(); }, configurable: true });
-                Object.defineProperty(document, 'visibilityState', { get: function() { return document.hidden ? 'hidden' : 'visible'; }, configurable: true });
-                Object.defineProperty(document, 'hidden', { get: function() { return !document.hasFocus(); }, configurable: true });
+                Object.defineProperty(Document.prototype, 'visibilityState', { get: () => 'visible', configurable: true });
+                Object.defineProperty(Document.prototype, 'hidden', { get: () => false, configurable: true });
+                Object.defineProperty(document, 'visibilityState', { get: () => 'visible', configurable: true });
+                Object.defineProperty(document, 'hidden', { get: () => false, configurable: true });
               } catch(e) {}
             })()
           `).catch(() => {})
           this.shopWindow?.restore()
           this.shopWindow?.setSize(1100, 800)
           this.shopWindow?.setTitle('淘宝安全验证')
-          this.injectOverlayBanner(this.shopWindow!, '🔐 自动购物助手：淘宝要求安全验证，请拖动滑块完成验证')
+          this.injectOverlayBanner(this.shopWindow!, '🔐 自动购物助手：淘宝要求安全验证，请拖动滑块完成验证', true)
+          this.injectCenterToast(this.shopWindow!, "请拖动滑块完成验证")
           this.emitStatus('需要进行滑块验证，请在弹出的窗口中完成验证...')
           const verified = await this.waitForUserConfirmation(
             this.shopWindow!,
             '淘宝要求安全验证（滑块验证），请在弹出的窗口中拖动滑块完成验证，然后点击"已完成"',
             '淘宝安全验证',
             '🔐 请拖动滑块完成验证',
+            'verification',
           )
           if (!verified) {
             resolved = true
@@ -3381,6 +3763,7 @@ export class TaobaoPlatform implements PlatformAdapter {
         webPreferences: {
           nodeIntegration: false,
           contextIsolation: true,
+          backgroundThrottling: false,
         },
       })
       this.setUserAgent(verifyWindow)
@@ -3541,6 +3924,7 @@ export class TaobaoPlatform implements PlatformAdapter {
     win.setTitle('淘宝登录 - 请重新登录')
     if (this.mainWindow) win.setParentWindow(this.mainWindow)
     this.injectOverlayBanner(win, "🔑 自动购物助手：登录已过期，请在下方重新登录后继续")
+    this.injectCenterToast(win, "请重新登录")
     win.show()
   }
 
@@ -3582,6 +3966,7 @@ export class TaobaoPlatform implements PlatformAdapter {
           webPreferences: {
             nodeIntegration: false,
             contextIsolation: true,
+            backgroundThrottling: false,
           },
         })
         this.setUserAgent(manualWindow)
@@ -4102,17 +4487,24 @@ export class TaobaoPlatform implements PlatformAdapter {
     const exceedsLimit = payFreeLimit > 0 && totalAmount !== undefined && totalAmount > payFreeLimit
 
     if (exceedsLimit) {
+      diagWindowState('[Pay] exceedsLimit BEFORE setParentWindow', this.mainWindow, this.shopWindow)
       this.shopWindow.setSize(1100, 800)
       this.shopWindow.setTitle(`金额超过免密支付上限 - 需要手动确认付款`)
-      if (this.mainWindow) this.shopWindow.setParentWindow(this.mainWindow)
+      if (this.mainWindow) {
+        this.shopWindow.setParentWindow(this.mainWindow)
+        diagWindowState('[Pay] exceedsLimit AFTER setParentWindow', this.mainWindow, this.shopWindow)
+      }
       const bannerMsg = `⚠️ 自动支付已暂停：订单金额 ¥${totalAmount!.toFixed(2)} 超过免密支付上限 ¥${payFreeLimit.toFixed(2)}，为保障资金安全需要您手动确认。请在下方完成付款后点击"已完成"`
-      this.injectOverlayBanner(this.shopWindow, bannerMsg)
+      this.injectOverlayBanner(this.shopWindow, bannerMsg, true)
+      this.injectCenterToast(this.shopWindow!, "请完成付款后点击已完成")
       this.shopWindow.show()
+      diagWindowState('[Pay] exceedsLimit AFTER shopWindow.show()', this.mainWindow, this.shopWindow)
       const confirmed = await this.waitForUserConfirmation(
         this.shopWindow,
         `订单金额 ¥${totalAmount!.toFixed(2)} 超过免密支付上限 ¥${payFreeLimit.toFixed(2)}，为保障资金安全需要您手动确认付款。请在弹出的窗口中完成支付，然后点击"已完成"`,
         `金额超过免密支付上限 - 需要手动确认付款`,
         bannerMsg,
+        'payment',
       )
       if (confirmed) {
         await this.syncCookiesFromElectron()
@@ -4143,25 +4535,30 @@ export class TaobaoPlatform implements PlatformAdapter {
             await this.shopWindow.webContents.executeJavaScript(`
               (function() {
                 try {
-                  Object.defineProperty(Document.prototype, 'visibilityState', { get: function() { return document.hidden ? 'hidden' : 'visible'; }, configurable: true });
-                  Object.defineProperty(Document.prototype, 'hidden', { get: function() { return !document.hasFocus(); }, configurable: true });
-                  Object.defineProperty(document, 'visibilityState', { get: function() { return document.hidden ? 'hidden' : 'visible'; }, configurable: true });
-                  Object.defineProperty(document, 'hidden', { get: function() { return !document.hasFocus(); }, configurable: true });
+                  Object.defineProperty(Document.prototype, 'visibilityState', { get: () => 'visible', configurable: true });
+                  Object.defineProperty(Document.prototype, 'hidden', { get: () => false, configurable: true });
+                  Object.defineProperty(document, 'visibilityState', { get: () => 'visible', configurable: true });
+                  Object.defineProperty(document, 'hidden', { get: () => false, configurable: true });
                 } catch(e) {}
               })()
             `).catch(() => {})
             this.shopWindow.setSize(1100, 800)
             this.shopWindow.setTitle('淘宝安全验证 - 需要手动操作')
+            diagWindowState('[Pay] identityVerify BEFORE setParentWindow', this.mainWindow, this.shopWindow)
             if (this.mainWindow) this.shopWindow.setParentWindow(this.mainWindow)
+            diagWindowState('[Pay] identityVerify AFTER setParentWindow', this.mainWindow, this.shopWindow)
             const verifyBanner = '🔐 自动支付已暂停：淘宝检测到异常操作，要求进行安全验证。请拖动滑块完成验证，然后点击"已完成"'
-            this.injectOverlayBanner(this.shopWindow, verifyBanner)
+            this.injectOverlayBanner(this.shopWindow, verifyBanner, true)
+            this.injectCenterToast(this.shopWindow!, "请拖动滑块完成验证")
             this.shopWindow.show()
+            diagWindowState('[Pay] identityVerify AFTER shopWindow.show()', this.mainWindow, this.shopWindow)
 
             const verified = await this.waitForUserConfirmation(
               this.shopWindow,
               '淘宝检测到异常操作，要求进行安全验证（滑块验证）。请在弹出的窗口中拖动滑块完成验证，然后点击"已完成"，系统将继续自动完成后续流程',
               '淘宝安全验证 - 需要手动操作',
               verifyBanner,
+              'verification',
             )
             if (verified) {
               await this.syncCookiesFromElectron()
@@ -4206,16 +4603,21 @@ export class TaobaoPlatform implements PlatformAdapter {
             console.log(`[Taobao] Captcha detected after pay click:`, JSON.stringify(hasCaptcha))
             this.shopWindow.setSize(1100, 800)
             this.shopWindow.setTitle('淘宝安全验证 - 需要手动操作')
+            diagWindowState('[Pay] captcha BEFORE setParentWindow', this.mainWindow, this.shopWindow)
             if (this.mainWindow) this.shopWindow.setParentWindow(this.mainWindow)
+            diagWindowState('[Pay] captcha AFTER setParentWindow', this.mainWindow, this.shopWindow)
             const captchaBanner = '🔐 自动支付已暂停：淘宝检测到异常操作，要求进行验证码验证。请完成验证后点击"已完成"，系统将继续自动完成后续流程'
-            this.injectOverlayBanner(this.shopWindow, captchaBanner)
+            this.injectOverlayBanner(this.shopWindow, captchaBanner, true)
+            this.injectCenterToast(this.shopWindow!, "请完成验证码验证")
             this.shopWindow.show()
+            diagWindowState('[Pay] captcha AFTER shopWindow.show()', this.mainWindow, this.shopWindow)
 
             const verified = await this.waitForUserConfirmation(
               this.shopWindow,
               '淘宝检测到异常操作，要求进行验证码验证。请在弹出的窗口中完成验证（滑块或验证码），然后点击"已完成"，系统将继续自动完成后续流程',
               '淘宝安全验证 - 需要手动操作',
               captchaBanner,
+              'verification',
             )
             if (verified) {
               await this.syncCookiesFromElectron()
@@ -4246,9 +4648,13 @@ export class TaobaoPlatform implements PlatformAdapter {
                   paymentWindowShown = true
                   this.shopWindow.setSize(1100, 800)
                   this.shopWindow.setTitle('需要输入支付密码 - 需要手动操作')
+                  diagWindowState('[Pay] auto_pay cashier BEFORE setParentWindow', this.mainWindow, this.shopWindow)
                   if (this.mainWindow) this.shopWindow.setParentWindow(this.mainWindow)
-                  this.injectOverlayBanner(this.shopWindow, '💳 自动支付已暂停：订单金额超过免密支付限额，支付宝需要您输入支付密码。请在下方输入密码完成支付，系统将自动检测支付结果')
+                  diagWindowState('[Pay] auto_pay cashier AFTER setParentWindow', this.mainWindow, this.shopWindow)
+                  this.injectOverlayBanner(this.shopWindow, '💳 自动支付已暂停：订单金额超过免密支付限额，支付宝需要您输入支付密码。请在下方输入密码完成支付，系统将自动检测支付结果', true)
+                  this.injectCenterToast(this.shopWindow!, "请输入支付密码完成支付")
                   this.shopWindow.show()
+                  diagWindowState('[Pay] auto_pay cashier AFTER shopWindow.show()', this.mainWindow, this.shopWindow)
                 }
                 continue
               }
@@ -4269,22 +4675,30 @@ export class TaobaoPlatform implements PlatformAdapter {
                   paymentWindowShown = true
                   this.shopWindow.setSize(1100, 800)
                   this.shopWindow.setTitle('需要输入支付密码 - 需要手动操作')
+                  diagWindowState('[Pay] auto_pay textMatch BEFORE setParentWindow', this.mainWindow, this.shopWindow)
                   if (this.mainWindow) this.shopWindow.setParentWindow(this.mainWindow)
-                  this.injectOverlayBanner(this.shopWindow, '💳 自动支付已暂停：订单金额超过免密支付限额，支付宝需要您输入支付密码。请在下方输入密码完成支付，系统将自动检测支付结果')
+                  diagWindowState('[Pay] auto_pay textMatch AFTER setParentWindow', this.mainWindow, this.shopWindow)
+                  this.injectOverlayBanner(this.shopWindow, '💳 自动支付已暂停：订单金额超过免密支付限额，支付宝需要您输入支付密码。请在下方输入密码完成支付，系统将自动检测支付结果', true)
+                  this.injectCenterToast(this.shopWindow!, "请输入支付密码完成支付")
                   this.shopWindow.show()
+                  diagWindowState('[Pay] auto_pay textMatch AFTER shopWindow.show()', this.mainWindow, this.shopWindow)
                 }
               } catch { /* ignore */ }
             }
             this.shopWindow.setSize(1100, 800)
             this.shopWindow.setTitle('支付结果确认 - 需要手动确认')
+            diagWindowState('[Pay] auto_pay timeout BEFORE setParentWindow', this.mainWindow, this.shopWindow)
             if (this.mainWindow) this.shopWindow.setParentWindow(this.mainWindow)
-            this.injectOverlayBanner(this.shopWindow, '📋 自动支付超时：系统等待支付结果超过60秒未能自动检测到。请在下方确认是否已完成支付，然后点击"已完成"')
+            diagWindowState('[Pay] auto_pay timeout AFTER setParentWindow', this.mainWindow, this.shopWindow)
+            this.injectOverlayBanner(this.shopWindow, '📋 自动支付超时：系统等待支付结果超过60秒未能自动检测到。请在下方确认是否已完成支付，然后点击"已完成"', true)
+            this.injectCenterToast(this.shopWindow!, "请确认是否已完成支付")
             this.shopWindow.show()
             const confirmed = await this.waitForUserConfirmation(
               this.shopWindow,
               '系统等待支付结果超过60秒未能自动检测到。请在弹出的窗口中确认是否已完成支付，然后点击"已完成"',
               '支付结果确认 - 需要手动确认',
               '📋 自动支付超时：系统等待支付结果超过60秒未能自动检测到。请在下方确认是否已完成支付，然后点击"已完成"',
+              'payment',
             )
             if (confirmed) {
               await this.syncCookiesFromElectron()
@@ -4297,8 +4711,11 @@ export class TaobaoPlatform implements PlatformAdapter {
 
           this.shopWindow.setSize(1100, 800)
           this.shopWindow.setTitle('请完成支付 - 需要手动操作')
+          diagWindowState('[Pay] manual_pay BEFORE setParentWindow', this.mainWindow, this.shopWindow)
           if (this.mainWindow) this.shopWindow.setParentWindow(this.mainWindow)
-          this.injectOverlayBanner(this.shopWindow, '📋 订单已提交成功，当前支付模式为手动支付，请在下方完成支付后点击"已完成"')
+          diagWindowState('[Pay] manual_pay AFTER setParentWindow', this.mainWindow, this.shopWindow)
+          this.injectOverlayBanner(this.shopWindow, '📋 订单已提交成功，当前支付模式为手动支付，请在下方完成支付后点击"已完成"', true)
+          this.injectCenterToast(this.shopWindow!, "请完成支付后点击已完成")
           this.shopWindow.show()
 
           const confirmed = await this.waitForUserConfirmation(
@@ -4306,6 +4723,7 @@ export class TaobaoPlatform implements PlatformAdapter {
             '订单已提交成功，当前支付模式为手动支付，需要您手动完成支付。请在弹出的窗口中完成支付，然后点击"已完成"',
             '请完成支付 - 需要手动操作',
             '📋 订单已提交成功，当前支付模式为手动支付，请在下方完成支付后点击"已完成"',
+            'payment',
           )
           if (confirmed) {
             await this.syncCookiesFromElectron()
@@ -4331,10 +4749,14 @@ export class TaobaoPlatform implements PlatformAdapter {
     this.shopWindow.setSize(1100, 800)
     this.shopWindow.setTitle(title || '金额超过免密支付上限 - 需要手动确认付款')
     if (this.mainWindow) {
+      diagWindowState('[Pay] showPaymentWindow BEFORE setParentWindow', this.mainWindow, this.shopWindow)
       this.shopWindow.setParentWindow(this.mainWindow)
+      diagWindowState('[Pay] showPaymentWindow AFTER setParentWindow', this.mainWindow, this.shopWindow)
     }
-    this.injectOverlayBanner(this.shopWindow, title || '💰 自动支付已暂停：金额超过免密支付上限，为保障资金安全需要您手动确认。请在下方完成付款后关闭窗口')
+    this.injectOverlayBanner(this.shopWindow, title || '💰 自动支付已暂停：金额超过免密支付上限，为保障资金安全需要您手动确认。请在下方完成付款后关闭窗口', true)
+    this.injectCenterToast(this.shopWindow!, "请完成付款后关闭窗口")
     this.shopWindow.show()
+    diagWindowState('[Pay] showPaymentWindow AFTER shopWindow.show()', this.mainWindow, this.shopWindow)
 
     let paymentDetected = false
 

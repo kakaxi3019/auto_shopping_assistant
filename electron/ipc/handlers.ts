@@ -73,9 +73,12 @@ export function registerIpcHandlers(db: Database, scheduler: TaskScheduler) {
 
   ipcMain.handle('task:confirm', async (_event, instruction: string, items: ParsedShoppingItem[], platform?: string, dryRun?: boolean, paymentMode?: PaymentMode) => {
     try {
+      console.log(`[IPC] task:confirm called, items=${items.length}, platform=${platform}, dryRun=${dryRun}, paymentMode=${paymentMode}`)
       const taskId = await scheduler.confirmTask(instruction, items, platform || 'taobao', dryRun, paymentMode)
+      console.log(`[IPC] task:confirm result: taskId=${taskId}`)
       return { taskId }
     } catch (e) {
+      console.error(`[IPC] task:confirm error:`, e)
       return { error: e instanceof Error ? e.message : String(e) }
     }
   })

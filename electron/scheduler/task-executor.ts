@@ -1,4 +1,4 @@
-import type { Order, ParsedShoppingItem, PreviewItem, CandidateOrder, AmbiguityLevel, AddToCartResult, SearchResult } from '../../shared/types/platform.types'
+import type { Order, ParsedShoppingItem, PreviewItem, CandidateOrder, AmbiguityLevel, AddToCartResult } from '../../shared/types/platform.types'
 import type { PlatformAdapter } from '../../shared/types/platform.types'
 import type { Database } from '../db/database'
 import { appendFileSync } from 'fs'
@@ -90,28 +90,55 @@ export class TaskExecutor {
           if (order.shopName) searchParts.push(order.shopName)
           if (item.sku) searchParts.push(item.sku)
           const searchKeyword = searchParts.join(' ')
-          onProgress(`再买一单失败（${cartResult.error}），正在搜索商品 "${searchKeyword}"...`)
-          const searchResults = await platform.searchProduct(searchKeyword)
-          if (searchResults.length > 0) {
-            const topResults = this.scoreSearchResults(searchResults, item, order)
-            const candidates = topResults.map(t => t.result)
-            onProgress(`搜索到 ${searchResults.length} 个结果，已列出前 ${candidates.length} 个供您选择`)
-            const confirmationId = this.db.createPendingConfirmation({
-              taskId,
-              productName: item.name,
-              originalPrice: order.price,
-              failureReason: cartResult.error || '未找到再买一单入口',
-              searchKeyword,
-              candidates: JSON.stringify(candidates),
-              orderId: order.id,
-            })
-            result.status = 'pending'
-            result.pendingConfirmationId = confirmationId
-            result.currentPrice = order.price
-            result.lastPrice = order.price
-          } else {
-            onProgress(`搜索 "${searchKeyword}" 无结果`)
-            result.error = cartResult.error || '再来一单失败，且搜索无结果'
+          onProgress(`再买一单失败（${cartResult.error}），正在打开搜索页面，请在搜索结果中找到对应商品并点击进入...`)
+          try {
+            const searchUrl = await platform.openSearchPage(searchKeyword)
+            if (searchUrl) {
+              const purchaseResult = await platform.purchaseFromUrl(searchUrl)
+              if (purchaseResult.success) {
+                if (isCartOnly) {
+                  onProgress(`已将商品加入购物车`)
+                  result.matchedProduct = order.productName
+                  result.status = 'success'
+                } else {
+                  onProgress(`正在结算...`)
+                  const checkoutResult = await platform.checkout(purchaseResult.directToPay, item.quantity)
+                  if (!checkoutResult.success) {
+                    result.error = checkoutResult.error || '结算失败'
+                  } else {
+                    const totalAmount = order.price * item.quantity
+                    if (paymentMode === 'checkout_only') {
+                      onProgress(`已到达结算页面，请在弹出的窗口中确认金额并完成支付`)
+                      const payWindowResult = await platform.showPaymentWindow()
+                      if (payWindowResult.paid) {
+                        result.matchedProduct = order.productName
+                        result.status = 'success'
+                      } else {
+                        result.error = '支付未完成'
+                      }
+                    } else {
+                      onProgress(totalAmount > 0
+                        ? `正在支付（¥${totalAmount.toFixed(2)}）...`
+                        : `正在支付...`
+                      )
+                      const payResult = await platform.pay(order.price, false, paymentMode)
+                      if (payResult.success) {
+                        result.matchedProduct = order.productName
+                        result.status = 'success'
+                      } else {
+                        result.error = payResult.error || '支付失败'
+                      }
+                    }
+                  }
+                }
+              } else {
+                result.error = '商品页面无法购买'
+              }
+            } else {
+              result.error = cartResult.error || '未找到商品'
+            }
+          } catch (e: any) {
+            result.error = e.message || '打开搜索页面失败'
           }
         } else if (isCartOnly) {
           onProgress(`已将 "${item.name}" 加入购物车`)
@@ -289,53 +316,6 @@ export class TaskExecutor {
       return 60 + ratio * 30
     }
     return 30
-  }
-
-  private scoreSearchResults(results: SearchResult[], item: ParsedShoppingItem, order: Order): Array<{ result: SearchResult; score: number }> {
-    const scored = results.map(r => {
-      let score = 0
-      const title = r.title.toLowerCase()
-      const itemName = item.name.toLowerCase()
-      const productName = order.productName.toLowerCase()
-
-      if (title === itemName || title === productName) score += 50
-      if (title.includes(itemName) || itemName.includes(title)) score += 30
-      if (title.includes(productName) || productName.includes(title)) score += 25
-
-      const longerSource = productName.length >= itemName.length ? productName : itemName
-      let bestSubstrLen = 0
-      for (let len = Math.min(longerSource.length, 20); len >= 3; len--) {
-        let found = false
-        for (let i = 0; i <= longerSource.length - len; i++) {
-          if (title.includes(longerSource.substring(i, i + len))) {
-            bestSubstrLen = len
-            found = true
-            break
-          }
-        }
-        if (found) break
-      }
-      if (bestSubstrLen >= 6) score += 25
-      else if (bestSubstrLen >= 4) score += 15
-      else if (bestSubstrLen >= 3) score += 8
-
-      if (r.shopName && order.shopName) {
-        if (r.shopName.toLowerCase() === order.shopName.toLowerCase()) score += 30
-        else if (r.shopName.toLowerCase().includes(order.shopName.toLowerCase()) || order.shopName.toLowerCase().includes(r.shopName.toLowerCase())) score += 15
-      }
-
-      if (r.price > 0 && order.price > 0) {
-        const priceDiff = Math.abs(r.price - order.price) / order.price
-        if (priceDiff < 0.05) score += 15
-        else if (priceDiff < 0.2) score += 8
-        else if (priceDiff > 1) score -= 10
-      }
-
-      return { result: r, score }
-    })
-
-    scored.sort((a, b) => b.score - a.score)
-    return scored.slice(0, 5)
   }
 
   private computeAmbiguityLevel(candidates: CandidateOrder[]): AmbiguityLevel {
