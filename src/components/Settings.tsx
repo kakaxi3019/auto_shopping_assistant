@@ -36,6 +36,7 @@ export default function Settings() {
   const [autoPayLimit, setAutoPayLimit] = useState('200')
   const [paymentMode, setPaymentMode] = useState('cart_only')
   const [paymentSaved, setPaymentSaved] = useState(false)
+  const [priceProtectionThreshold, setPriceProtectionThreshold] = useState('15')
 
   const current = providerSettings[provider]
 
@@ -64,8 +65,10 @@ export default function Settings() {
 
     const limit = await api.getSetting('pay_free_limit')
     const mode = await api.getSetting('payment_mode')
+    const threshold = await api.getSetting('price_protection_threshold')
     if (limit) setAutoPayLimit(limit)
     if (mode && typeof mode === 'string') setPaymentMode(mode)
+    if (threshold) setPriceProtectionThreshold(String(Math.round(parseFloat(threshold) * 100)))
   }
 
   const updateCurrent = (field: keyof ProviderSettings, value: string) => {
@@ -154,8 +157,11 @@ export default function Settings() {
     if (isNaN(limit) || limit < 0) {
       return
     }
+    const thresholdVal = parseFloat(priceProtectionThreshold)
+    const thresholdDecimal = isNaN(thresholdVal) ? 0.15 : Math.max(0, Math.min(100, thresholdVal)) / 100
     await api.setSetting('pay_free_limit', String(limit))
     await api.setSetting('payment_mode', paymentMode)
+    await api.setSetting('price_protection_threshold', String(thresholdDecimal))
     setPaymentSaved(true)
     setTimeout(() => setPaymentSaved(false), 2000)
   }
@@ -436,6 +442,28 @@ export default function Settings() {
                 </p>
               </div>
             </label>
+          </div>
+
+          <div className="border-t border-gray-100 pt-4">
+            <label className="block text-sm font-medium text-gray-700 mb-1.5">
+              价格保护阈值
+            </label>
+            <div className="relative max-w-[200px]">
+              <input
+                type="number"
+                min="0"
+                max="100"
+                step="1"
+                value={priceProtectionThreshold}
+                onChange={(e) => setPriceProtectionThreshold(e.target.value)}
+                placeholder="15"
+                className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent pr-8"
+              />
+              <span className="absolute right-3 top-1/2 -translate-y-1/2 text-sm text-gray-400">%</span>
+            </div>
+            <p className="text-sm text-gray-400 mt-1.5">
+              自动支付模式下，当前价格较上次购买价上涨超过此比例时自动拦截，转交人工确认
+            </p>
           </div>
 
           <button

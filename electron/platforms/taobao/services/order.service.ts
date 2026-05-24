@@ -4,7 +4,7 @@ import type { Order } from '../../../../shared/types/platform.types'
 import { CookieManager } from '../infrastructure/cookie-manager'
 import { WindowManager } from '../infrastructure/window-manager'
 import { TaobaoAuth } from '../taobao.auth'
-import { setUserAgent, debugLog, ORDER_API_JS } from '../utils/page-helper'
+import { setUserAgent, debugLog, getOrderApiJs } from '../utils/page-helper'
 import { ORDER_API_URL, APP_ICON } from '../utils/constants'
 import { TAOBAO_SELECTORS } from '../taobao.selectors'
 
@@ -91,7 +91,7 @@ export class OrderService {
         this.emitStatus(`正在获取第 ${pageNum} 页订单${totalOrders > 0 ? `（共 ${totalOrders} 条）` : ''}...`)
 
         const result = await hiddenWindow.webContents.executeJavaScript(
-          `(${ORDER_API_JS})(${pageNum}, "${beginTime}", "${endTime}")`
+          `(${getOrderApiJs()})(${pageNum}, "${beginTime}", "${endTime}")`
         ) as { orders: Array<{
           productName: string
           productUrl: string

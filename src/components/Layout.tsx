@@ -11,7 +11,7 @@ interface LayoutProps {
 const navItems: { key: Page; label: string; icon: string }[] = [
   { key: 'shopping', label: '智能购物', icon: '🛒' },
   { key: 'scheduled', label: '定时任务', icon: '⏰' },
-  { key: 'orders', label: '历史订单', icon: '📦' },
+  { key: 'orders', label: '平台历史订单', icon: '📦' },
   { key: 'account', label: '平台账号管理', icon: '👤' },
   { key: 'settings', label: '设置', icon: '⚙️' },
 ]

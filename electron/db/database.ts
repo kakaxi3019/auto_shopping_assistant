@@ -1,12 +1,14 @@
 import initSqlJs, { type Database as SqlJsDatabase } from 'sql.js'
 import { join } from 'path'
-import { app } from 'electron'
+import { app, safeStorage } from 'electron'
 import { existsSync, readFileSync, writeFileSync } from 'fs'
-import { MIGRATIONS, MIGRATION_V2, MIGRATION_V3, MIGRATION_V4, MIGRATION_V5, MIGRATION_V6, MIGRATION_V7, MIGRATION_V8, MIGRATION_V9, MIGRATION_V10 } from './migrations'
+import { MIGRATIONS, MIGRATION_V2, MIGRATION_V3, MIGRATION_V4, MIGRATION_V5, MIGRATION_V6, MIGRATION_V7, MIGRATION_V8, MIGRATION_V9, MIGRATION_V10, MIGRATION_V11, MIGRATION_V12 } from './migrations'
 import type { ShoppingTask, PendingConfirmation } from '../../shared/types/task.types'
 import type { Order } from '../../shared/types/platform.types'
 
-const MIGRATION_VERSION = 10
+const MIGRATION_VERSION = 12
+
+const SENSITIVE_KEYS = new Set(['openai_api_key', 'anthropic_api_key'])
 
 function toCamelCase(obj: Record<string, unknown>): Record<string, unknown> {
   const result: Record<string, unknown> = {}
@@ -23,6 +25,15 @@ export class Database {
   private ready: Promise<void>
   private saveTimer: NodeJS.Timeout | null = null
   private pendingSave = false
+
+  private withStmt<T>(sql: string, fn: (stmt: ReturnType<SqlJsDatabase['prepare']>) => T): T {
+    const stmt = this.db.prepare(sql)
+    try {
+      return fn(stmt)
+    } finally {
+      stmt.free()
+    }
+  }
 
   constructor() {
     this.dbPath = join(app.getPath('userData'), 'auto-shopping.db')
@@ -87,14 +98,12 @@ export class Database {
   }
 
   private getMigrationVersion(): number {
-    const stmt = this.db.prepare('SELECT MAX(version) as max_version FROM schema_migrations')
-    if (stmt.step()) {
-      const version = stmt.getAsObject().max_version as number | null
-      stmt.free()
-      return version || 0
-    }
-    stmt.free()
-    return 0
+    return this.withStmt('SELECT MAX(version) as max_version FROM schema_migrations', (stmt) => {
+      if (stmt.step()) {
+        return (stmt.getAsObject().max_version as number | null) || 0
+      }
+      return 0
+    })
   }
 
   private runMigrations() {
@@ -164,6 +173,18 @@ export class Database {
       }
     }
 
+    if (currentVersion < 11) {
+      for (const sql of MIGRATION_V11) {
+        this.db.run(sql)
+      }
+    }
+
+    if (currentVersion < 12) {
+      for (const sql of MIGRATION_V12) {
+        this.db.run(sql)
+      }
+    }
+
     this.db.run('INSERT INTO schema_migrations (version) VALUES (?)', [MIGRATION_VERSION])
     this.saveImmediate()
   }
@@ -200,61 +221,61 @@ export class Database {
   }
 
   getOrders(platform: string, limit = 100, offset = 0): Order[] {
-    const stmt = this.db.prepare('SELECT * FROM orders WHERE platform = ? ORDER BY purchased_at DESC LIMIT ? OFFSET ?')
-    stmt.bind([platform, limit, offset])
-    const results: Order[] = []
-    while (stmt.step()) {
-      results.push(toCamelCase(stmt.getAsObject()) as unknown as Order)
-    }
-    stmt.free()
-    return results
+    return this.withStmt('SELECT * FROM orders WHERE platform = ? ORDER BY purchased_at DESC LIMIT ? OFFSET ?', (stmt) => {
+      stmt.bind([platform, limit, offset])
+      const results: Order[] = []
+      while (stmt.step()) {
+        results.push(toCamelCase(stmt.getAsObject()) as unknown as Order)
+      }
+      return results
+    })
   }
 
   getAllOrders(limit = 100, offset = 0): Order[] {
-    const stmt = this.db.prepare('SELECT * FROM orders ORDER BY purchased_at DESC LIMIT ? OFFSET ?')
-    stmt.bind([limit, offset])
-    const results: Order[] = []
-    while (stmt.step()) {
-      results.push(toCamelCase(stmt.getAsObject()) as unknown as Order)
-    }
-    stmt.free()
-    return results
+    return this.withStmt('SELECT * FROM orders ORDER BY purchased_at DESC LIMIT ? OFFSET ?', (stmt) => {
+      stmt.bind([limit, offset])
+      const results: Order[] = []
+      while (stmt.step()) {
+        results.push(toCamelCase(stmt.getAsObject()) as unknown as Order)
+      }
+      return results
+    })
   }
 
   getOrderById(id: number): Order | null {
-    const stmt = this.db.prepare('SELECT * FROM orders WHERE id = ?')
-    stmt.bind([id])
-    if (stmt.step()) {
-      const order = toCamelCase(stmt.getAsObject()) as unknown as Order
-      stmt.free()
-      return order
-    }
-    stmt.free()
-    return null
+    return this.withStmt('SELECT * FROM orders WHERE id = ?', (stmt) => {
+      stmt.bind([id])
+      if (stmt.step()) {
+        return toCamelCase(stmt.getAsObject()) as unknown as Order
+      }
+      return null
+    })
   }
 
   searchOrders(keyword: string, platform?: string): Order[] {
-    let sql = 'SELECT * FROM orders WHERE product_name LIKE ? AND unavailable = 0'
-    const params: unknown[] = [`%${keyword}%`]
+    const escaped = keyword.replace(/[%_\\]/g, '\\$&')
+    let sql = "SELECT * FROM orders WHERE product_name LIKE ? ESCAPE '\\' AND unavailable = 0"
+    const params: unknown[] = [`%${escaped}%`]
     if (platform) {
       sql += ' AND platform = ?'
       params.push(platform)
     }
     sql += ' ORDER BY purchased_at DESC LIMIT 50'
-    const stmt = this.db.prepare(sql)
-    stmt.bind(params)
-    const results: Order[] = []
-    while (stmt.step()) {
-      results.push(toCamelCase(stmt.getAsObject()) as unknown as Order)
-    }
-    stmt.free()
-    return results
+    return this.withStmt(sql, (stmt) => {
+      stmt.bind(params)
+      const results: Order[] = []
+      while (stmt.step()) {
+        results.push(toCamelCase(stmt.getAsObject()) as unknown as Order)
+      }
+      return results
+    })
   }
 
   searchOrdersFuzzy(keyword: string, platform?: string): { orders: Order[]; usedKeyword: string } {
     const MIN_FUZZY_LENGTH = 2
     const MAX_SUBSTRINGS = 10
     const MAX_FUZZY_RESULTS = 20
+    const MAX_KEYWORD_LENGTH = 10
     const seen = new Set<string>()
     const allOrders: Order[] = []
     let usedKeyword = keyword
@@ -279,12 +300,16 @@ export class Database {
       usedKeyword = keyword
     }
 
-    if (allOrders.length < MAX_FUZZY_RESULTS && keyword.length >= MIN_FUZZY_LENGTH + 1) {
+    const effectiveKeyword = keyword.length > MAX_KEYWORD_LENGTH
+      ? keyword.substring(0, MAX_KEYWORD_LENGTH)
+      : keyword
+
+    if (allOrders.length < MAX_FUZZY_RESULTS && effectiveKeyword.length >= MIN_FUZZY_LENGTH + 1) {
       let count = 0
-      for (let len = keyword.length - 1; len >= MIN_FUZZY_LENGTH; len--) {
+      for (let len = effectiveKeyword.length - 1; len >= MIN_FUZZY_LENGTH; len--) {
         const subResults: { sub: string; orders: Order[] }[] = []
-        for (let start = 0; start <= keyword.length - len; start++) {
-          const sub = keyword.substring(start, start + len)
+        for (let start = 0; start <= effectiveKeyword.length - len; start++) {
+          const sub = effectiveKeyword.substring(start, start + len)
           const orders = this.searchOrders(sub, platform)
           if (orders.length > 0) {
             subResults.push({ sub, orders })
@@ -315,25 +340,25 @@ export class Database {
   }
 
   getOrderCount(platform: string): number {
-    const stmt = this.db.prepare('SELECT COUNT(*) as count FROM orders WHERE platform = ?')
-    stmt.bind([platform])
-    if (stmt.step()) {
-      const count = stmt.getAsObject().count as number
-      stmt.free()
-      return count
-    }
-    stmt.free()
-    return 0
+    return this.withStmt('SELECT COUNT(*) as count FROM orders WHERE platform = ?', (stmt) => {
+      stmt.bind([platform])
+      if (stmt.step()) {
+        return stmt.getAsObject().count as number
+      }
+      return 0
+    })
   }
 
   clearOrders(platform: string): number {
-    const stmt = this.db.prepare('SELECT COUNT(*) as count FROM orders WHERE platform = ?')
-    stmt.bind([platform])
-    let count = 0
-    if (stmt.step()) {
-      count = stmt.getAsObject().count as number
-    }
-    stmt.free()
+    const count = this.withStmt('SELECT COUNT(*) as count FROM orders WHERE platform = ?', (stmt) => {
+      stmt.bind([platform])
+      if (stmt.step()) {
+        return stmt.getAsObject().count as number
+      }
+      return 0
+    })
+    this.db.run('UPDATE tasks SET order_id = NULL WHERE order_id IN (SELECT id FROM orders WHERE platform = ?)', [platform])
+    this.db.run('UPDATE pending_confirmations SET order_id = NULL WHERE order_id IN (SELECT id FROM orders WHERE platform = ?)', [platform])
     this.db.run('DELETE FROM orders WHERE platform = ?', [platform])
     this.scheduleSave()
     return count
@@ -352,7 +377,7 @@ export class Database {
         sku = excluded.sku
     `, [order.platform, order.orderId, order.productName, order.productUrl, order.price, order.imageUrl, order.purchasedAt, order.shopName, order.sku, order.rawData])
     this.scheduleSave()
-    const row = this.db.exec('SELECT last_insert_rowid() as id')
+    const row = this.db.exec('SELECT id FROM orders WHERE platform = ? AND order_id = ?', [order.platform, order.orderId])
     return row[0]?.values[0]?.[0] as number
   }
 
@@ -373,6 +398,8 @@ export class Database {
   deleteOrder(id: number): boolean {
     const order = this.getOrderById(id)
     if (!order) return false
+    this.db.run('UPDATE tasks SET order_id = NULL WHERE order_id = ?', [id])
+    this.db.run('UPDATE pending_confirmations SET order_id = NULL WHERE order_id = ?', [id])
     this.db.run('DELETE FROM orders WHERE id = ?', [id])
     this.scheduleSave()
     return true
@@ -381,6 +408,8 @@ export class Database {
   deleteOrders(ids: number[]): number {
     if (ids.length === 0) return 0
     const placeholders = ids.map(() => '?').join(',')
+    this.db.run(`UPDATE tasks SET order_id = NULL WHERE order_id IN (${placeholders})`, ids)
+    this.db.run(`UPDATE pending_confirmations SET order_id = NULL WHERE order_id IN (${placeholders})`, ids)
     this.db.run(`DELETE FROM orders WHERE id IN (${placeholders})`, ids)
     this.scheduleSave()
     return ids.length
@@ -412,18 +441,18 @@ export class Database {
       params = [status]
     }
     sql += ' ORDER BY created_at DESC'
-    const stmt = this.db.prepare(sql)
-    if (params.length) stmt.bind(params)
-    const results: ShoppingTask[] = []
-    while (stmt.step()) {
-      results.push(toCamelCase(stmt.getAsObject()) as unknown as ShoppingTask)
-    }
-    stmt.free()
-    return results
+    return this.withStmt(sql, (stmt) => {
+      if (params.length) stmt.bind(params)
+      const results: ShoppingTask[] = []
+      while (stmt.step()) {
+        results.push(toCamelCase(stmt.getAsObject()) as unknown as ShoppingTask)
+      }
+      return results
+    })
   }
 
   updateTaskStatus(id: number, status: string, error?: string) {
-    if (status === 'success' || status === 'failed') {
+    if (status === 'success' || status === 'failed' || status === 'partial' || status === 'cancelled') {
       this.db.run(`UPDATE tasks SET status = ?, error = ?, completed_at = datetime('now', 'localtime') WHERE id = ?`, [status, error || null, id])
     } else if (status === 'running') {
       this.db.run(`UPDATE tasks SET status = ?, error = ?, started_at = datetime('now', 'localtime') WHERE id = ?`, [status, error || null, id])
@@ -439,15 +468,15 @@ export class Database {
   }
 
   appendTaskProgressLog(id: number, message: string) {
-    const stmt = this.db.prepare('SELECT progress_log FROM tasks WHERE id = ?')
-    stmt.bind([id])
-    let log: string[] = []
-    if (stmt.step()) {
-      try {
-        log = JSON.parse(stmt.getAsObject().progress_log as string || '[]')
-      } catch { /* ignore */ }
-    }
-    stmt.free()
+    const log = this.withStmt('SELECT progress_log FROM tasks WHERE id = ?', (stmt) => {
+      stmt.bind([id])
+      if (stmt.step()) {
+        try {
+          return JSON.parse(stmt.getAsObject().progress_log as string || '[]')
+        } catch { /* ignore */ }
+      }
+      return [] as string[]
+    })
     log.push(message)
     this.db.run('UPDATE tasks SET progress_log = ? WHERE id = ?', [JSON.stringify(log), id])
     this.scheduleSave()
@@ -459,15 +488,13 @@ export class Database {
   }
 
   getTaskById(id: number): ShoppingTask & { itemResults?: string } | null {
-    const stmt = this.db.prepare('SELECT * FROM tasks WHERE id = ?')
-    stmt.bind([id])
-    if (stmt.step()) {
-      const obj = toCamelCase(stmt.getAsObject()) as unknown as (ShoppingTask & { itemResults?: string })
-      stmt.free()
-      return obj
-    }
-    stmt.free()
-    return null
+    return this.withStmt('SELECT * FROM tasks WHERE id = ?', (stmt) => {
+      stmt.bind([id])
+      if (stmt.step()) {
+        return toCamelCase(stmt.getAsObject()) as unknown as (ShoppingTask & { itemResults?: string })
+      }
+      return null
+    })
   }
 
   deleteTask(id: number): boolean {
@@ -489,8 +516,8 @@ export class Database {
   }
 
   clearCompletedTasks(): number {
-    const result = this.db.run("DELETE FROM pending_confirmations WHERE task_id IN (SELECT id FROM tasks WHERE status IN ('success', 'failed', 'cancelled'))")
-    this.db.run("DELETE FROM tasks WHERE status IN ('success', 'failed', 'cancelled')")
+    const result = this.db.run("DELETE FROM pending_confirmations WHERE task_id IN (SELECT id FROM tasks WHERE status IN ('success', 'failed', 'cancelled', 'partial'))")
+    this.db.run("DELETE FROM tasks WHERE status IN ('success', 'failed', 'cancelled', 'partial')")
     this.scheduleSave()
     return result.changes ?? 0
   }
@@ -504,32 +531,41 @@ export class Database {
   }
 
   getSetting(key: string): string | null {
-    const stmt = this.db.prepare('SELECT value FROM settings WHERE key = ?')
-    stmt.bind([key])
-    if (stmt.step()) {
-      const val = stmt.getAsObject().value as string
-      stmt.free()
-      return val
-    }
-    stmt.free()
-    return null
+    return this.withStmt('SELECT value, encrypted FROM settings WHERE key = ?', (stmt) => {
+      stmt.bind([key])
+      if (stmt.step()) {
+        const row = stmt.getAsObject() as Record<string, unknown>
+        if (row.encrypted === 1 && typeof row.value === 'string' && safeStorage.isEncryptionAvailable()) {
+          try {
+            return safeStorage.decryptString(Buffer.from(row.value, 'base64'))
+          } catch {
+            return row.value as string
+          }
+        }
+        return row.value as string
+      }
+      return null
+    })
   }
 
   setSetting(key: string, value: string) {
-    this.db.run('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value', [key, value])
+    if (SENSITIVE_KEYS.has(key) && safeStorage.isEncryptionAvailable()) {
+      const encrypted = safeStorage.encryptString(value).toString('base64')
+      this.db.run('INSERT INTO settings (key, value, encrypted) VALUES (?, ?, 1) ON CONFLICT(key) DO UPDATE SET value = excluded.value, encrypted = excluded.encrypted', [key, encrypted])
+    } else {
+      this.db.run('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value', [key, value])
+    }
     this.scheduleSave()
   }
 
   getAccount(platform: string) {
-    const stmt = this.db.prepare('SELECT * FROM accounts WHERE platform = ?')
-    stmt.bind([platform])
-    if (stmt.step()) {
-      const obj = toCamelCase(stmt.getAsObject())
-      stmt.free()
-      return obj
-    }
-    stmt.free()
-    return null
+    return this.withStmt('SELECT * FROM accounts WHERE platform = ?', (stmt) => {
+      stmt.bind([platform])
+      if (stmt.step()) {
+        return toCamelCase(stmt.getAsObject())
+      }
+      return null
+    })
   }
 
   upsertAccount(platform: string, username: string, cookiePath: string, loggedIn: boolean) {
@@ -545,11 +581,11 @@ export class Database {
     this.scheduleSave()
   }
 
-  createScheduledTask(task: { name: string; instruction: string; repeatType: string; scheduledTime: string; dayOfWeek?: number; dayOfMonth?: number; paymentMode?: string }): number {
+  createScheduledTask(task: { name: string; instruction: string; repeatType: string; scheduledTime: string; dayOfWeek?: number; dayOfMonth?: number; paymentMode?: string; platform?: string }): number {
     this.db.run(
-      `INSERT INTO scheduled_tasks (name, instruction, repeat_type, scheduled_time, day_of_week, day_of_month, next_run_at, payment_mode)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      [task.name, task.instruction, task.repeatType, task.scheduledTime, task.dayOfWeek ?? null, task.dayOfMonth ?? null, task.scheduledTime, task.paymentMode || '']
+      `INSERT INTO scheduled_tasks (name, instruction, repeat_type, scheduled_time, day_of_week, day_of_month, next_run_at, payment_mode, platform)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [task.name, task.instruction, task.repeatType, task.scheduledTime, task.dayOfWeek ?? null, task.dayOfMonth ?? null, task.scheduledTime, task.paymentMode || '', task.platform || 'taobao']
     )
     this.scheduleSave()
     const row = this.db.exec('SELECT last_insert_rowid() as id')
@@ -557,16 +593,16 @@ export class Database {
   }
 
   getScheduledTasks(): Record<string, unknown>[] {
-    const stmt = this.db.prepare('SELECT * FROM scheduled_tasks ORDER BY created_at DESC')
-    const results: Record<string, unknown>[] = []
-    while (stmt.step()) {
-      results.push(toCamelCase(stmt.getAsObject()))
-    }
-    stmt.free()
-    return results
+    return this.withStmt('SELECT * FROM scheduled_tasks ORDER BY created_at DESC', (stmt) => {
+      const results: Record<string, unknown>[] = []
+      while (stmt.step()) {
+        results.push(toCamelCase(stmt.getAsObject()))
+      }
+      return results
+    })
   }
 
-  updateScheduledTask(id: number, updates: { name?: string; instruction?: string; repeatType?: string; scheduledTime?: string; dayOfWeek?: number; dayOfMonth?: number; enabled?: boolean; nextRunAt?: string; paymentMode?: string }) {
+  updateScheduledTask(id: number, updates: { name?: string; instruction?: string; repeatType?: string; scheduledTime?: string; dayOfWeek?: number; dayOfMonth?: number; enabled?: boolean; nextRunAt?: string; paymentMode?: string; platform?: string }) {
     const fields: string[] = []
     const values: unknown[] = []
     if (updates.name !== undefined) { fields.push('name = ?'); values.push(updates.name) }
@@ -578,9 +614,28 @@ export class Database {
     if (updates.enabled !== undefined) { fields.push('enabled = ?'); values.push(updates.enabled ? 1 : 0) }
     if (updates.nextRunAt !== undefined) { fields.push('next_run_at = ?'); values.push(updates.nextRunAt) }
     if (updates.paymentMode !== undefined) { fields.push('payment_mode = ?'); values.push(updates.paymentMode) }
+    if (updates.platform !== undefined) { fields.push('platform = ?'); values.push(updates.platform) }
     if (fields.length === 0) return
     values.push(id)
     this.db.run(`UPDATE scheduled_tasks SET ${fields.join(', ')} WHERE id = ?`, values)
+    this.scheduleSave()
+  }
+
+  batchUpdateScheduledTasks(ids: number[], updates: { enabled?: boolean }) {
+    if (ids.length === 0) return
+    const fields: string[] = []
+    const values: unknown[] = []
+    if (updates.enabled !== undefined) { fields.push('enabled = ?'); values.push(updates.enabled ? 1 : 0) }
+    if (fields.length === 0) return
+    const placeholders = ids.map(() => '?').join(',')
+    this.db.run(`UPDATE scheduled_tasks SET ${fields.join(', ')} WHERE id IN (${placeholders})`, [...values, ...ids])
+    this.scheduleSave()
+  }
+
+  batchDeleteScheduledTasks(ids: number[]) {
+    if (ids.length === 0) return
+    const placeholders = ids.map(() => '?').join(',')
+    this.db.run(`DELETE FROM scheduled_tasks WHERE id IN (${placeholders})`, ids)
     this.scheduleSave()
   }
 
@@ -593,14 +648,14 @@ export class Database {
     const now = new Date()
     const pad = (n: number) => String(n).padStart(2, '0')
     const nowStr = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`
-    const stmt = this.db.prepare('SELECT * FROM scheduled_tasks WHERE enabled = 1 AND next_run_at <= ?')
-    stmt.bind([nowStr])
-    const results: Record<string, unknown>[] = []
-    while (stmt.step()) {
-      results.push(toCamelCase(stmt.getAsObject()))
-    }
-    stmt.free()
-    return results
+    return this.withStmt('SELECT * FROM scheduled_tasks WHERE enabled = 1 AND next_run_at <= ?', (stmt) => {
+      stmt.bind([nowStr])
+      const results: Record<string, unknown>[] = []
+      while (stmt.step()) {
+        results.push(toCamelCase(stmt.getAsObject()))
+      }
+      return results
+    })
   }
 
   markScheduledTaskRun(id: number) {
@@ -627,26 +682,24 @@ export class Database {
       params = [status]
     }
     sql += ' ORDER BY created_at DESC'
-    const stmt = this.db.prepare(sql)
-    if (params.length) stmt.bind(params)
-    const results: PendingConfirmation[] = []
-    while (stmt.step()) {
-      results.push(toCamelCase(stmt.getAsObject()) as unknown as PendingConfirmation)
-    }
-    stmt.free()
-    return results
+    return this.withStmt(sql, (stmt) => {
+      if (params.length) stmt.bind(params)
+      const results: PendingConfirmation[] = []
+      while (stmt.step()) {
+        results.push(toCamelCase(stmt.getAsObject()) as unknown as PendingConfirmation)
+      }
+      return results
+    })
   }
 
   getPendingConfirmationById(id: number): PendingConfirmation | null {
-    const stmt = this.db.prepare('SELECT * FROM pending_confirmations WHERE id = ?')
-    stmt.bind([id])
-    if (stmt.step()) {
-      const result = toCamelCase(stmt.getAsObject()) as unknown as PendingConfirmation
-      stmt.free()
-      return result
-    }
-    stmt.free()
-    return null
+    return this.withStmt('SELECT * FROM pending_confirmations WHERE id = ?', (stmt) => {
+      stmt.bind([id])
+      if (stmt.step()) {
+        return toCamelCase(stmt.getAsObject()) as unknown as PendingConfirmation
+      }
+      return null
+    })
   }
 
   updatePendingConfirmationStatus(id: number, status: 'pending' | 'resolved' | 'dismissed') {
@@ -659,26 +712,22 @@ export class Database {
   }
 
   getPendingConfirmationCount(): number {
-    const stmt = this.db.prepare('SELECT COUNT(*) as count FROM pending_confirmations WHERE status = \'pending\'')
-    if (stmt.step()) {
-      const count = stmt.getAsObject().count as number
-      stmt.free()
-      return count
-    }
-    stmt.free()
-    return 0
+    return this.withStmt('SELECT COUNT(*) as count FROM pending_confirmations WHERE status = \'pending\'', (stmt) => {
+      if (stmt.step()) {
+        return stmt.getAsObject().count as number
+      }
+      return 0
+    })
   }
 
   hasPendingConfirmationsForTask(taskId: number): boolean {
-    const stmt = this.db.prepare('SELECT COUNT(*) as count FROM pending_confirmations WHERE task_id = ? AND status = \'pending\'')
-    stmt.bind([taskId])
-    if (stmt.step()) {
-      const count = stmt.getAsObject().count as number
-      stmt.free()
-      return count > 0
-    }
-    stmt.free()
-    return false
+    return this.withStmt('SELECT COUNT(*) as count FROM pending_confirmations WHERE task_id = ? AND status = \'pending\'', (stmt) => {
+      stmt.bind([taskId])
+      if (stmt.step()) {
+        return (stmt.getAsObject().count as number) > 0
+      }
+      return false
+    })
   }
 
   dismissPendingConfirmationsForTask(taskId: number) {

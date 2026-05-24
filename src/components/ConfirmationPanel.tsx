@@ -257,7 +257,7 @@ export default function ConfirmationPanel() {
                           <div className="flex-1">
                             <p className="text-sm font-medium text-orange-700 mb-1">原匹配订单无法再次购买</p>
                             <p className="text-sm text-orange-600 leading-relaxed">
-                              该商品匹配到的历史订单已无法购买，标记下架后，下次购买同类商品时不会再匹配到这个订单。
+                              该商品匹配到的历史订单已无法购买，排除匹配后，下次购买同类商品时不会再匹配到这个订单。
                             </p>
                           </div>
                           <button
@@ -268,7 +268,7 @@ export default function ConfirmationPanel() {
                             disabled={excludingOrderId === item.orderId}
                             className="flex-shrink-0 px-3 py-1.5 text-sm font-medium text-orange-700 bg-orange-100 rounded-md hover:bg-orange-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
                           >
-                            {excludingOrderId === item.orderId ? '处理中...' : '忽略此商品'}
+                            {excludingOrderId === item.orderId ? '处理中...' : '不再匹配此订单'}
                           </button>
                         </div>
                       </div>

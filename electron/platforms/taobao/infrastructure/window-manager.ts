@@ -6,6 +6,15 @@ export class WindowManager {
   private mainWindow: BrowserWindow | null = null
   private loginWindow: BrowserWindow | null = null
   private shopWindow: BrowserWindow | null = null
+  private managedWindows: Set<BrowserWindow> = new Set()
+
+  trackWindow(win: BrowserWindow): BrowserWindow {
+    this.managedWindows.add(win)
+    win.on('closed', () => {
+      this.managedWindows.delete(win)
+    })
+    return win
+  }
 
   setMainWindow(win: BrowserWindow) {
     this.mainWindow = win
@@ -93,7 +102,7 @@ export class WindowManager {
       win.setParentWindow(this.mainWindow)
     }
     win.show()
-    return win
+    return this.trackWindow(win)
   }
 
   createHiddenWindow(url: string): BrowserWindow {
@@ -115,7 +124,7 @@ export class WindowManager {
     }
     win.minimize()
     win.loadURL(url)
-    return win
+    return this.trackWindow(win)
   }
 
   createSearchWindow(): BrowserWindow {
@@ -131,7 +140,7 @@ export class WindowManager {
         backgroundThrottling: false,
       },
     })
-    return win
+    return this.trackWindow(win)
   }
 
   createOrderWindow(): BrowserWindow {
@@ -149,7 +158,7 @@ export class WindowManager {
     })
     setUserAgent(win)
     win.minimize()
-    return win
+    return this.trackWindow(win)
   }
 
   async closeShopWindow(cookieSyncFn?: () => Promise<void>): Promise<void> {
@@ -178,5 +187,11 @@ export class WindowManager {
       try { this.loginWindow.close() } catch { /* ignore */ }
     }
     this.loginWindow = null
+    for (const win of this.managedWindows) {
+      if (!win.isDestroyed()) {
+        try { win.close() } catch { /* ignore */ }
+      }
+    }
+    this.managedWindows.clear()
   }
 }

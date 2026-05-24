@@ -25,7 +25,6 @@ interface SavedCookie {
   expires?: number
 }
 
-const LOGIN_KEY_COOKIES = ['_m_h5_tk', 'cookie2', 'sgcookie', '_tb_token_']
 const SESSION_COOKIES = ['cookie2', 'sgcookie']
 
 export class TaobaoAuth {
@@ -47,11 +46,6 @@ export class TaobaoAuth {
       ...(c.expirationDate ? { expires: c.expirationDate } : {}),
     }))
     writeFileSync(this.cookiePath, JSON.stringify(playwrightCookies, null, 2))
-  }
-
-  async saveCookies(context: BrowserContext) {
-    const cookies = await context.cookies()
-    writeFileSync(this.cookiePath, JSON.stringify(cookies, null, 2))
   }
 
   async loadCookies(context: BrowserContext): Promise<boolean> {
@@ -100,28 +94,6 @@ export class TaobaoAuth {
     }
   }
 
-  isLikelyLoggedIn(): boolean {
-    if (!existsSync(this.cookiePath)) return false
-    try {
-      const data = readFileSync(this.cookiePath, 'utf-8')
-      const cookies: SavedCookie[] = JSON.parse(data)
-      if (!Array.isArray(cookies) || cookies.length === 0) return false
-
-      const now = Date.now() / 1000
-      const cookieNames = new Set(cookies.map((c) => c.name))
-
-      const hasLoginKey = LOGIN_KEY_COOKIES.some((key) => cookieNames.has(key))
-      const hasNonExpired = cookies.some((c) => {
-        if (!c.expires || c.expires <= 0) return true
-        return c.expires > now
-      })
-
-      return hasLoginKey && hasNonExpired
-    } catch {
-      return false
-    }
-  }
-
   getCookieAge(): string | null {
     if (!existsSync(this.cookiePath)) return null
     try {
@@ -147,10 +119,6 @@ export class TaobaoAuth {
     } catch {
       return null
     }
-  }
-
-  getCookiePath(): string {
-    return this.cookiePath
   }
 
   clearCookies() {

@@ -38,7 +38,7 @@ interface TaskPreview {
 
 interface PreviewPanelProps {
   preview: TaskPreview
-  onConfirm: (instruction: string, items: PreviewItem[], dryRun?: boolean, paymentMode?: string) => Promise<void>
+  onConfirm: (instruction: string, items: PreviewItem[], dryRun?: boolean, paymentMode?: string, platform?: string) => Promise<void>
   onCancel: () => void
   onUpdateItem: (index: number, updates: Partial<PreviewItem>) => void
   onRemoveItem: (index: number) => void
@@ -130,7 +130,7 @@ export default function PreviewPanel({ preview, onConfirm, onCancel, onUpdateIte
     if (matchedCount === 0) return
     setConfirming(true)
     try {
-      await onConfirm(preview.instruction, preview.items, dryRun, paymentMode)
+      await onConfirm(preview.instruction, preview.items, dryRun, paymentMode, preview.platform)
     } catch {
       setConfirming(false)
     }

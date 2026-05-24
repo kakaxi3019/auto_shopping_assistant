@@ -1,9 +1,29 @@
 import * as path from 'path'
 import * as fs from 'fs'
-import { app, BrowserWindow } from 'electron'
-import { CHROME_UA } from './constants'
+import { app, BrowserWindow, WebContents } from 'electron'
+import { CHROME_UA, ORDER_API_URL } from './constants'
 import { HUMAN_SIM_JS } from './human-sim'
 import { ANTI_DETECT_JS } from './anti-detect'
+
+export class ListenerTracker {
+  private entries: Array<{ wc: WebContents; event: string; handler: (...args: any[]) => void }> = []
+
+  on(wc: WebContents, event: string, handler: (...args: any[]) => void) {
+    this.entries.push({ wc, event, handler })
+    wc.on(event as any, handler)
+  }
+
+  dispose() {
+    for (const { wc, event, handler } of this.entries) {
+      try {
+        if (!wc.isDestroyed()) {
+          wc.removeListener(event as any, handler)
+        }
+      } catch { /* ignore */ }
+    }
+    this.entries = []
+  }
+}
 
 export function getChromiumPath(): string | undefined {
   if (app.isPackaged) {
@@ -50,15 +70,22 @@ export function injectHumanSim(win: BrowserWindow) {
   }
   if (!(win as any).__humanSimInjected) {
     (win as any).__humanSimInjected = true
-    win.webContents.on('did-start-navigation', () => {
+    const onDidStartNavigation = () => {
       if (win.isDestroyed()) return
       const url = win.webContents.getURL()
       const isCaptchaPage = url.includes('nocaptcha') || url.includes('captcha') || url.includes('slider') || url.includes('baxia') || url.includes('passport.taobao.com/iv')
       if (!isCaptchaPage) {
         win.webContents.executeJavaScript(ANTI_DETECT_JS).catch(() => {})
       }
-    })
+    }
+    win.webContents.on('did-start-navigation', onDidStartNavigation)
     win.webContents.on('did-finish-load', inject)
+    win.once('closed', () => {
+      if (!win.isDestroyed()) {
+        win.webContents.removeListener('did-start-navigation', onDidStartNavigation)
+        win.webContents.removeListener('did-finish-load', inject)
+      }
+    })
   }
   if (!win.webContents.isLoading()) {
     inject()
@@ -202,8 +229,11 @@ export function injectCenterToast(win: BrowserWindow, message: string) {
   win.webContents.executeJavaScript(js).catch(() => {});
 }
 
-export const ORDER_API_JS = `
-async function(pageNum, beginTime, endTime) {
+export function getOrderApiJs() {
+  return ORDER_API_JS_TEMPLATE
+}
+
+const ORDER_API_JS_TEMPLATE = `async function(pageNum, beginTime, endTime) {
   const form = new URLSearchParams();
   form.append('action', 'itemlist/BoughtQueryAction');
   form.append('event_submit_do_query', '1');
@@ -214,7 +244,7 @@ async function(pageNum, beginTime, endTime) {
   if (beginTime) form.append('beginTime', beginTime);
   if (endTime) form.append('endTime', endTime);
 
-  const resp = await fetch('${ORDER_API_URL}?action=itemlist/BoughtQueryAction&event_submit_do_query=1&_input_charset=utf8', {
+  const resp = await fetch('https://buyertrade.taobao.com/trade/itemlist/asyncBought.htm?action=itemlist/BoughtQueryAction&event_submit_do_query=1&_input_charset=utf8', {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: form.toString(),
@@ -276,3 +306,51 @@ async function(pageNum, beginTime, endTime) {
   return { orders, hasNext, totalOrders, mainOrderCount: data.mainOrders ? data.mainOrders.length : 0 };
 }
 `
+
+export async function clickInShopWindow(
+  shopWindow: BrowserWindow | null,
+  selectors: string[],
+  textTargets: string[]
+): Promise<{ clicked: boolean; selector?: string; text?: string }> {
+  if (!shopWindow || shopWindow.isDestroyed()) return { clicked: false }
+
+  try {
+    const result = await humanClickElement(shopWindow, selectors, textTargets)
+    if (result.clicked) {
+      return { clicked: true, selector: 'humanClick', text: result.text?.substring(0, 30) }
+    }
+
+    const fallbackResult = await execJS(shopWindow, `
+      (function(args) {
+        var loginKeywords = ['登录', '注册', '扫码', '快速进入', '密码登录', '短信登录'];
+        var allEls = document.querySelectorAll('button, a, [role="button"], span, div, input[type="submit"]');
+        for (var j = 0; j < allEls.length; j++) {
+          var el = allEls[j];
+          var text = (el.textContent || el.value || '').trim();
+          if (!text) continue;
+          var normalized = text.replace(/\\s+/g, '');
+          var isLogin = loginKeywords.some(function(k) { return normalized.includes(k); });
+          if (isLogin) continue;
+          var isMatch = args.textTargets.some(function(t) { return normalized.includes(t); });
+          if (isMatch) {
+            var rect = el.getBoundingClientRect();
+            if (rect.width > 0 && rect.height > 0) {
+              var x = rect.left + rect.width * (0.3 + Math.random() * 0.4);
+              var y = rect.top + rect.height * (0.3 + Math.random() * 0.4);
+              return { clicked: true, text: text.substring(0, 30), x: Math.round(x), y: Math.round(y) };
+            }
+          }
+        }
+        return { clicked: false };
+      })(${JSON.stringify({ selectors, textTargets })})
+    `)
+    if (fallbackResult && fallbackResult.clicked && fallbackResult.x !== undefined) {
+      await humanClickAt(shopWindow, fallbackResult.x, fallbackResult.y)
+      return { clicked: true, selector: 'text:' + (fallbackResult.text || '').substring(0, 20), text: fallbackResult.text?.substring(0, 30) }
+    }
+    return { clicked: false }
+  } catch (e) {
+    console.log(`[Taobao] clickInShopWindow error: ${e}`)
+    return { clicked: false }
+  }
+}

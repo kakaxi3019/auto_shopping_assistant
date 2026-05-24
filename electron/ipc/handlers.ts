@@ -17,10 +17,10 @@ export function registerIpcHandlers(db: Database, scheduler: TaskScheduler) {
   const checkAndUpdateTaskAfterConfirmation = (confirmationId: number) => {
     const confirmation = db.getPendingConfirmationById(confirmationId)
     if (!confirmation) return
-    const taskId = (confirmation as any).taskId as number
+    const taskId = confirmation.taskId
     if (!taskId) return
 
-    const confirmationStatus = (confirmation as any).status as string
+    const confirmationStatus = confirmation.status
 
     const task = db.getTaskById(taskId)
     if (!task) return
@@ -163,9 +163,9 @@ export function registerIpcHandlers(db: Database, scheduler: TaskScheduler) {
     return db.clearCompletedTasks()
   })
 
-  ipcMain.handle('window:open-interaction', async (_event, url: string) => {
+  ipcMain.handle('window:open-interaction', async (_event, url: string, platformName?: string) => {
     try {
-      const platform = scheduler.getPlatform('taobao') as any
+      const platform = scheduler.getPlatform(platformName || 'taobao') as any
       if (platform && typeof platform.openInteractionWindow === 'function') {
         return await platform.openInteractionWindow(url)
       }
@@ -218,16 +218,20 @@ export function registerIpcHandlers(db: Database, scheduler: TaskScheduler) {
       const adapter = scheduler.getRegistry().get(platform)
       if (!adapter) return { success: false, error: '平台不存在' }
 
-      adapter.onStatusChange((status) => {
+      const unsubscribe = adapter.onStatusChange((status) => {
         emitSyncStatus(status)
       })
 
-      const orders = await adapter.fetchOrderHistory(1, timeRange)
-      const actualCount = db.getOrderCount(platform)
-      db.setSetting('last_sync_time', new Date().toISOString())
-      db.setSetting('last_sync_count', String(actualCount))
-      emitSyncStatus(`同步完成，共 ${actualCount} 条订单已保存到本地数据库`)
-      return { success: true, count: actualCount }
+      try {
+        const orders = await adapter.fetchOrderHistory(1, timeRange)
+        const actualCount = db.getOrderCount(platform)
+        db.setSetting('last_sync_time', new Date().toISOString())
+        db.setSetting('last_sync_count', String(actualCount))
+        emitSyncStatus(`同步完成，共 ${actualCount} 条订单已保存到本地数据库`)
+        return { success: true, count: actualCount }
+      } finally {
+        unsubscribe()
+      }
     } catch (e) {
       const errorMsg = e instanceof Error ? e.message : String(e)
       emitSyncStatus('同步失败', errorMsg)
@@ -241,6 +245,10 @@ export function registerIpcHandlers(db: Database, scheduler: TaskScheduler) {
 
   ipcMain.handle('orders:list', async (_event, platform: string, limit?: number, offset?: number) => {
     return db.getOrders(platform, limit, offset)
+  })
+
+  ipcMain.handle('orders:list-all', async (_event, limit?: number, offset?: number) => {
+    return db.getAllOrders(limit, offset)
   })
 
   ipcMain.handle('orders:count', async (_event, platform: string) => {
@@ -286,7 +294,7 @@ export function registerIpcHandlers(db: Database, scheduler: TaskScheduler) {
   })
 
   // Scheduled Tasks
-  ipcMain.handle('scheduled:create', async (_event, task: { name: string; instruction: string; repeatType: string; scheduledTime: string; dayOfWeek?: number; dayOfMonth?: number; paymentMode?: string }) => {
+  ipcMain.handle('scheduled:create', async (_event, task: { name: string; instruction: string; repeatType: string; scheduledTime: string; dayOfWeek?: number; dayOfMonth?: number; paymentMode?: string; platform?: string }) => {
   return db.createScheduledTask(task)
 })
 
@@ -301,6 +309,16 @@ export function registerIpcHandlers(db: Database, scheduler: TaskScheduler) {
 
   ipcMain.handle('scheduled:delete', async (_event, id: number) => {
     db.deleteScheduledTask(id)
+    return true
+  })
+
+  ipcMain.handle('scheduled:batch-update', async (_event, ids: number[], updates: Record<string, unknown>) => {
+    db.batchUpdateScheduledTasks(ids, updates as { enabled?: boolean })
+    return true
+  })
+
+  ipcMain.handle('scheduled:batch-delete', async (_event, ids: number[]) => {
+    db.batchDeleteScheduledTasks(ids)
     return true
   })
 
@@ -376,7 +394,7 @@ export function registerIpcHandlers(db: Database, scheduler: TaskScheduler) {
         return { success: true, stage: 'checkout_only_pending' }
       }
 
-      const payResult = await platform.pay(candidate.price, false, paymentMode)
+      const payResult = await platform.pay(0, false, paymentMode)
       if (!payResult.success) {
         await platform.openProductPage(productUrl)
         return { success: true, stage: 'opened', autoPurchaseFailed: payResult.error }

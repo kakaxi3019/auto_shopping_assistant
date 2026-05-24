@@ -1,10 +1,11 @@
 import { Notification, app } from 'electron'
 import type { BrowserWindow } from 'electron'
 import type { ParsedShoppingItem, TaskPreview, PaymentMode } from '../../shared/types/platform.types'
+import type { ItemResult } from '../../shared/types/task.types'
 import type { Database } from '../db/database'
 import { PlatformRegistry } from '../platforms/registry'
 import { LlmParser } from '../llm/parser'
-import { TaskExecutor, type ItemResult } from './task-executor'
+import { TaskExecutor } from './task-executor'
 import { appendFileSync, writeFileSync } from 'fs'
 import { join } from 'path'
 
@@ -42,8 +43,8 @@ export class TaskScheduler {
   setMainWindow(win: BrowserWindow) {
     this.mainWindow = win
     for (const platform of this.registry.getAll()) {
-      if ('setMainWindow' in platform && typeof (platform as any).setMainWindow === 'function') {
-        (platform as any).setMainWindow(win)
+      if (platform.setMainWindow) {
+        platform.setMainWindow(win)
       }
     }
   }
@@ -53,12 +54,15 @@ export class TaskScheduler {
   private simplifyProgress(msg: string): string {
     const patterns: [RegExp, string][] = [
       [/正在.*LLM.*匹配/i, '翻阅历史订单'],
+      [/LLM 精确匹配/i, 'LLM匹配结果'],
       [/LLM.*匹配/i, '翻阅历史订单'],
       [/正在查找.*订单/i, '查找购买记录'],
       [/查找.*订单/i, '查找购买记录'],
       [/匹配.*历史/i, '匹配历史订单'],
       [/正在打开订单详情/i, '打开订单详情'],
       [/执行再买一单/i, '一键复购'],
+      [/再买一单失败/i, '复购失败'],
+      [/未找到再买一单/i, '复购不可用'],
       [/已点击再买一单/i, '点击复购按钮'],
       [/点击.*再买一单/i, '点击复购按钮'],
       [/再买一单/i, '一键复购'],
@@ -109,7 +113,7 @@ export class TaskScheduler {
         this.lastProgressPerTask.set(taskId, progress)
       }
     }
-    const payload: any = { taskId, status, error, progress }
+    const payload: Record<string, unknown> = { taskId, status, error, progress }
     if (itemResults !== undefined) {
       payload.itemResults = itemResults
     }
@@ -277,11 +281,17 @@ export class TaskScheduler {
   cancelTask(taskId: number) {
     this.taskQueue = this.taskQueue.filter(t => t.taskId !== taskId)
     this.db.dismissPendingConfirmationsForTask(taskId)
-    for (const platform of this.registry.getAll()) {
-      if ('resolveConfirmation' in platform && typeof (platform as any).resolveConfirmation === 'function') {
-        (platform as any).resolveConfirmation(false).catch(() => {})
-      }
+
+    const task = this.db.getTaskById(taskId)
+    const platformName = task?.platform || 'taobao'
+    const platform = this.registry.get(platformName)
+    if (platform?.resolveConfirmation) {
+      platform.resolveConfirmation(false).catch(() => {})
     }
+    if (platform?.cleanup) {
+      platform.cleanup().catch(() => {})
+    }
+
     this.db.updateTaskStatus(taskId, 'cancelled')
     this.emitUpdate(taskId, 'cancelled')
   }
@@ -319,7 +329,7 @@ export class TaskScheduler {
     })
 
     try {
-      const result = await this.executor.executeSingle(item, platform, (msg) => {
+      const result = await this.executor.executeSingle(taskId, item, platform, (msg) => {
         this.emitUpdate(taskId, 'running', undefined, msg)
       }, task.instruction, undefined, task.paymentMode)
 
@@ -433,8 +443,8 @@ export class TaskScheduler {
 
   stop() {
     for (const platform of this.registry.getAll()) {
-      if ('destroy' in platform && typeof (platform as any).destroy === 'function') {
-        (platform as any).destroy()
+      if (platform.destroy) {
+        platform.destroy()
       }
     }
   }

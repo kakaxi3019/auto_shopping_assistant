@@ -102,3 +102,12 @@ export const MIGRATION_V9 = [
 export const MIGRATION_V10 = [
   `ALTER TABLE scheduled_tasks ADD COLUMN payment_mode TEXT NOT NULL DEFAULT ''`,
 ]
+
+export const MIGRATION_V11 = [
+  `ALTER TABLE scheduled_tasks ADD COLUMN platform TEXT NOT NULL DEFAULT 'taobao'`,
+  `UPDATE tasks SET payment_mode = 'cart_only' WHERE payment_mode = 'auto_pay'`,
+]
+
+export const MIGRATION_V12 = [
+  `ALTER TABLE settings ADD COLUMN encrypted INTEGER NOT NULL DEFAULT 0`,
+]

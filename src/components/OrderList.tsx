@@ -484,7 +484,7 @@ export default function OrderList({ onNavigateToTasks }: { onNavigateToTasks?: (
                       </span>
                       {order.unavailable ? (
                         <span className="inline-flex items-center px-2 py-0.5 rounded-md text-sm bg-gray-100 text-gray-500 font-medium">
-                          已下架
+                          已排除
                         </span>
                       ) : null}
                       {order.purchasedAt && (
@@ -523,13 +523,13 @@ export default function OrderList({ onNavigateToTasks }: { onNavigateToTasks?: (
                               ? 'text-green-500 hover:text-green-700'
                               : 'text-gray-400 hover:text-orange-500'
                           }`}
-                          title={order.unavailable ? '恢复上架，使其重新参与搜索匹配' : '标记下架，搜索商品时不再匹配此订单'}
+                          title={order.unavailable ? '恢复匹配，使其重新参与搜索匹配' : '排除匹配，搜索商品时不再匹配此订单'}
                         >
                           {togglingId === order.id
                             ? '处理中...'
                             : order.unavailable
-                              ? '恢复上架'
-                              : '标记下架'}
+                              ? '恢复匹配'
+                              : '排除匹配'}
                         </button>
                       )}
                       {!manageMode && (

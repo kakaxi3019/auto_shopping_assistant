@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { api } from '../lib/api'
+import type { ItemResult } from '../../shared/types/task.types'
 
 type ErrorCategory = 'out_of_stock' | 'login_expired' | 'not_supported' | 'network_error' | 'no_history' | 'price_anomaly' | 'other'
 
@@ -12,25 +13,13 @@ interface SearchResult {
   originalPrice?: number
 }
 
-interface ItemResult {
-  name: string
-  quantity: number
-  status: 'success' | 'failed' | 'pending'
-  pendingPayment?: boolean
-  error?: string
-  matchedProduct?: string
-  matchMethod?: 'llm_direct' | 'exact' | 'fuzzy'
-  pendingConfirmationId?: number
-  currentPrice?: number
-  lastPrice?: number
-}
-
 interface TaskCardProps {
   task: {
     id: number
     status: string
     instruction: string
     parsedItems: string
+    platform?: string
     paymentMode?: string
     createdAt: string
     startedAt: string | null
@@ -203,8 +192,10 @@ export default function TaskCard({ task, onCancel, onRetryItem, onReExecute, onD
   const [orderIdMap, setOrderIdMap] = useState<Record<number, number>>({})
   const [confirmingPurchase, setConfirmingPurchase] = useState<number | null>(null)
   const [excludingOrderId, setExcludingOrderId] = useState<number | null>(null)
+  const [excludedOrderIds, setExcludedOrderIds] = useState<Set<number>>(new Set())
   const [showConfetti, setShowConfetti] = useState(false)
   const [shaking, setShaking] = useState(false)
+  const [confirmingCancel, setConfirmingCancel] = useState(false)
   const logRef = useRef<HTMLDivElement>(null)
   const cardRef = useRef<HTMLDivElement>(null)
 
@@ -249,13 +240,17 @@ export default function TaskCard({ task, onCancel, onRetryItem, onReExecute, onD
     r.status === 'failed' && categorizeError(r.error) === 'out_of_stock' && r.pendingConfirmationId
   )
 
+  const excludableFailedItems = itemResults.filter(r =>
+    r.status === 'failed' && !errorCategoryConfig[categorizeError(r.error)]?.retryable && r.orderId
+  )
+
   const isRunning = task.status === 'running'
   let displayStatus = task.status
   const isQueued = isRunning && task.progress === '排队中，等待前一个任务完成...'
   if (isQueued) displayStatus = 'pending'
 
   const config = statusConfig[displayStatus] || statusConfig.pending
-  const isTerminal = ['success', 'failed', 'cancelled'].includes(displayStatus)
+  const isTerminal = ['success', 'failed', 'cancelled', 'partial'].includes(displayStatus)
   const hasProgressLog = (task.progressLog?.length ?? 0) > 0
   const canExpand = hasResults || hasProgressLog || (parsedItems.length > 0 && isTerminal)
 
@@ -317,7 +312,7 @@ export default function TaskCard({ task, onCancel, onRetryItem, onReExecute, onD
     setConfirmingPurchase(confirmationId)
     try {
       await api.confirmPurchaseFromSearch(confirmationId, {
-        platform: 'taobao',
+        platform: task.platform || 'taobao',
         productName: candidate.title,
         price: candidate.price,
         imageUrl: candidate.imageUrl,
@@ -339,7 +334,7 @@ export default function TaskCard({ task, onCancel, onRetryItem, onReExecute, onD
     try {
       const taskPaymentMode = task.paymentMode || 'auto_pay'
       const result = await api.purchaseCandidate(confirmationId, candidate.url, {
-        platform: 'taobao',
+        platform: task.platform || 'taobao',
         productName: candidate.title,
         price: candidate.price,
         imageUrl: candidate.imageUrl,
@@ -368,13 +363,34 @@ export default function TaskCard({ task, onCancel, onRetryItem, onReExecute, onD
     setExcludingOrderId(orderId)
     try {
       await api.markOrderUnavailable(orderId)
+      setExcludedOrderIds(prev => new Set(prev).add(orderId))
     } finally {
       setExcludingOrderId(null)
     }
   }
 
-  const handleBatchIgnoreOutOfStock = async () => {
-    for (const item of outOfStockItems) {
+  const handleRestoreOrder = async (orderId: number) => {
+    setExcludingOrderId(orderId)
+    try {
+      await api.toggleOrderUnavailable(orderId)
+      setExcludedOrderIds(prev => {
+        const next = new Set(prev)
+        next.delete(orderId)
+        return next
+      })
+    } finally {
+      setExcludingOrderId(null)
+    }
+  }
+
+  const handleBatchExcludeOrders = async () => {
+    for (const item of excludableFailedItems) {
+      if (item.orderId && !excludedOrderIds.has(item.orderId)) {
+        try {
+          await api.markOrderUnavailable(item.orderId)
+          setExcludedOrderIds(prev => new Set(prev).add(item.orderId!))
+        } catch { /* ignore */ }
+      }
       if (item.pendingConfirmationId) {
         try {
           await api.dismissPendingConfirmation(item.pendingConfirmationId)
@@ -383,7 +399,7 @@ export default function TaskCard({ task, onCancel, onRetryItem, onReExecute, onD
     }
     setCandidatesMap(prev => {
       const next = { ...prev }
-      outOfStockItems.forEach(item => {
+      excludableFailedItems.forEach(item => {
         if (item.pendingConfirmationId) delete next[item.pendingConfirmationId]
       })
       return next
@@ -543,6 +559,12 @@ export default function TaskCard({ task, onCancel, onRetryItem, onReExecute, onD
           <span className="text-sm font-semibold text-red-600">任务失败</span>
         </div>
       )}
+      {recentlyCompleted && task.status === 'partial' && (
+        <div className="px-4 pt-3 pb-1 flex items-center gap-2">
+          <span className="text-sm">⚠️</span>
+          <span className="text-sm font-semibold text-amber-600">部分成功，需处理</span>
+        </div>
+      )}
       {!recentlyCompleted && !isRunning && ['success', 'failed', 'cancelled', 'partial'].includes(task.status) && (
         <div className="px-4 pt-3 pb-1 flex items-center gap-2">
           {task.status === 'success' && (
@@ -674,7 +696,7 @@ export default function TaskCard({ task, onCancel, onRetryItem, onReExecute, onD
               }}
               className="px-3 py-1.5 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors"
             >
-              📋 助手面板
+              📋 购物助手
             </button>
           </div>
         </div>
@@ -703,15 +725,15 @@ export default function TaskCard({ task, onCancel, onRetryItem, onReExecute, onD
             <div className="space-y-2 mt-3">
               <div className="flex items-center justify-between">
                 <p className="text-sm font-medium text-gray-500">商品结果</p>
-                {outOfStockItems.length >= 2 && (
+                {excludableFailedItems.length >= 2 && (
                   <button
                     onClick={(e) => {
                       e.stopPropagation()
-                      handleBatchIgnoreOutOfStock()
+                      handleBatchExcludeOrders()
                     }}
                     className="px-2.5 py-1 text-xs font-medium text-gray-500 bg-gray-50 border border-gray-200 rounded-md hover:bg-gray-100 hover:text-gray-700 transition-colors"
                   >
-                    忽略所有缺货商品，继续购买其余项
+                    排除所有失败项的订单
                   </button>
                 )}
               </div>
@@ -793,18 +815,36 @@ export default function TaskCard({ task, onCancel, onRetryItem, onReExecute, onD
                             {retryingItem === item.name ? '重试中...' : '重试'}
                           </button>
                         )}
-                        {item.status === 'failed' && category === 'out_of_stock' && item.pendingConfirmationId && orderIdMap[item.pendingConfirmationId] && (
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation()
-                              handleExcludeOrder(item.pendingConfirmationId!, orderIdMap[item.pendingConfirmationId!])
-                            }}
-                            disabled={excludingOrderId === orderIdMap[item.pendingConfirmationId!]}
-                            className="ml-2 flex-shrink-0 px-2.5 py-1 text-sm font-medium text-gray-500 bg-gray-50 rounded-md hover:bg-gray-100 hover:text-gray-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                            title="忽略此商品，后续搜索时不再匹配"
-                          >
-                            {excludingOrderId === orderIdMap[item.pendingConfirmationId!] ? '处理中...' : '忽略此商品'}
-                          </button>
+                        {item.status === 'failed' && !catConfig?.retryable && item.orderId && (
+                          excludedOrderIds.has(item.orderId)
+                            ? (
+                              <span className="ml-2 flex-shrink-0 px-2.5 py-1 text-sm font-medium text-gray-400 bg-gray-50 rounded-md inline-flex items-center gap-1.5">
+                                ✓ 已排除
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    handleRestoreOrder(item.orderId!)
+                                  }}
+                                  disabled={excludingOrderId === item.orderId}
+                                  className="text-xs text-blue-500 hover:text-blue-700 underline underline-offset-1 disabled:opacity-50"
+                                >
+                                  撤销
+                                </button>
+                              </span>
+                            )
+                            : (
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  handleExcludeOrder(item.pendingConfirmationId || 0, item.orderId!)
+                                }}
+                                disabled={excludingOrderId === item.orderId}
+                                className="ml-2 flex-shrink-0 px-2.5 py-1 text-sm font-medium text-gray-500 bg-gray-50 rounded-md hover:bg-gray-100 hover:text-gray-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                                title="不再匹配此订单，后续购买同类商品时将跳过"
+                              >
+                                {excludingOrderId === item.orderId ? '处理中...' : '不再匹配'}
+                              </button>
+                            )
                         )}
                         {item.status === 'success' && item.pendingPayment && (
                           <div className="ml-2 flex-shrink-0">
@@ -960,18 +1000,39 @@ export default function TaskCard({ task, onCancel, onRetryItem, onReExecute, onD
               查看详情
             </button>
           )}
-          {(task.status === 'pending' || task.status === 'running') && (
+          {(task.status === 'pending' || task.status === 'running') && !confirmingCancel && (
             <button
               onClick={(e) => {
                 e.stopPropagation()
-                if (confirm('确定要停止当前任务吗？')) {
-                  onCancel(task.id)
-                }
+                setConfirmingCancel(true)
               }}
-              className="px-3 py-1.5 text-sm font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 transition-colors"
+              className="px-2 py-0.5 text-xs font-medium text-red-400 bg-red-50 rounded hover:text-red-600 hover:bg-red-100 transition-colors"
             >
-              停止任务
+              停止
             </button>
+          )}
+          {(task.status === 'pending' || task.status === 'running') && confirmingCancel && (
+            <div className="flex items-center gap-1">
+              <button
+                onClick={(e) => {
+                  e.stopPropagation()
+                  setConfirmingCancel(false)
+                  onCancel(task.id)
+                }}
+                className="px-2 py-0.5 text-xs font-medium text-white bg-red-500 rounded hover:bg-red-600 transition-colors"
+              >
+                确认
+              </button>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation()
+                  setConfirmingCancel(false)
+                }}
+                className="px-2 py-0.5 text-xs font-medium text-gray-400 bg-gray-50 rounded hover:bg-gray-100 transition-colors"
+              >
+                取消
+              </button>
+            </div>
           )}
           {task.status === 'partial' && (
             <button
@@ -995,7 +1056,7 @@ export default function TaskCard({ task, onCancel, onRetryItem, onReExecute, onD
               删除
             </button>
           )}
-          {isTerminal && onReExecute && (task.status === 'success' || task.status === 'failed') && (
+          {isTerminal && onReExecute && (
             <button
               onClick={(e) => {
                 e.stopPropagation()

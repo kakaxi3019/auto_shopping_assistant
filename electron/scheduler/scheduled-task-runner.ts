@@ -45,19 +45,20 @@ export class ScheduledTaskRunner {
     const instruction = task.instruction as string
     const repeatType = task.repeatType as string
     const taskPaymentMode = (task.paymentMode as string) || ''
+    const platformName = (task.platform as string) || 'taobao'
 
     console.log(`[ScheduledTaskRunner] Executing scheduled task #${id}: ${instruction}`)
     this.db.markScheduledTaskRun(id)
 
     try {
-      const preview = await this.scheduler.previewTask(instruction)
+      const preview = await this.scheduler.previewTask(instruction, platformName)
       let paymentMode: PaymentMode
       if (taskPaymentMode) {
         paymentMode = taskPaymentMode as PaymentMode
       } else {
         paymentMode = (this.db.getSetting('payment_mode') as PaymentMode) || 'cart_only'
       }
-      await this.scheduler.confirmTask(instruction, preview.items, 'taobao', undefined, paymentMode)
+      await this.scheduler.confirmTask(instruction, preview.items, platformName, undefined, paymentMode)
     } catch (e) {
       console.error(`[ScheduledTaskRunner] Task #${id} execution failed:`, e)
     }

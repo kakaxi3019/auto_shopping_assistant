@@ -32,7 +32,7 @@ interface TaskListProps {
 }
 
 function isTerminalStatus(status: string): boolean {
-  return ['success', 'failed', 'cancelled'].includes(status)
+  return ['success', 'failed', 'cancelled', 'partial'].includes(status)
 }
 
 export default function TaskList({ tasks, loading, onCancel, onRetryItem, onReExecute, onDelete, onDeleteBatch, onClearHistory, scrollToFilter, onScrollHandled, onOpenTaskPanel }: TaskListProps) {
@@ -104,7 +104,7 @@ export default function TaskList({ tasks, loading, onCancel, onRetryItem, onReEx
   })
 
   const activeTasks = statusFilter
-    ? allActiveTasks.filter(t => t.status === statusFilter || (statusFilter === 'running' && (t.status === 'pending' || t.status === 'partial')))
+    ? allActiveTasks.filter(t => t.status === statusFilter || (statusFilter === 'running' && t.status === 'pending'))
     : allActiveTasks
   const completedTasks = statusFilter
     ? allCompletedTasks.filter(t => t.status === statusFilter)
@@ -114,7 +114,7 @@ export default function TaskList({ tasks, loading, onCancel, onRetryItem, onReEx
     if (!initializedRef.current) {
       if (tasks.length === 0) return
       tasks.forEach(t => {
-        if (['success', 'failed', 'cancelled'].includes(t.status)) {
+        if (['success', 'failed', 'cancelled', 'partial'].includes(t.status)) {
           seenCompletedRef.current.add(t.id)
         }
       })
@@ -124,7 +124,7 @@ export default function TaskList({ tasks, loading, onCancel, onRetryItem, onReEx
 
     const newIds: number[] = []
     tasks.forEach(t => {
-      if (['success', 'failed', 'cancelled'].includes(t.status) && !seenCompletedRef.current.has(t.id)) {
+      if (['success', 'failed', 'cancelled', 'partial'].includes(t.status) && !seenCompletedRef.current.has(t.id)) {
         seenCompletedRef.current.add(t.id)
         newIds.push(t.id)
       }
@@ -136,11 +136,14 @@ export default function TaskList({ tasks, loading, onCancel, onRetryItem, onReEx
         const instruction = task?.instruction || ''
         const truncatedInstruction = instruction.length > 20 ? instruction.slice(0, 20) + '…' : instruction
         const isSuccess = task?.status === 'success'
+        const isPartial = task?.status === 'partial'
         showToast({
-          type: isSuccess ? 'success' : 'error',
+          type: isSuccess ? 'success' : isPartial ? 'error' : 'error',
           message: isSuccess
             ? `「${truncatedInstruction}」已完成`
-            : `「${truncatedInstruction}」任务失败`,
+            : isPartial
+              ? `「${truncatedInstruction}」部分成功，需处理`
+              : `「${truncatedInstruction}」任务失败`,
           action: {
             label: '查看',
             onClick: () => {
@@ -182,6 +185,7 @@ export default function TaskList({ tasks, loading, onCancel, onRetryItem, onReEx
     running: '执行中',
     failed: '失败',
     cancelled: '已取消',
+    partial: '部分成功',
   }
 
   return (

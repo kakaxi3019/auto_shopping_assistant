@@ -31,13 +31,13 @@ export class SearchService {
       const searchUrl = `https://s.taobao.com/search?page=1&q=${encodedKeyword}&tab=all`
 
       await new Promise<void>((resolve, reject) => {
-        const timeout = setTimeout(() => reject(new Error('搜索页面加载超时')), 30000)
+        const loadTimeout = setTimeout(() => reject(new Error('搜索页面加载超时')), 30000)
         searchWindow.webContents.on('did-finish-load', () => {
-          clearTimeout(timeout)
+          clearTimeout(loadTimeout)
           resolve()
         })
         searchWindow.webContents.on('did-fail-load', (_event, errorCode, errorDesc) => {
-          clearTimeout(timeout)
+          clearTimeout(loadTimeout)
           reject(new Error(`搜索页面加载失败: ${errorDesc} (${errorCode})`))
         })
         searchWindow.loadURL(searchUrl)
@@ -71,12 +71,11 @@ export class SearchService {
             if (hasItems) {
               resolved = true
               clearInterval(checkInterval)
-              clearTimeout(timeout)
               resolve()
             }
           } catch {}
         }, 1000)
-        const timeout = setTimeout(() => {
+        const pollTimeout = setTimeout(() => {
           if (!resolved) {
             resolved = true
             clearInterval(checkInterval)

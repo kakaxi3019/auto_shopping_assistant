@@ -7,9 +7,9 @@ import type { CookieManager } from '../infrastructure/cookie-manager'
 import type { InteractionService } from './interaction.service'
 import type { VerificationService } from './verification.service'
 import type { TaobaoAuth } from '../taobao.auth'
-import { setUserAgent, debugLog, humanDelay, humanClickAt, humanClickElement, execJS, injectOverlayBanner, injectCenterToast, rand } from '../utils/page-helper'
-import { APP_ICON } from '../utils/constants'
-import { isCheckoutOrPayPage, isLoginPage, isIdentityVerifyPage } from '../utils/url-helper'
+import { setUserAgent, debugLog, humanDelay, humanClickAt, humanClickElement, execJS, injectOverlayBanner, injectCenterToast, rand, clickInShopWindow } from '../utils/page-helper'
+import { APP_ICON, TIMEOUTS, WINDOW_SIZES, KEYWORDS } from '../utils/constants'
+import { isCheckoutOrPayPage, isLoginPage, isIdentityVerifyPage, isBuyPage, isCartPage, isProductDetailPage } from '../utils/url-helper'
 import { TAOBAO_SELECTORS } from '../taobao.selectors'
 
 function diagWindowState(label: string, mainWindow: BrowserWindow | null, shopWindow: BrowserWindow | null) {
@@ -22,8 +22,8 @@ function diagWindowState(label: string, mainWindow: BrowserWindow | null, shopWi
       const mwLoading = mainWindow.webContents.isLoading()
       const mwCrashed = mainWindow.webContents.isCrashed()
       parts.push(`mainWin-webContents: url=${mwUrl.substring(0, 80)} loading=${mwLoading} crashed=${mwCrashed}`)
-    } catch (e: any) {
-      parts.push(`mainWin-webContents: ERROR ${e.message}`)
+    } catch (e: unknown) {
+      parts.push(`mainWin-webContents: ERROR ${e instanceof Error ? e.message : String(e)}`)
     }
   } else {
     parts.push(`mainWin: ${mainWindow ? 'DESTROYED' : 'NULL'}`)
@@ -34,8 +34,8 @@ function diagWindowState(label: string, mainWindow: BrowserWindow | null, shopWi
     try {
       const swUrl = shopWindow.webContents.getURL()
       parts.push(`shopWin-webContents: url=${swUrl.substring(0, 80)}`)
-    } catch (e: any) {
-      parts.push(`shopWin-webContents: ERROR ${e.message}`)
+    } catch (e: unknown) {
+      parts.push(`shopWin-webContents: ERROR ${e instanceof Error ? e.message : String(e)}`)
     }
   } else {
     parts.push(`shopWin: ${shopWindow ? 'DESTROYED' : 'NULL'}`)
@@ -103,7 +103,7 @@ export class PaymentService {
     const exceedsLimit = payFreeLimit > 0 && totalAmount !== undefined && totalAmount > payFreeLimit
 
     if (exceedsLimit) {
-      shopWindow.setSize(1100, 800)
+      shopWindow.setSize(WINDOW_SIZES.CONFIRMATION.width, WINDOW_SIZES.CONFIRMATION.height)
       shopWindow.setTitle(`金额超过免密支付上限 - 需要手动确认付款`)
       const mainWindow = this.windowManager.getMainWindow()
       diagWindowState('[PaySvc] exceedsLimit BEFORE setParentWindow', mainWindow, shopWindow)
@@ -137,7 +137,8 @@ export class PaymentService {
     )
 
     try {
-      const payResult = await this.clickInShopWindow(
+      const payResult = await clickInShopWindow(
+        shopWindow,
         TAOBAO_SELECTORS.CHECKOUT.SUBMIT_ORDER_SELECTORS as unknown as string[],
         ['免密支付', '立即支付', '确认支付', '提交订单', '确认订单', '去支付', '立即付款']
       )
@@ -159,7 +160,7 @@ export class PaymentService {
                 } catch(e) {}
               })()
             `).catch(() => {})
-            currentShopWindow.setSize(1100, 800)
+            currentShopWindow.setSize(WINDOW_SIZES.CONFIRMATION.width, WINDOW_SIZES.CONFIRMATION.height)
             currentShopWindow.setTitle('淘宝安全验证 - 需要手动操作')
             const mainWindow = this.windowManager.getMainWindow()
             diagWindowState('[PaySvc] identityVerify BEFORE setParentWindow', mainWindow, currentShopWindow)
@@ -210,7 +211,7 @@ export class PaymentService {
                 }
               }
               var bodyText = (document.body?.innerText || '').substring(0, 500);
-              var captchaHints = ['请拖动', '滑块', '验证', '请完成验证', '安全验证', '拖动滑块'];
+              var captchaHints = ${JSON.stringify([...KEYWORDS.CAPTCHA_HINTS, '验证', '安全验证', '拖动滑块'])};
               for (var k = 0; k < captchaHints.length; k++) {
                 if (bodyText.includes(captchaHints[k])) return { found: true, hint: captchaHints[k], w: 0, h: 0 };
               }
@@ -220,7 +221,7 @@ export class PaymentService {
 
           if (hasCaptcha && hasCaptcha.found) {
             console.log(`[Taobao] Captcha detected after pay click:`, JSON.stringify(hasCaptcha))
-            currentShopWindow.setSize(1100, 800)
+            currentShopWindow.setSize(WINDOW_SIZES.CONFIRMATION.width, WINDOW_SIZES.CONFIRMATION.height)
             currentShopWindow.setTitle('淘宝安全验证 - 需要手动操作')
             const mainWindow = this.windowManager.getMainWindow()
             diagWindowState('[PaySvc] captcha BEFORE setParentWindow', mainWindow, currentShopWindow)
@@ -270,7 +271,7 @@ export class PaymentService {
               if (payUrl.includes('cashier') || payUrl.includes('alipay')) {
                 if (!paymentWindowShown) {
                   paymentWindowShown = true
-                  win.setSize(1100, 800)
+                  win.setSize(WINDOW_SIZES.CONFIRMATION.width, WINDOW_SIZES.CONFIRMATION.height)
                   win.setTitle('需要输入支付密码 - 需要手动操作')
                   const mainWindow = this.windowManager.getMainWindow()
                   diagWindowState('[PaySvc] auto_pay cashier BEFORE setParentWindow', mainWindow, win)
@@ -286,7 +287,7 @@ export class PaymentService {
 
               try {
                 const pageText = await win.webContents.executeJavaScript(`document.body?.innerText?.substring(0, 500) || ''`)
-                if (pageText.includes('支付成功') || pageText.includes('交易成功') || pageText.includes('订单已支付') || pageText.includes('付款成功') || pageText.includes('已付款') || pageText.includes('支付完成')) {
+                if (KEYWORDS.PAY_SUCCESS.some(k => pageText.includes(k)) || pageText.includes('已付款') || pageText.includes('支付完成')) {
                   await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth)
                   await this.windowManager.closeShopWindow(async () => {
                     await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth)
@@ -302,7 +303,7 @@ export class PaymentService {
                 }
                 if (!paymentWindowShown && (pageText.includes('请输入支付密码') || pageText.includes('请确认支付') || pageText.includes('收银台') || pageText.includes('确认付款'))) {
                   paymentWindowShown = true
-                  win.setSize(1100, 800)
+                  win.setSize(WINDOW_SIZES.CONFIRMATION.width, WINDOW_SIZES.CONFIRMATION.height)
                   win.setTitle('需要输入支付密码 - 需要手动操作')
                   const mainWindow = this.windowManager.getMainWindow()
                   diagWindowState('[PaySvc] auto_pay textMatch BEFORE setParentWindow', mainWindow, win)
@@ -317,7 +318,7 @@ export class PaymentService {
             }
             const finalWin = this.windowManager.getShopWindow()
             if (finalWin && !finalWin.isDestroyed()) {
-              finalWin.setSize(1100, 800)
+              finalWin.setSize(WINDOW_SIZES.CONFIRMATION.width, WINDOW_SIZES.CONFIRMATION.height)
               finalWin.setTitle('支付结果确认 - 需要手动确认')
               const mainWindow = this.windowManager.getMainWindow()
               diagWindowState('[PaySvc] auto_pay timeout BEFORE setParentWindow', mainWindow, finalWin)
@@ -344,7 +345,7 @@ export class PaymentService {
             return { success: false, error: '支付未完成' }
           }
 
-          currentShopWindow.setSize(1100, 800)
+          currentShopWindow.setSize(WINDOW_SIZES.CONFIRMATION.width, WINDOW_SIZES.CONFIRMATION.height)
           currentShopWindow.setTitle('请完成支付 - 需要手动操作')
           const mainWindow = this.windowManager.getMainWindow()
           diagWindowState('[PaySvc] manual_pay BEFORE setParentWindow', mainWindow, currentShopWindow)
@@ -386,7 +387,7 @@ export class PaymentService {
   async showPaymentWindow(title?: string): Promise<{ paid: boolean }> {
     const shopWindow = this.windowManager.getShopWindow()
     if (!shopWindow || shopWindow.isDestroyed()) return { paid: false }
-    shopWindow.setSize(1100, 800)
+    shopWindow.setSize(WINDOW_SIZES.CONFIRMATION.width, WINDOW_SIZES.CONFIRMATION.height)
     shopWindow.setTitle(title || '金额超过免密支付上限 - 需要手动确认付款')
     const mainWindow = this.windowManager.getMainWindow()
     if (mainWindow) {
@@ -448,48 +449,4 @@ export class PaymentService {
     return { paid: paymentDetected }
   }
 
-  private async clickInShopWindow(selectors: string[], textTargets: string[]): Promise<{ clicked: boolean; selector?: string; text?: string }> {
-    const shopWindow = this.windowManager.getShopWindow()
-    if (!shopWindow || shopWindow.isDestroyed()) return { clicked: false }
-
-    try {
-      const result = await humanClickElement(shopWindow, selectors, textTargets)
-      if (result.clicked) {
-        return { clicked: true, selector: 'humanClick', text: result.text?.substring(0, 30) }
-      }
-
-      const fallbackResult = await execJS(shopWindow, `
-        (function(args) {
-          var loginKeywords = ['登录', '注册', '扫码', '快速进入', '密码登录', '短信登录'];
-          var allEls = document.querySelectorAll('button, a, [role="button"], span, div, input[type="submit"]');
-          for (var j = 0; j < allEls.length; j++) {
-            var el = allEls[j];
-            var text = (el.textContent || el.value || '').trim();
-            if (!text) continue;
-            var normalized = text.replace(/\\s+/g, '');
-            var isLogin = loginKeywords.some(function(k) { return normalized.includes(k); });
-            if (isLogin) continue;
-            var isMatch = args.textTargets.some(function(t) { return normalized.includes(t); });
-            if (isMatch) {
-              var rect = el.getBoundingClientRect();
-              if (rect.width > 0 && rect.height > 0) {
-                var x = rect.left + rect.width * (0.3 + Math.random() * 0.4);
-                var y = rect.top + rect.height * (0.3 + Math.random() * 0.4);
-                return { clicked: true, text: text.substring(0, 30), x: Math.round(x), y: Math.round(y) };
-              }
-            }
-          }
-          return { clicked: false };
-        })(${JSON.stringify({ selectors, textTargets })})
-      `)
-      if (fallbackResult && fallbackResult.clicked && fallbackResult.x !== undefined) {
-        await humanClickAt(shopWindow, fallbackResult.x, fallbackResult.y)
-        return { clicked: true, selector: 'text:' + (fallbackResult.text || '').substring(0, 20), text: fallbackResult.text?.substring(0, 30) }
-      }
-      return { clicked: false }
-    } catch (e) {
-      console.log(`[Taobao] clickInShopWindow error: ${e}`)
-      return { clicked: false }
-    }
-  }
 }

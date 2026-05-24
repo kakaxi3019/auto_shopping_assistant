@@ -28,6 +28,7 @@ const api = {
   // Orders
   syncOrders: (platform: string, timeRange?: { beginTime?: string; endTime?: string }) => ipcRenderer.invoke('orders:sync', platform, timeRange),
   getOrders: (platform: string, limit?: number, offset?: number) => ipcRenderer.invoke('orders:list', platform, limit, offset),
+  getAllOrders: (limit?: number, offset?: number) => ipcRenderer.invoke('orders:list-all', limit, offset),
   searchOrders: (keyword: string) => ipcRenderer.invoke('orders:search', keyword),
   getOrderCount: (platform: string) => ipcRenderer.invoke('orders:count', platform),
   clearOrders: (platform: string) => ipcRenderer.invoke('orders:clear', platform),
@@ -42,10 +43,12 @@ const api = {
   fetchModels: () => ipcRenderer.invoke('settings:fetch-models'),
 
   // Scheduled Tasks
-  createScheduledTask: (task: { name: string; instruction: string; repeatType: string; scheduledTime: string; dayOfWeek?: number; dayOfMonth?: number; paymentMode?: string }) => ipcRenderer.invoke('scheduled:create', task),
+  createScheduledTask: (task: { name: string; instruction: string; repeatType: string; scheduledTime: string; dayOfWeek?: number; dayOfMonth?: number; paymentMode?: string; platform?: string }) => ipcRenderer.invoke('scheduled:create', task),
   listScheduledTasks: () => ipcRenderer.invoke('scheduled:list'),
   updateScheduledTask: (id: number, updates: Record<string, unknown>) => ipcRenderer.invoke('scheduled:update', id, updates),
   deleteScheduledTask: (id: number) => ipcRenderer.invoke('scheduled:delete', id),
+  batchUpdateScheduledTasks: (ids: number[], updates: Record<string, unknown>) => ipcRenderer.invoke('scheduled:batch-update', ids, updates),
+  batchDeleteScheduledTasks: (ids: number[]) => ipcRenderer.invoke('scheduled:batch-delete', ids),
 
   // Pending Confirmations
   listPendingConfirmations: (status?: string) => ipcRenderer.invoke('pending:list', status),
@@ -78,7 +81,7 @@ const api = {
     ipcRenderer.on('task:notification-click', handler)
     return () => ipcRenderer.removeListener('task:notification-click', handler)
   },
-  openInteractionWindow: (url: string) => ipcRenderer.invoke('window:open-interaction', url),
+  openInteractionWindow: (url: string, platform?: string) => ipcRenderer.invoke('window:open-interaction', url, platform),
 }
 
 contextBridge.exposeInMainWorld('api', api)

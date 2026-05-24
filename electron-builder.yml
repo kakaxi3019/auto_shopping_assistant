@@ -6,6 +6,17 @@ directories:
 files:
   - dist
   - dist-electron
+extraResources:
+  - from: build/auto_shopping_app_icon.png
+    to: app-icon/auto_shopping_app_icon.png
+  - from: extra/playwright-browsers/
+    to: playwright-browsers/
+    filter:
+      - "**/*"
+  - from: node_modules/sql.js/dist/
+    to: sql.js/
+    filter:
+      - "*.wasm"
 win:
   target:
     - target: portable

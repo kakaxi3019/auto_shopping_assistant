@@ -7,6 +7,7 @@ process.on('warning', (warning) => {
 import { app, BrowserWindow, ipcMain, Menu, session } from 'electron'
 
 app.commandLine.appendSwitch('disable-blink-features', 'AutomationControlled')
+app.commandLine.appendSwitch('log-level', '3')
 import { join } from 'path'
 import { Database } from './db/database'
 import { registerIpcHandlers } from './ipc/handlers'
@@ -30,7 +31,9 @@ function createWindow() {
     minWidth: 900,
     minHeight: 600,
     title: 'Auto Shopping Assistant',
-    icon: join(__dirname, '../build/auto_shopping_app_icon.png'),
+    icon: app.isPackaged
+      ? join(process.resourcesPath, 'app-icon', 'auto_shopping_app_icon.png')
+      : join(__dirname, '../build/auto_shopping_app_icon.png'),
     webPreferences: {
       preload: join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -54,11 +57,13 @@ function createWindow() {
   })
 
   mainWindow.webContents.on('will-navigate', (event, url) => {
-    const allowedPrefixes = [
-      'http://localhost:',
-      'file://',
-    ]
-    const isAllowed = allowedPrefixes.some(p => url.startsWith(p))
+    let isAllowed = url.startsWith('file://')
+    if (!isAllowed && url.startsWith('http://localhost:')) {
+      try {
+        const port = parseInt(new URL(url).port, 10)
+        isAllowed = port >= 5173 && port <= 5200
+      } catch { isAllowed = false }
+    }
     if (!isAllowed) {
       console.error(`[DIAG] mainWindow will-navigate BLOCKED: ${url}`)
       event.preventDefault()

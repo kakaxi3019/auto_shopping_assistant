@@ -113,4 +113,6 @@ export interface PlatformAdapter {
   onStatusChange(callback: (status: string) => void): () => void
   resolveConfirmation?(confirmed: boolean): Promise<void>
   reopenConfirmationWindow?(): Promise<void>
+  setMainWindow?(win: any): void
+  destroy?(): void
 }

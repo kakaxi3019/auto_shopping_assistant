@@ -1,5 +1,6 @@
 import type { Order, ParsedShoppingItem, PreviewItem, CandidateOrder, AmbiguityLevel, AddToCartResult } from '../../shared/types/platform.types'
 import type { PlatformAdapter } from '../../shared/types/platform.types'
+import type { ItemResult } from '../../shared/types/task.types'
 import type { Database } from '../db/database'
 import { appendFileSync } from 'fs'
 import { join } from 'path'
@@ -27,25 +28,12 @@ export function categorizeError(error?: string): ErrorCategory {
 }
 
 export const ERROR_CATEGORY_INFO: Record<ErrorCategory, { label: string; icon: string; color: string; description?: string }> = {
-  out_of_stock: { label: '商品已下架', icon: '📦', color: 'text-orange-500', description: '该商品已下架或库存不足' },
+  out_of_stock: { label: '商品不可购买', icon: '📦', color: 'text-orange-500', description: '该商品已下架或库存不足' },
   login_expired: { label: '登录已过期', icon: '🔐', color: 'text-amber-500', description: '请重新登录账号' },
   not_supported: { label: '平台不支持', icon: '🚫', color: 'text-gray-500', description: '该商品所在店铺未开通"再买一单"功能，这是平台限制而非程序问题' },
   network_error: { label: '网络异常', icon: '🌐', color: 'text-blue-500', description: '网络连接不稳定，请检查网络设置' },
   no_history: { label: '未找到历史订单', icon: '🔍', color: 'text-purple-500', description: '未在历史订单中找到匹配的商品' },
   other: { label: '购买失败', icon: '❌', color: 'text-red-500', description: '购买过程中发生未知错误' },
-}
-
-export interface ItemResult {
-  name: string
-  quantity: number
-  status: 'success' | 'failed' | 'pending'
-  error?: string
-  matchedProduct?: string
-  matchMethod?: 'llm_direct' | 'exact' | 'fuzzy'
-  pendingConfirmationId?: number
-  pendingPayment?: boolean
-  currentPrice?: number
-  lastPrice?: number
 }
 
 export class TaskExecutor {
@@ -65,11 +53,9 @@ export class TaskExecutor {
     paymentMode?: string,
   ): Promise<{ success: boolean; itemResults: ItemResult[]; error?: string }> {
     const itemResults: ItemResult[] = []
-    const isCartOnly = paymentMode === 'cart_only'
 
     for (const item of parsedItems) {
       const result: ItemResult = { name: item.name, quantity: item.quantity, status: 'failed' }
-
       const candidateOrders = this.findCandidateOrders(item, platform.name, result, onProgress, instruction)
 
       if (candidateOrders.length === 0) {
@@ -79,179 +65,7 @@ export class TaskExecutor {
       }
 
       const order = candidateOrders[0]
-      const url = platform.getProductUrl(order)
-      console.log(`[TaskExecutor] addToCart: name=${item.name}, orderId=${order.orderId}, url=${url}`)
-
-      onProgress(`正在为 "${item.name}" 执行再买一单（订单 ${order.orderId}）...`)
-      try {
-        const cartResult: AddToCartResult = await platform.addToCart(url, item.sku, order.orderId, isCartOnly)
-        if (!cartResult.success) {
-          const searchParts = [order.productName]
-          if (order.shopName) searchParts.push(order.shopName)
-          if (item.sku) searchParts.push(item.sku)
-          const searchKeyword = searchParts.join(' ')
-          onProgress(`再买一单失败（${cartResult.error}），正在打开搜索页面，请在搜索结果中找到对应商品并点击进入...`)
-          try {
-            const searchUrl = await platform.openSearchPage(searchKeyword)
-            if (searchUrl) {
-              const purchaseResult = await platform.purchaseFromUrl(searchUrl)
-              if (purchaseResult.success) {
-                if (isCartOnly) {
-                  onProgress(`已将商品加入购物车`)
-                  result.matchedProduct = order.productName
-                  result.status = 'success'
-                } else {
-                  onProgress(`正在结算...`)
-                  const checkoutResult = await platform.checkout(purchaseResult.directToPay, item.quantity)
-                  if (!checkoutResult.success) {
-                    result.error = checkoutResult.error || '结算失败'
-                  } else {
-                    const lastPrice = order.price
-                    const currentPrice = checkoutResult.currentPrice
-                    if (currentPrice && currentPrice > 0 && lastPrice > 0 && paymentMode !== 'checkout_only' && paymentMode !== 'cart_only') {
-                      const priceIncreaseRate = (currentPrice - lastPrice * item.quantity) / (lastPrice * item.quantity)
-                      const protectionThreshold = parseFloat(this.db.getSetting('price_protection_threshold') || '0.15')
-                      if (priceIncreaseRate >= protectionThreshold) {
-                        onProgress(`❌ 资金拦截："${item.name}" 当前价 (¥${currentPrice.toFixed(2)}) 较上次 (¥${(lastPrice * item.quantity).toFixed(2)}) 暴涨了 ${(priceIncreaseRate * 100).toFixed(0)}%，已紧急熔断拦截！`)
-                        const confirmationId = this.db.createPendingConfirmation({
-                          taskId,
-                          productName: item.name,
-                          originalPrice: lastPrice,
-                          failureReason: 'price_anomaly',
-                          searchKeyword: item.name,
-                          candidates: JSON.stringify([{
-                            platform: platform.name,
-                            productName: order.productName,
-                            price: currentPrice,
-                            imageUrl: order.imageUrl,
-                            productUrl: searchUrl,
-                            shopName: order.shopName,
-                          }]),
-                          orderId: order.id,
-                        })
-                        result.status = 'pending'
-                        result.pendingConfirmationId = confirmationId
-                        result.currentPrice = currentPrice
-                        result.lastPrice = lastPrice
-                        itemResults.push(result)
-                        if (platform.cleanup) await platform.cleanup()
-                        continue
-                      }
-                    }
-
-                    const totalAmount = order.price * item.quantity
-                    if (paymentMode === 'checkout_only') {
-                      onProgress(`已到达结算页面，请在弹出的窗口中确认金额并完成支付`)
-                      const payWindowResult = await platform.showPaymentWindow()
-                      if (payWindowResult.paid) {
-                        result.matchedProduct = order.productName
-                        result.status = 'success'
-                      } else {
-                        result.error = '支付未完成'
-                      }
-                    } else {
-                      onProgress(totalAmount > 0
-                        ? `正在支付 "${item.name}"（¥${totalAmount.toFixed(2)}）...`
-                        : `正在支付 "${item.name}"...`
-                      )
-                      const payResult = await platform.pay(totalAmount, dryRun, paymentMode)
-                      if (!payResult.success) {
-                        result.error = payResult.error || '支付失败'
-                      } else {
-                        result.matchedProduct = order.productName
-                        result.status = 'success'
-                      }
-                    }
-                  }
-                }
-              } else {
-                result.error = '商品页面无法购买'
-              }
-            } else {
-              result.error = cartResult.error || '未找到商品'
-            }
-          } catch (e: any) {
-            result.error = e.message || '打开搜索页面失败'
-          }
-        } else if (isCartOnly) {
-          onProgress(`已将 "${item.name}" 加入购物车`)
-          result.matchedProduct = order.productName
-          result.status = 'success'
-        } else {
-          onProgress(`正在结算 "${item.name}"${item.quantity > 1 ? `（x${item.quantity}）` : ''}...`)
-          const checkoutResult = await platform.checkout(cartResult.directToPay, item.quantity)
-          if (!checkoutResult.success) {
-            result.error = checkoutResult.error || '结算失败'
-          } else {
-            const lastPrice = order.price
-            const currentPrice = checkoutResult.currentPrice
-            if (currentPrice && currentPrice > 0 && lastPrice > 0 && paymentMode !== 'checkout_only' && paymentMode !== 'cart_only') {
-              const priceIncreaseRate = (currentPrice - lastPrice * item.quantity) / (lastPrice * item.quantity)
-              const protectionThreshold = parseFloat(this.db.getSetting('price_protection_threshold') || '0.15')
-              if (priceIncreaseRate >= protectionThreshold) {
-                onProgress(`❌ 资金拦截："${item.name}" 当前价 (¥${currentPrice.toFixed(2)}) 较上次 (¥${(lastPrice * item.quantity).toFixed(2)}) 暴涨了 ${(priceIncreaseRate * 100).toFixed(0)}%，已紧急熔断拦截！`)
-                const confirmationId = this.db.createPendingConfirmation({
-                  taskId,
-                  productName: item.name,
-                  originalPrice: lastPrice,
-                  failureReason: 'price_anomaly',
-                  searchKeyword: item.name,
-                  candidates: JSON.stringify([{
-                    platform: platform.name,
-                    productName: order.productName,
-                    price: currentPrice,
-                    imageUrl: order.imageUrl,
-                    productUrl: url,
-                    shopName: order.shopName,
-                  }]),
-                  orderId: order.id,
-                })
-                result.status = 'pending'
-                result.pendingConfirmationId = confirmationId
-                result.currentPrice = currentPrice
-                result.lastPrice = lastPrice
-                itemResults.push(result)
-                if (platform.cleanup) await platform.cleanup()
-                continue
-              }
-            }
-
-            const totalAmount = order.price * item.quantity
-            if (paymentMode === 'checkout_only') {
-              onProgress(`已到达结算页面，请在弹出的窗口中确认金额并完成支付`)
-              const payWindowResult = await platform.showPaymentWindow()
-              if (payWindowResult.paid) {
-                result.matchedProduct = order.productName
-                result.status = 'success'
-              } else {
-                result.error = '支付未完成'
-              }
-            } else {
-              onProgress(totalAmount > 0
-                ? `正在支付 "${item.name}"（¥${totalAmount.toFixed(2)}）...`
-                : `正在支付 "${item.name}"...`
-              )
-              const payResult = await platform.pay(totalAmount, dryRun, paymentMode)
-              if (!payResult.success) {
-                result.error = payResult.error || '支付失败'
-              } else {
-                result.matchedProduct = order.productName
-                result.status = 'success'
-              }
-            }
-          }
-        }
-      } catch (e) {
-        console.log(`[TaskExecutor] purchase failed for order ${order.orderId}: ${e}`)
-        const errMsg = String(e)
-        if (errMsg.includes('Object has been destroyed') || errMsg.includes('destroyed')) {
-          result.error = '操作窗口已关闭'
-        } else if (errMsg.includes('timeout') || errMsg.includes('Timeout') || errMsg.includes('超时')) {
-          result.error = '操作超时'
-        } else {
-          result.error = errMsg
-        }
-      }
+      await this.processPurchase(taskId, item, order, platform, result, onProgress, dryRun, paymentMode)
       itemResults.push(result)
 
       if (platform.cleanup) {
@@ -275,8 +89,164 @@ export class TaskExecutor {
       return { success: false, itemResults, error: `购买失败：${failedDetails}` }
     }
 
+    const isCartOnly = paymentMode === 'cart_only'
     onProgress(isCartOnly ? '加购完成!' : '购买完成!')
     return { success: true, itemResults }
+  }
+
+  private async processPurchase(
+    taskId: number,
+    item: ParsedShoppingItem,
+    order: Order,
+    platform: PlatformAdapter,
+    result: ItemResult,
+    onProgress: (msg: string) => void,
+    dryRun?: boolean,
+    paymentMode?: string,
+  ): Promise<void> {
+    const isCartOnly = paymentMode === 'cart_only'
+    const url = platform.getProductUrl(order)
+    console.log(`[TaskExecutor] addToCart: name=${item.name}, orderId=${order.orderId}, url=${url}`)
+
+    onProgress(`正在为 "${item.name}" 执行再买一单（订单 ${order.orderId}）...`)
+    try {
+      const cartResult: AddToCartResult = await platform.addToCart(url, item.sku, order.orderId, isCartOnly)
+      if (!cartResult.success) {
+        await this.handleSearchFallback(taskId, item, order, platform, cartResult, result, onProgress, dryRun, paymentMode)
+      } else if (isCartOnly) {
+        onProgress(`已将 "${item.name}" 加入购物车`)
+        result.matchedProduct = order.productName
+        result.status = 'success'
+      } else {
+        await this.handleCheckoutAndPay(taskId, item, order, platform, cartResult.directToPay, url, result, onProgress, dryRun, paymentMode)
+      }
+    } catch (e) {
+      console.log(`[TaskExecutor] purchase failed for order ${order.orderId}: ${e}`)
+      const errMsg = String(e)
+      if (errMsg.includes('Object has been destroyed') || errMsg.includes('destroyed')) {
+        result.error = '操作窗口已关闭'
+      } else if (errMsg.includes('timeout') || errMsg.includes('Timeout') || errMsg.includes('超时')) {
+        result.error = '操作超时'
+      } else {
+        result.error = errMsg
+      }
+    }
+  }
+
+  private async handleSearchFallback(
+    taskId: number,
+    item: ParsedShoppingItem,
+    order: Order,
+    platform: PlatformAdapter,
+    cartResult: AddToCartResult,
+    result: ItemResult,
+    onProgress: (msg: string) => void,
+    dryRun?: boolean,
+    paymentMode?: string,
+  ): Promise<void> {
+    const isCartOnly = paymentMode === 'cart_only'
+    const searchParts = [order.productName]
+    if (order.shopName) searchParts.push(order.shopName)
+    if (item.sku) searchParts.push(item.sku)
+    const searchKeyword = searchParts.join(' ')
+    onProgress(`再买一单失败（${cartResult.error}），正在打开搜索页面，请在搜索结果中找到对应商品并点击进入...`)
+    try {
+      const searchUrl = await platform.openSearchPage(searchKeyword)
+      if (searchUrl) {
+        const purchaseResult = await platform.purchaseFromUrl(searchUrl)
+        if (purchaseResult.success) {
+          if (isCartOnly) {
+            onProgress(`已将商品加入购物车`)
+            result.matchedProduct = order.productName
+            result.status = 'success'
+          } else {
+            await this.handleCheckoutAndPay(taskId, item, order, platform, purchaseResult.directToPay, searchUrl, result, onProgress, dryRun, paymentMode)
+          }
+        } else {
+          result.error = '商品页面无法购买'
+        }
+      } else {
+        result.error = cartResult.error || '未找到商品'
+      }
+    } catch (e: any) {
+      result.error = e.message || '打开搜索页面失败'
+    }
+  }
+
+  private async handleCheckoutAndPay(
+    taskId: number,
+    item: ParsedShoppingItem,
+    order: Order,
+    platform: PlatformAdapter,
+    directToPay: boolean,
+    productUrl: string,
+    result: ItemResult,
+    onProgress: (msg: string) => void,
+    dryRun?: boolean,
+    paymentMode?: string,
+  ): Promise<void> {
+    onProgress(`正在结算 "${item.name}"${item.quantity > 1 ? `（x${item.quantity}）` : ''}...`)
+    const checkoutResult = await platform.checkout(directToPay, item.quantity)
+    if (!checkoutResult.success) {
+      result.error = checkoutResult.error || '结算失败'
+      return
+    }
+
+    const lastPrice = order.price
+    const currentPrice = checkoutResult.currentPrice
+    if (currentPrice && currentPrice > 0 && lastPrice > 0 && paymentMode !== 'checkout_only' && paymentMode !== 'cart_only') {
+      const priceIncreaseRate = (currentPrice - lastPrice * item.quantity) / (lastPrice * item.quantity)
+      const protectionThreshold = parseFloat(this.db.getSetting('price_protection_threshold') || '0.15')
+      if (priceIncreaseRate >= protectionThreshold) {
+        onProgress(`❌ 资金拦截："${item.name}" 当前价 (¥${currentPrice.toFixed(2)}) 较上次 (¥${(lastPrice * item.quantity).toFixed(2)}) 暴涨了 ${(priceIncreaseRate * 100).toFixed(0)}%，已紧急熔断拦截！`)
+        const confirmationId = this.db.createPendingConfirmation({
+          taskId,
+          productName: item.name,
+          originalPrice: lastPrice,
+          failureReason: 'price_anomaly',
+          searchKeyword: item.name,
+          candidates: JSON.stringify([{
+            platform: platform.name,
+            productName: order.productName,
+            price: currentPrice,
+            imageUrl: order.imageUrl,
+            productUrl,
+            shopName: order.shopName,
+          }]),
+          orderId: order.id,
+        })
+        result.status = 'pending'
+        result.pendingConfirmationId = confirmationId
+        result.currentPrice = currentPrice
+        result.lastPrice = lastPrice
+        if (platform.cleanup) await platform.cleanup()
+        return
+      }
+    }
+
+    const totalAmount = order.price * item.quantity
+    if (paymentMode === 'checkout_only') {
+      onProgress(`已到达结算页面，请在弹出的窗口中确认金额并完成支付`)
+      const payWindowResult = await platform.showPaymentWindow()
+      if (payWindowResult.paid) {
+        result.matchedProduct = order.productName
+        result.status = 'success'
+      } else {
+        result.error = '支付未完成'
+      }
+    } else {
+      onProgress(totalAmount > 0
+        ? `正在支付 "${item.name}"（¥${totalAmount.toFixed(2)}）...`
+        : `正在支付 "${item.name}"...`
+      )
+      const payResult = await platform.pay(totalAmount, dryRun, paymentMode)
+      if (!payResult.success) {
+        result.error = payResult.error || '支付失败'
+      } else {
+        result.matchedProduct = order.productName
+        result.status = 'success'
+      }
+    }
   }
 
   private findCandidateOrders(item: ParsedShoppingItem, platformName: string, result: ItemResult, onProgress: (msg: string) => void, instruction?: string): Order[] {
@@ -288,9 +258,12 @@ export class TaskExecutor {
       onProgress(`正在通过 LLM 匹配结果查找订单 #${item.orderRef}...`)
       const order = this.db.getOrderById(item.orderRef)
       if (order) {
-        if (!item.platform || order.platform === searchPlatform) {
+        if ((order as any).unavailable) {
+          onProgress(`LLM 匹配的订单 #${item.orderRef} 已被排除匹配，尝试其他方式...`)
+        } else if (!item.platform || order.platform === searchPlatform) {
           result.matchedProduct = order.productName
           result.matchMethod = 'llm_direct'
+          result.orderId = order.id
           onProgress(`LLM 精确匹配: ${order.productName}`)
           return [order]
         }
@@ -304,6 +277,7 @@ export class TaskExecutor {
     if (exactOrders.length > 0) {
       result.matchMethod = 'exact'
       result.matchedProduct = exactOrders[0].productName
+      result.orderId = exactOrders[0].id
       onProgress(`精确匹配: ${exactOrders.length} 条订单`)
       return exactOrders
     }
@@ -313,6 +287,7 @@ export class TaskExecutor {
     if (orders.length > 0) {
       result.matchMethod = 'fuzzy'
       result.matchedProduct = orders[0].productName
+      result.orderId = orders[0].id
       onProgress(`模糊匹配(关键词"${usedKeyword}"): ${orders.length} 条订单`)
       return orders
     }
@@ -328,7 +303,9 @@ export class TaskExecutor {
     if (item.orderRef) {
       const order = this.db.getOrderById(item.orderRef)
       previewLog(`[Preview]   llm_direct: orderRef=${item.orderRef}, found=${!!order}, platformMatch=${order ? order.platform === searchPlatform : 'N/A'}`)
-      if (order && (!item.platform || order.platform === searchPlatform)) {
+      if (order && (order as any).unavailable) {
+        previewLog(`[Preview]   llm_direct: orderRef=${item.orderRef} is excluded, skipping`)
+      } else if (order && (!item.platform || order.platform === searchPlatform)) {
         return { order, matchMethod: 'llm_direct' }
       }
     }
@@ -392,10 +369,6 @@ export class TaskExecutor {
 
   private computeAmbiguityLevel(candidates: CandidateOrder[]): AmbiguityLevel {
     if (candidates.length <= 1) return 'none'
-    if (candidates.length === 2) {
-      const names = candidates.map(c => c.productName)
-      if (names[0] === names[1]) return 'low'
-    }
     const prices = candidates.map(c => c.price).filter(p => p > 0)
     if (prices.length >= 2) {
       const minPrice = Math.min(...prices)
@@ -557,6 +530,7 @@ export class TaskExecutor {
   }
 
   async executeSingle(
+    taskId: number,
     item: ParsedShoppingItem,
     platform: PlatformAdapter,
     onProgress: (msg: string) => void,
@@ -574,162 +548,7 @@ export class TaskExecutor {
     }
 
     const order = candidateOrders[0]
-    const url = platform.getProductUrl(order)
-    console.log(`[TaskExecutor] retry: name=${item.name}, orderId=${order.orderId}, url=${url}`)
-
-    const isCartOnly = paymentMode === 'cart_only'
-
-    onProgress(`正在为 "${item.name}" 执行再买一单（订单 ${order.orderId}）...`)
-    try {
-      const cartResult: AddToCartResult = await platform.addToCart(url, item.sku, order.orderId, isCartOnly)
-      if (!cartResult.success) {
-        const searchParts = [order.productName]
-        if (order.shopName) searchParts.push(order.shopName)
-        if (item.sku) searchParts.push(item.sku)
-        const searchKeyword = searchParts.join(' ')
-        onProgress(`再买一单失败（${cartResult.error}），正在打开搜索页面，请在搜索结果中找到对应商品并点击进入...`)
-        try {
-          const searchUrl = await platform.openSearchPage(searchKeyword)
-          if (searchUrl) {
-            const purchaseResult = await platform.purchaseFromUrl(searchUrl)
-            if (purchaseResult.success) {
-              if (isCartOnly) {
-                onProgress(`已将商品加入购物车`)
-                result.matchedProduct = order.productName
-                result.status = 'success'
-              } else {
-                onProgress(`正在结算...`)
-                const checkoutResult = await platform.checkout(purchaseResult.directToPay, item.quantity)
-                if (!checkoutResult.success) {
-                  result.error = checkoutResult.error || '结算失败'
-                } else {
-                  const lastPrice = order.price
-                  const currentPrice = checkoutResult.currentPrice
-                  if (currentPrice && currentPrice > 0 && lastPrice > 0 && paymentMode !== 'checkout_only' && paymentMode !== 'cart_only') {
-                    const priceIncreaseRate = (currentPrice - lastPrice * item.quantity) / (lastPrice * item.quantity)
-                    const protectionThreshold = parseFloat(this.db.getSetting('price_protection_threshold') || '0.15')
-                    if (priceIncreaseRate >= protectionThreshold) {
-                      onProgress(`❌ 资金拦截："${item.name}" 当前价 (¥${currentPrice.toFixed(2)}) 较上次 (¥${(lastPrice * item.quantity).toFixed(2)}) 暴涨了 ${(priceIncreaseRate * 100).toFixed(0)}%，已紧急熔断拦截！`)
-                      const confirmationId = this.db.createPendingConfirmation({
-                        taskId,
-                        productName: item.name,
-                        originalPrice: lastPrice,
-                        failureReason: 'price_anomaly',
-                        searchKeyword: item.name,
-                        candidates: JSON.stringify([{
-                          platform: platform.name,
-                          productName: order.productName,
-                          price: currentPrice,
-                          imageUrl: order.imageUrl,
-                          productUrl: searchUrl,
-                          shopName: order.shopName,
-                        }]),
-                        orderId: order.id,
-                      })
-                      result.status = 'pending'
-                      result.pendingConfirmationId = confirmationId
-                      result.currentPrice = currentPrice
-                      result.lastPrice = lastPrice
-                      if (platform.cleanup) await platform.cleanup()
-                      return result
-                    }
-                  }
-
-                  const totalAmount = order.price * item.quantity
-                  if (paymentMode === 'checkout_only') {
-                    onProgress(`已到达结算页面，请在弹出的窗口中确认金额并完成支付`)
-                    const payWindowResult = await platform.showPaymentWindow()
-                    if (payWindowResult.paid) {
-                      result.matchedProduct = order.productName
-                      result.status = 'success'
-                    } else {
-                      result.error = '支付未完成'
-                    }
-                  } else {
-                    onProgress(totalAmount > 0
-                      ? `正在支付 "${item.name}"（¥${totalAmount.toFixed(2)}）...`
-                      : `正在支付 "${item.name}"...`
-                    )
-                    const payResult = await platform.pay(totalAmount, dryRun, paymentMode)
-                    if (!payResult.success) {
-                      result.error = payResult.error || '支付失败'
-                    } else {
-                      result.matchedProduct = order.productName
-                      result.status = 'success'
-                    }
-                  }
-                }
-              }
-            } else {
-              result.error = '商品页面无法购买'
-            }
-          } else {
-            result.error = cartResult.error || '未找到商品'
-          }
-        } catch (e: any) {
-          result.error = e.message || '打开搜索页面失败'
-        }
-      } else if (isCartOnly) {
-        onProgress(`已将 "${item.name}" 加入购物车`)
-        result.matchedProduct = order.productName
-        result.status = 'success'
-      } else {
-        onProgress(`正在结算 "${item.name}"${item.quantity > 1 ? `（x${item.quantity}）` : ''}...`)
-        const checkoutResult = await platform.checkout(cartResult.directToPay, item.quantity)
-        if (!checkoutResult.success) {
-          result.error = checkoutResult.error || '结算失败'
-        } else {
-          const lastPrice = order.price
-          const currentPrice = checkoutResult.currentPrice
-          if (currentPrice && currentPrice > 0 && lastPrice > 0 && paymentMode !== 'checkout_only' && paymentMode !== 'cart_only') {
-            const priceIncreaseRate = (currentPrice - lastPrice * item.quantity) / (lastPrice * item.quantity)
-            const protectionThreshold = parseFloat(this.db.getSetting('price_protection_threshold') || '0.15')
-            if (priceIncreaseRate >= protectionThreshold) {
-              onProgress(`❌ 资金拦截："${item.name}" 当前价 (¥${currentPrice.toFixed(2)}) 较上次 (¥${(lastPrice * item.quantity).toFixed(2)}) 暴涨了 ${(priceIncreaseRate * 100).toFixed(0)}%，已紧急熔断拦截！`)
-              result.status = 'pending'
-              result.currentPrice = currentPrice
-              result.lastPrice = lastPrice
-              if (platform.cleanup) await platform.cleanup()
-              return result
-            }
-          }
-
-          const totalAmount = order.price * item.quantity
-          if (paymentMode === 'checkout_only') {
-            onProgress(`已到达结算页面，请在弹出的窗口中确认金额并完成支付`)
-            const payWindowResult = await platform.showPaymentWindow()
-            if (payWindowResult.paid) {
-              result.matchedProduct = order.productName
-              result.status = 'success'
-            } else {
-              result.error = '支付未完成'
-            }
-          } else {
-            onProgress(totalAmount > 0
-              ? `正在支付 "${item.name}"（¥${totalAmount.toFixed(2)}）...`
-              : `正在支付 "${item.name}"...`
-            )
-            const payResult = await platform.pay(totalAmount, dryRun, paymentMode)
-            if (!payResult.success) {
-              result.error = payResult.error || '支付失败'
-            } else {
-              result.matchedProduct = order.productName
-              result.status = 'success'
-            }
-          }
-        }
-      }
-    } catch (e) {
-      console.log(`[TaskExecutor] retry failed for order ${order.orderId}: ${e}`)
-      const errMsg = String(e)
-      if (errMsg.includes('Object has been destroyed') || errMsg.includes('destroyed')) {
-        result.error = '操作窗口已关闭'
-      } else if (errMsg.includes('timeout') || errMsg.includes('Timeout') || errMsg.includes('超时')) {
-        result.error = '操作超时'
-      } else {
-        result.error = errMsg
-      }
-    }
+    await this.processPurchase(taskId, item, order, platform, result, onProgress, dryRun, paymentMode)
 
     if (platform.cleanup) {
       await platform.cleanup()

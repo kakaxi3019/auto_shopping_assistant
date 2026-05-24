@@ -1,5 +1,5 @@
 import type { PlatformAdapter } from '../../shared/types/platform.types'
-import { TaobaoPlatform } from './taobao/taobao.platform'
+import { TaobaoPlatform } from './taobao/taobao.platform.new'
 import type { Database } from '../db/database'
 
 export class PlatformRegistry {

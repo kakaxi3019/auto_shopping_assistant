@@ -125,21 +125,69 @@ export const HUMAN_SIM_JS = `
       ms = Math.max(min, Math.min(max, ms));
       return new Promise(function(r) { setTimeout(r, Math.round(ms)); });
     },
+    _checkEl: function(el, textTargets) {
+      var rect = el.getBoundingClientRect();
+      var ow = el.offsetWidth || 0;
+      var oh = el.offsetHeight || 0;
+      var visible = (rect.width > 0 && rect.height > 0) || (ow > 0 && oh > 0);
+      if (!visible) return null;
+      var text = (el.textContent || '').trim();
+      if (!text) return null;
+      var normalized = text.replace(/\\s+/g, '');
+      var matched = !textTargets || textTargets.some(function(t) { return normalized.includes(t); });
+      if (!matched) return null;
+      var w = rect.width > 0 ? rect.width : ow;
+      var h = rect.height > 0 ? rect.height : oh;
+      return { el: el, text: text.substring(0, 200), area: w * h, rect: rect.width > 0 ? rect : { width: ow, height: oh, left: 0, top: 0 } };
+    },
     findVisible: function(selectors, textTargets) {
       var results = [];
       for (var si = 0; si < selectors.length; si++) {
         var els = document.querySelectorAll(selectors[si]);
         for (var i = 0; i < els.length; i++) {
-          var el = els[i];
-          var rect = el.getBoundingClientRect();
-          if (rect.width <= 0 || rect.height <= 0) continue;
-          var text = (el.textContent || '').trim();
-          if (!text || text.length > 100) continue;
-          var normalized = text.replace(/\\s+/g, '');
-          var matched = !textTargets || textTargets.some(function(t) { return normalized.includes(t); });
-          if (matched) results.push({ el: el, text: text, area: rect.width * rect.height, rect: rect });
+          var r = _hs._checkEl(els[i], textTargets);
+          if (r) results.push(r);
         }
       }
+      return results;
+    },
+    findByText: function(textTargets, maxTextLength) {
+      maxTextLength = maxTextLength || 30;
+      var results = [];
+      var allEls = document.querySelectorAll('*');
+      for (var i = 0; i < allEls.length; i++) {
+        var el = allEls[i];
+        var text = (el.textContent || '').trim();
+        if (!text || text.length > maxTextLength) continue;
+        var r = _hs._checkEl(el, textTargets);
+        if (r) results.push(r);
+      }
+      return results;
+    },
+    findInShadowDOM: function(selectors, textTargets) {
+      var results = [];
+      function searchRoot(root) {
+        for (var si = 0; si < selectors.length; si++) {
+          try {
+            var els = root.querySelectorAll(selectors[si]);
+            for (var i = 0; i < els.length; i++) {
+              var r = _hs._checkEl(els[i], textTargets);
+              if (r) results.push(r);
+            }
+          } catch(e) {}
+        }
+        try {
+          var allEls = root.querySelectorAll('*');
+          for (var j = 0; j < allEls.length; j++) {
+            try {
+              if (allEls[j].shadowRoot) {
+                searchRoot(allEls[j].shadowRoot);
+              }
+            } catch(e) {}
+          }
+        } catch(e) {}
+      }
+      searchRoot(document);
       return results;
     },
     findAndClick: function(selectors, textTargets) {

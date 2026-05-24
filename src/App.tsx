@@ -24,7 +24,7 @@ export default function App() {
     deleteTask, deleteTasks, clearHistory,
     preview, previewLoading, previewTask, confirmTask, cancelPreview,
     updatePreviewItem, removePreviewItem,
-    activeTaskId, panelOpen, closePanel, openTaskPanel } = useTasks()
+    activeTaskId, panelOpen, closePanel, openTaskPanel, recentSuggestions } = useTasks()
 
   const handleReExecute = useCallback(async (task: { instruction: string; parsedItems: string; paymentMode?: string }) => {
     try {
@@ -86,7 +86,7 @@ export default function App() {
       case 'shopping':
         return (
           <div className="space-y-6">
-            <ShoppingInput onSubmit={previewTask} disabled={!backendReady || previewLoading} recentTasks={tasks.filter(t => t.status === 'success').filter((t, i, arr) => arr.findIndex(x => x.instruction === t.instruction) === i).slice(0, 5)} previewOpen={panelOpen} />
+            <ShoppingInput onSubmit={previewTask} disabled={!backendReady || previewLoading} recentTasks={recentSuggestions} previewOpen={panelOpen} />
             <Dashboard tasks={tasks} onScrollToTasks={(filter) => { setScrollToFilter(filter !== undefined ? filter : ''); setPage('shopping') }} />
             <TaskList tasks={tasks} loading={loading} onCancel={cancelTask} onRetryItem={retryTaskItem} onReExecute={handleReExecute} onDelete={deleteTask} onDeleteBatch={deleteTasks} onClearHistory={clearHistory} scrollToFilter={scrollToFilter} onScrollHandled={() => setScrollToFilter(null)} onOpenTaskPanel={openTaskPanel} />
           </div>
@@ -150,10 +150,13 @@ export default function App() {
         {!panelOpen && activeTaskId && tasks.some(t => t.id === activeTaskId && (t.status === 'running' || t.status === 'partial')) && (
           <button
             onClick={() => openTaskPanel(activeTaskId)}
-            className="fixed bottom-6 right-6 z-40 flex items-center gap-2 px-4 py-3 bg-blue-600 text-white rounded-full shadow-lg hover:bg-blue-700 transition-all hover:scale-105 active:scale-95"
+            className="fixed bottom-6 right-6 z-40 flex items-center gap-1.5 px-4 py-3 bg-blue-600 text-white rounded-full shadow-lg hover:bg-blue-700 transition-all hover:scale-105 active:scale-95 group"
           >
             <span className="w-2 h-2 bg-green-400 rounded-full animate-pulse" />
-            <span className="text-sm font-medium">购买助手</span>
+            <span className="text-sm font-medium">购物助手</span>
+            <svg className="w-4 h-4 transition-transform group-hover:translate-x-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+            </svg>
           </button>
         )}
       </ToastProvider>

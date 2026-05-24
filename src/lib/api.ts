@@ -18,6 +18,7 @@ declare global {
       logout: (platform: string) => Promise<unknown>
       syncOrders: (platform: string, timeRange?: { beginTime?: string; endTime?: string }) => Promise<unknown>
       getOrders: (platform: string, limit?: number, offset?: number) => Promise<unknown>
+      getAllOrders: (limit?: number, offset?: number) => Promise<unknown>
       searchOrders: (keyword: string) => Promise<unknown>
       getOrderCount: (platform: string) => Promise<unknown>
       clearOrders: (platform: string) => Promise<unknown>
@@ -28,10 +29,12 @@ declare global {
       setSetting: (key: string, value: string) => Promise<unknown>
       verifyLlm: () => Promise<unknown>
       fetchModels: () => Promise<unknown>
-      createScheduledTask: (task: { name: string; instruction: string; repeatType: string; scheduledTime: string; dayOfWeek?: number; dayOfMonth?: number; paymentMode?: string }) => Promise<unknown>
+      createScheduledTask: (task: { name: string; instruction: string; repeatType: string; scheduledTime: string; dayOfWeek?: number; dayOfMonth?: number; paymentMode?: string; platform?: string }) => Promise<unknown>
       listScheduledTasks: () => Promise<unknown>
       updateScheduledTask: (id: number, updates: Record<string, unknown>) => Promise<unknown>
       deleteScheduledTask: (id: number) => Promise<unknown>
+      batchUpdateScheduledTasks: (ids: number[], updates: Record<string, unknown>) => Promise<unknown>
+      batchDeleteScheduledTasks: (ids: number[]) => Promise<unknown>
       listPendingConfirmations: (status?: string) => Promise<unknown>
       getPendingConfirmationById: (id: number) => Promise<unknown>
       resolvePendingConfirmation: (id: number) => Promise<unknown>
@@ -44,7 +47,7 @@ declare global {
       onAppReady: (callback: () => void) => () => void
       onSyncStatusUpdate: (callback: (data: unknown) => void) => () => void
       onTaskNotificationClick: (callback: (data: { taskId: number }) => void) => () => void
-      openInteractionWindow: (url: string) => Promise<unknown>
+      openInteractionWindow: (url: string, platform?: string) => Promise<unknown>
       confirmAction: (platform?: string) => Promise<unknown>
       rejectAction: (platform?: string) => Promise<unknown>
       reopenConfirmationWindow: (platform?: string) => Promise<unknown>

@@ -17,7 +17,12 @@ interface ScheduledTask {
   nextRunAt: string | null
   createdAt: string
   paymentMode: string
+  platform: string
 }
+
+const PLATFORM_OPTIONS: { value: string; label: string; icon: string }[] = [
+  { value: 'taobao', label: '淘宝', icon: '🛒' },
+]
 
 const REPEAT_LABELS: Record<RepeatType, string> = {
   once: '单次',
@@ -39,6 +44,8 @@ export default function ScheduledTasks() {
   const [tasks, setTasks] = useState<ScheduledTask[]>([])
   const [showForm, setShowForm] = useState(false)
   const [editingId, setEditingId] = useState<number | null>(null)
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
+  const [showBatchDeleteConfirm, setShowBatchDeleteConfirm] = useState(false)
 
   const [name, setName] = useState('')
   const [instruction, setInstruction] = useState('')
@@ -47,7 +54,7 @@ export default function ScheduledTasks() {
   const [dayOfWeek, setDayOfWeek] = useState(1)
   const [dayOfMonth, setDayOfMonth] = useState(1)
   const [paymentMode, setPaymentMode] = useState<PaymentMode>('')
-
+  const [platform, setPlatform] = useState('taobao')
   useEffect(() => {
     loadTasks()
   }, [])
@@ -65,6 +72,7 @@ export default function ScheduledTasks() {
     setDayOfWeek(1)
     setDayOfMonth(1)
     setPaymentMode('')
+    setPlatform('taobao')
     setEditingId(null)
     setShowForm(false)
   }
@@ -81,6 +89,7 @@ export default function ScheduledTasks() {
     setDayOfWeek(task.dayOfWeek ?? 1)
     setDayOfMonth(task.dayOfMonth ?? 1)
     setPaymentMode((task.paymentMode || '') as PaymentMode)
+    setPlatform(task.platform || 'taobao')
     setShowForm(true)
   }
 
@@ -96,6 +105,7 @@ export default function ScheduledTasks() {
         dayOfMonth: repeatType === 'monthly' ? dayOfMonth : undefined,
         nextRunAt: scheduledTimeStr,
         paymentMode,
+        platform,
       })
     } else {
       await api.createScheduledTask({
@@ -103,6 +113,7 @@ export default function ScheduledTasks() {
         dayOfWeek: repeatType === 'weekly' ? dayOfWeek : undefined,
         dayOfMonth: repeatType === 'monthly' ? dayOfMonth : undefined,
         paymentMode,
+        platform,
       })
     }
 
@@ -118,6 +129,55 @@ export default function ScheduledTasks() {
   const handleToggle = async (task: ScheduledTask) => {
     await api.updateScheduledTask(task.id, { enabled: !task.enabled })
     loadTasks()
+  }
+
+  const toggleSelect = (id: number) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) {
+        next.delete(id)
+      } else {
+        next.add(id)
+      }
+      return next
+    })
+  }
+
+  const toggleSelectAll = () => {
+    if (selectedIds.size === tasks.length) {
+      setSelectedIds(new Set())
+    } else {
+      setSelectedIds(new Set(tasks.map(t => t.id)))
+    }
+  }
+
+  const handleBatchEnable = async () => {
+    const ids = Array.from(selectedIds)
+    if (ids.length === 0) return
+    await api.batchUpdateScheduledTasks(ids, { enabled: true })
+    setSelectedIds(new Set())
+    loadTasks()
+  }
+
+  const handleBatchPause = async () => {
+    const ids = Array.from(selectedIds)
+    if (ids.length === 0) return
+    await api.batchUpdateScheduledTasks(ids, { enabled: false })
+    setSelectedIds(new Set())
+    loadTasks()
+  }
+
+  const handleBatchDelete = async () => {
+    const ids = Array.from(selectedIds)
+    if (ids.length === 0) return
+    await api.batchDeleteScheduledTasks(ids)
+    setSelectedIds(new Set())
+    setShowBatchDeleteConfirm(false)
+    loadTasks()
+  }
+
+  const clearSelection = () => {
+    setSelectedIds(new Set())
   }
 
   const formatNextRun = (task: ScheduledTask) => {
@@ -141,6 +201,9 @@ export default function ScheduledTasks() {
     const opt = PAYMENT_MODE_OPTIONS.find(o => o.value === mode)
     return opt ? `${opt.icon} ${opt.label}` : '⚙️ 跟随设置'
   }
+
+  const allSelected = tasks.length > 0 && selectedIds.size === tasks.length
+  const someSelected = selectedIds.size > 0 && !allSelected
 
   return (
     <div>
@@ -247,6 +310,25 @@ export default function ScheduledTasks() {
           )}
 
           <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1.5">购物平台</label>
+            <div className="flex gap-2">
+              {PLATFORM_OPTIONS.map((opt) => (
+                <button
+                  key={opt.value}
+                  onClick={() => setPlatform(opt.value)}
+                  className={`px-3 py-1.5 text-sm rounded-lg transition-colors ${
+                    platform === opt.value
+                      ? 'bg-blue-600 text-white'
+                      : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                  }`}
+                >
+                  {opt.icon} {opt.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div>
             <label className="block text-sm font-medium text-gray-700 mb-1.5">支付模式</label>
             <div className="grid grid-cols-2 gap-2">
               {PAYMENT_MODE_OPTIONS.map((opt) => (
@@ -293,68 +375,159 @@ export default function ScheduledTasks() {
           <p className="text-sm text-gray-400 mt-1">点击"新建定时任务"设置自动购买计划</p>
         </div>
       ) : (
-        <div className="space-y-3">
-          {tasks.map((task) => (
-            <div
-              key={task.id}
-              className={`bg-white rounded-xl border shadow-sm p-5 transition-colors ${
-                task.enabled ? 'border-gray-100' : 'border-gray-100 opacity-60'
-              }`}
-            >
-              <div className="flex items-start justify-between gap-4">
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 mb-1">
-                    <h3 className="text-sm font-medium text-gray-900">{task.name}</h3>
-                    <span className={`px-2 py-0.5 text-sm rounded-full font-medium ${
-                      task.enabled
-                        ? 'bg-green-50 text-green-600'
-                        : 'bg-gray-100 text-gray-400'
-                    }`}>
-                      {task.enabled ? '启用' : '暂停'}
-                    </span>
-                    <span className="px-2 py-0.5 text-sm rounded-full bg-blue-50 text-blue-600 font-medium">
-                      {formatRepeatInfo(task)}
-                    </span>
-                    <span className="px-2 py-0.5 text-sm rounded-full bg-purple-50 text-purple-600 font-medium">
-                      {getPaymentModeLabel(task.paymentMode)}
-                    </span>
-                  </div>
-                  <p className="text-sm text-gray-500 mb-2">{task.instruction}</p>
-                  <div className="flex items-center gap-4 text-sm text-gray-400">
-                    <span>下次执行: {formatNextRun(task)}</span>
-                    {task.lastRunAt && (
-                      <span>上次执行: {new Date(task.lastRunAt.replace(' ', 'T')).toLocaleString('zh-CN')}</span>
-                    )}
-                  </div>
-                </div>
-                <div className="flex items-center gap-2">
+        <>
+          {selectedIds.size > 0 && (
+            <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 mb-4 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <span className="text-sm font-medium text-blue-700">
+                  已选择 {selectedIds.size} 项
+                </span>
+                <button
+                  onClick={clearSelection}
+                  className="text-xs text-blue-500 hover:text-blue-700 transition-colors"
+                >
+                  取消选择
+                </button>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={handleBatchEnable}
+                  className="px-3 py-1.5 text-sm rounded-lg bg-green-50 text-green-600 hover:bg-green-100 transition-colors font-medium"
+                >
+                  批量启用
+                </button>
+                <button
+                  onClick={handleBatchPause}
+                  className="px-3 py-1.5 text-sm rounded-lg bg-amber-50 text-amber-600 hover:bg-amber-100 transition-colors font-medium"
+                >
+                  批量暂停
+                </button>
+                <button
+                  onClick={() => setShowBatchDeleteConfirm(true)}
+                  className="px-3 py-1.5 text-sm rounded-lg bg-red-50 text-red-600 hover:bg-red-100 transition-colors font-medium"
+                >
+                  批量删除
+                </button>
+              </div>
+            </div>
+          )}
+
+          {showBatchDeleteConfirm && (
+            <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={() => setShowBatchDeleteConfirm(false)}>
+              <div className="bg-white rounded-xl p-6 max-w-sm w-full mx-4 shadow-xl" onClick={(e) => e.stopPropagation()}>
+                <h3 className="text-base font-semibold text-gray-900 mb-2">确认批量删除</h3>
+                <p className="text-sm text-gray-500 mb-5">
+                  确定要删除选中的 {selectedIds.size} 个定时任务吗？此操作不可撤销。
+                </p>
+                <div className="flex gap-3">
                   <button
-                    onClick={() => handleToggle(task)}
-                    className={`px-3 py-1.5 text-sm rounded-lg transition-colors ${
-                      task.enabled
-                        ? 'bg-amber-50 text-amber-600 hover:bg-amber-100'
-                        : 'bg-green-50 text-green-600 hover:bg-green-100'
-                    }`}
+                    onClick={handleBatchDelete}
+                    className="flex-1 px-4 py-2.5 bg-red-600 text-white text-sm font-medium rounded-lg hover:bg-red-700 transition-colors"
                   >
-                    {task.enabled ? '暂停' : '启用'}
+                    确认删除
                   </button>
                   <button
-                    onClick={() => handleEdit(task)}
-                    className="px-3 py-1.5 text-sm rounded-lg bg-gray-50 text-gray-600 hover:bg-gray-100 transition-colors"
+                    onClick={() => setShowBatchDeleteConfirm(false)}
+                    className="flex-1 px-4 py-2.5 bg-gray-100 text-gray-700 text-sm font-medium rounded-lg hover:bg-gray-200 transition-colors"
                   >
-                    编辑
-                  </button>
-                  <button
-                    onClick={() => handleDelete(task.id)}
-                    className="px-3 py-1.5 text-sm rounded-lg bg-red-50 text-red-600 hover:bg-red-100 transition-colors"
-                  >
-                    删除
+                    取消
                   </button>
                 </div>
               </div>
             </div>
-          ))}
-        </div>
+          )}
+
+          <div className="bg-white rounded-xl border border-gray-100 shadow-sm px-5 py-3 mb-3 flex items-center gap-3">
+            <input
+              type="checkbox"
+              checked={allSelected}
+              ref={(el) => {
+                if (el) el.indeterminate = someSelected
+              }}
+              onChange={toggleSelectAll}
+              className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+            />
+            <span className="text-sm text-gray-500">
+              {allSelected ? '取消全选' : '全选'}
+            </span>
+          </div>
+
+          <div className="space-y-3">
+            {tasks.map((task) => (
+              <div
+                key={task.id}
+                className={`bg-white rounded-xl border shadow-sm p-5 transition-colors ${
+                  selectedIds.has(task.id) ? 'border-blue-300 ring-1 ring-blue-200' : 'border-gray-100'
+                } ${!selectedIds.has(task.id) && !task.enabled ? 'opacity-60' : ''}`}
+              >
+                <div className="flex items-start justify-between gap-4">
+                  <div className="flex items-start gap-3 flex-1 min-w-0">
+                    <input
+                      type="checkbox"
+                      checked={selectedIds.has(task.id)}
+                      onChange={() => toggleSelect(task.id)}
+                      className="w-4 h-4 mt-0.5 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer flex-shrink-0"
+                    />
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 mb-1 flex-wrap">
+                        <h3 className="text-sm font-medium text-gray-900">{task.name}</h3>
+                        <span className={`px-2 py-0.5 text-sm rounded-full font-medium ${
+                          task.enabled
+                            ? 'bg-green-50 text-green-600'
+                            : 'bg-gray-100 text-gray-400'
+                        }`}>
+                          {task.enabled ? '启用' : '暂停'}
+                        </span>
+                        <span className="px-2 py-0.5 text-sm rounded-full bg-blue-50 text-blue-600 font-medium">
+                          {formatRepeatInfo(task)}
+                        </span>
+                        <span className="px-2 py-0.5 text-sm rounded-full bg-purple-50 text-purple-600 font-medium">
+                          {getPaymentModeLabel(task.paymentMode)}
+                        </span>
+                        {task.platform && task.platform !== 'taobao' && (
+                          <span className="px-2 py-0.5 text-sm rounded-full bg-orange-50 text-orange-600 font-medium">
+                            {PLATFORM_OPTIONS.find(p => p.value === task.platform)?.icon || '🏪'} {PLATFORM_OPTIONS.find(p => p.value === task.platform)?.label || task.platform}
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-sm text-gray-500 mb-2">{task.instruction}</p>
+                      <div className="flex items-center gap-4 text-sm text-gray-400">
+                        <span>下次执行: {formatNextRun(task)}</span>
+                        {task.lastRunAt && (
+                          <span>上次执行: {new Date(task.lastRunAt.replace(' ', 'T')).toLocaleString('zh-CN')}</span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    <button
+                      onClick={() => handleToggle(task)}
+                      className={`px-3 py-1.5 text-sm rounded-lg transition-colors ${
+                        task.enabled
+                          ? 'bg-amber-50 text-amber-600 hover:bg-amber-100'
+                          : 'bg-green-50 text-green-600 hover:bg-green-100'
+                      }`}
+                    >
+                      {task.enabled ? '暂停' : '启用'}
+                    </button>
+                    <button
+                      onClick={() => handleEdit(task)}
+                      className="px-3 py-1.5 text-sm rounded-lg bg-gray-50 text-gray-600 hover:bg-gray-100 transition-colors"
+                    >
+                      编辑
+                    </button>
+                    <button
+                      onClick={() => handleDelete(task.id)}
+                      className="px-3 py-1.5 text-sm rounded-lg bg-red-50 text-red-600 hover:bg-red-100 transition-colors"
+                    >
+                      删除
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </>
       )}
     </div>
   )

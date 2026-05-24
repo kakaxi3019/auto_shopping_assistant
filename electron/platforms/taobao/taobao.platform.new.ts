@@ -26,6 +26,7 @@ export class TaobaoPlatform implements PlatformAdapter {
   private _statusCallbacks = new Map<number, (status: string) => void>()
   private _nextCallbackId = 0
   private _lastEmittedStatus = ''
+  private _lastEmitTime = 0
 
   private browserManager: BrowserManager
   private windowManager: WindowManager
@@ -123,8 +124,10 @@ export class TaobaoPlatform implements PlatformAdapter {
   }
 
   private emitStatus(status: string) {
-    if (status === this._lastEmittedStatus) return
+    const now = Date.now()
+    if (status === this._lastEmittedStatus && now - this._lastEmitTime < 2000) return
     this._lastEmittedStatus = status
+    this._lastEmitTime = now
     for (const callback of this._statusCallbacks.values()) {
       try { callback(status) } catch { /* ignore */ }
     }

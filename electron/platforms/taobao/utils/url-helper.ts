@@ -21,6 +21,32 @@ export function isIdentityVerifyPage(url: string): boolean {
     url.includes('iv/identity')
 }
 
+export function isBuyPage(url: string): boolean {
+  return isCheckoutOrPayPage(url) ||
+    url.includes('buy.tmall.com') ||
+    url.includes('buy.taobao.com')
+}
+
+export function isProductDetailPage(url: string): boolean {
+  return url.includes('detail.tmall.com') ||
+    url.includes('item.taobao.com') ||
+    url.includes('detail.1688.com')
+}
+
+export function isCartPage(url: string): boolean {
+  return url.includes('cart.taobao.com')
+}
+
+export function isOrderArchivePage(url: string): boolean {
+  return url.includes('tradearchive.taobao.com')
+}
+
+export function isOrderDetailPage(url: string): boolean {
+  return url.includes('trade.tmall.com') ||
+    url.includes('trade.taobao.com') ||
+    url.includes('buyertrade.taobao.com')
+}
+
 export function isDisposableUrl(url: string): boolean {
   if (!url) return false
   if (url.includes('confirm_order')) return true

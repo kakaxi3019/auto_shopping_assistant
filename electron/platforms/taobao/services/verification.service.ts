@@ -1,11 +1,12 @@
 import { BrowserWindow, dialog } from 'electron'
 import type { Page, BrowserContext } from 'playwright'
-import { isCheckoutOrPayPage, isLoginPage, isIdentityVerifyPage } from '../utils/url-helper'
+import { isCheckoutOrPayPage, isLoginPage, isIdentityVerifyPage, isBuyPage, isCartPage } from '../utils/url-helper'
 import type { CookieManager } from '../infrastructure/cookie-manager'
 import type { WindowManager } from '../infrastructure/window-manager'
 import type { TaobaoAuth } from '../taobao.auth'
 import { debugLog, execJS, injectOverlayBanner, injectCenterToast, setUserAgent, humanDelay } from '../utils/page-helper'
-import { APP_ICON } from '../utils/constants'
+import { APP_ICON, TIMEOUTS, WINDOW_SIZES } from '../utils/constants'
+import { tryAutoLoginThenShow } from '../utils/window-helper'
 import type { AddToCartResult } from '../../../shared/types/platform.types'
 
 export class VerificationService {
@@ -79,36 +80,7 @@ export class VerificationService {
   }
 
   async tryAutoLoginThenShow(win: BrowserWindow): Promise<void> {
-    this.cookieManager.resetToElectronSyncTimer()
-    await this.cookieManager.syncCookiesToElectron(this.getContext(), this.auth)
-
-    const currentUrl = win.webContents.getURL()
-    if (!isLoginPage(currentUrl)) {
-      this.emitStatus('Cookie 已同步，页面已自动跳转')
-      win.show()
-      return
-    }
-
-    try {
-      const referrer = win.webContents.getURL()
-      await win.loadURL(referrer)
-      await new Promise(r => setTimeout(r, 3000))
-
-      if (!isLoginPage(win.webContents.getURL())) {
-        this.emitStatus('Cookie 已同步，页面已自动跳转')
-        win.show()
-        return
-      }
-    } catch { /* ignore */ }
-
-    this.emitStatus('登录已过期，请在弹出的窗口中重新登录...')
-    win.setSize(900, 700)
-    win.setTitle('淘宝登录 - 请重新登录')
-    const mainWindow = this.windowManager.getMainWindow()
-    if (mainWindow) win.setParentWindow(mainWindow)
-    injectOverlayBanner(win, "🔑 自动购物助手：登录已过期，请在下方重新登录后继续")
-    injectCenterToast(win, "请重新登录")
-    win.show()
+    await tryAutoLoginThenShow(win, this.cookieManager, this.windowManager, this.auth, this.emitStatus, this.getContext())
   }
 
   async handleIdentityVerification(verifyPage: Page): Promise<AddToCartResult | null> {
@@ -138,8 +110,8 @@ export class VerificationService {
       }
 
       const verifyWindow = new BrowserWindow({
-        width: 500,
-        height: 600,
+        width: WINDOW_SIZES.SMALL.width,
+        height: WINDOW_SIZES.SMALL.height,
         title: '淘宝身份验证',
         icon: APP_ICON,
         parent: mainWindow,
@@ -162,14 +134,13 @@ export class VerificationService {
           this.emitStatus('身份验证超时')
           resolve({ success: false, error: '身份验证超时' })
         }
-      }, 1800000)
+      }, TIMEOUTS.OPERATION)
 
       const checkInterval = setInterval(async () => {
         if (resolved || this.isDestroyed()) { clearInterval(checkInterval); return }
         try {
           const winUrl = verifyWindow.webContents.getURL()
-          if (isCheckoutOrPayPage(winUrl) || winUrl.includes('cart.taobao.com') ||
-              winUrl.includes('buy.tmall.com') || winUrl.includes('buy.taobao.com')) {
+          if (isBuyPage(winUrl) || isCartPage(winUrl)) {
             resolved = true
             clearTimeout(timeout)
             clearInterval(checkInterval)
@@ -203,7 +174,7 @@ export class VerificationService {
                   resolve({ success: true, directToPay: true })
                   return
                 }
-                if (pUrl.includes('cart.taobao.com')) {
+                if (isCartPage(pUrl)) {
                   this.setPage(p)
                   this.emitStatus('验证成功，已加入购物车')
                   resolve({ success: true, directToPay: false })

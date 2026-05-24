@@ -66,6 +66,33 @@
   }
 }
 
+@keyframes streaming-bar {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(200%);
+  }
+}
+
+@keyframes spin-slow {
+  0% {
+    transform: rotate(0deg);
+  }
+  100% {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes log-pulse {
+  0%, 100% {
+    background-color: rgba(59, 130, 246, 0.08);
+  }
+  50% {
+    background-color: rgba(59, 130, 246, 0.18);
+  }
+}
+
 .animate-breathing-glow {
   animation: breathing-glow 2s ease-in-out infinite;
 }
@@ -92,6 +119,18 @@
 
 .animate-pulse-dot {
   animation: pulse-dot 1.5s ease-in-out infinite;
+}
+
+.animate-streaming-bar {
+  animation: streaming-bar 1.8s ease-in-out infinite;
+}
+
+.animate-spin-slow {
+  animation: spin-slow 2s linear infinite;
+}
+
+.animate-log-pulse {
+  animation: log-pulse 2s ease-in-out infinite;
 }
 
 .scrollbar-hide::-webkit-scrollbar {

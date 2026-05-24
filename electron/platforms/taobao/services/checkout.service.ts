@@ -6,9 +6,9 @@ import { WindowManager } from '../infrastructure/window-manager'
 import { CookieManager } from '../infrastructure/cookie-manager'
 import { VerificationService } from './verification.service'
 import { TaobaoAuth } from '../taobao.auth'
-import { setUserAgent, debugLog, humanDelay, humanClickAt, humanClickElement, execJS, injectOverlayBanner, rand } from '../utils/page-helper'
-import { APP_ICON } from '../utils/constants'
-import { isCheckoutOrPayPage, isLoginPage } from '../utils/url-helper'
+import { setUserAgent, debugLog, humanDelay, humanClickAt, humanClickElement, execJS, injectOverlayBanner, rand, clickInShopWindow } from '../utils/page-helper'
+import { APP_ICON, TIMEOUTS, WINDOW_SIZES, KEYWORDS } from '../utils/constants'
+import { isBuyPage, isLoginPage, isCartPage, isProductDetailPage } from '../utils/url-helper'
 import { TAOBAO_SELECTORS } from '../taobao.selectors'
 import { HUMAN_SIM_JS } from '../utils/human-sim'
 
@@ -68,14 +68,14 @@ export class CheckoutService {
         return { success: false, error: '登录已过期，请重新登录' }
       }
 
-      if (directToPay || isCheckoutOrPayPage(currentUrl)) {
+      if (directToPay || isBuyPage(currentUrl)) {
         console.log(`[Taobao] Already on checkout/pay page, submitting order directly`)
         return await this.submitOrder()
       }
 
-      if (!currentUrl.includes('cart.taobao.com')) {
+      if (!isCartPage(currentUrl)) {
         this.emitStatus('正在跳转购物车...')
-        await this.getPage()!.goto(TAOBAO_SELECTORS.CART.URL, { waitUntil: 'domcontentloaded', timeout: 30000 })
+        await this.getPage()!.goto(TAOBAO_SELECTORS.CART.URL, { waitUntil: 'domcontentloaded', timeout: TIMEOUTS.PAGE_LOAD })
       }
 
       await humanDelay(2000)
@@ -99,12 +99,12 @@ export class CheckoutService {
       await humanDelay(3000)
 
       const afterUrl = this.getPage()!.url()
-      if (isCheckoutOrPayPage(afterUrl)) {
+      if (isBuyPage(afterUrl)) {
         return await this.submitOrder()
       }
 
       return { success: true }
-    } catch (e) {
+    } catch (e: unknown) {
       return { success: false, error: String(e) }
     }
   }
@@ -124,12 +124,12 @@ export class CheckoutService {
       return { success: false, error: '登录已过期，请重新登录' }
     }
 
-    if (directToPay || isCheckoutOrPayPage(currentUrl)) {
+    if (directToPay || isBuyPage(currentUrl)) {
       this.emitStatus('已到达确认订单页面')
       return { success: true }
     }
 
-    if (!currentUrl.includes('cart.taobao.com')) {
+    if (!isCartPage(currentUrl)) {
       this.emitStatus('正在跳转购物车...')
       await wc.loadURL(TAOBAO_SELECTORS.CART.URL)
       await humanDelay(3000)
@@ -141,7 +141,8 @@ export class CheckoutService {
     }
 
     this.emitStatus('正在结算...')
-    const checkoutResult = await this.clickInShopWindow(
+    const checkoutResult = await clickInShopWindow(
+      shopWindow,
       TAOBAO_SELECTORS.CART.CHECKOUT_SELECTORS as unknown as string[],
       ['结算', '去结算', '去购物车结算', '去支付']
     )
@@ -199,7 +200,7 @@ export class CheckoutService {
           this.emitStatus('已到达确认订单页面')
           return { success: true, currentPrice }
         }
-      } catch (e) {
+      } catch (e: unknown) {
         console.log(`[Taobao] waitForCheckoutPage error: ${e}`)
       }
     }
@@ -251,53 +252,8 @@ export class CheckoutService {
       if (result?.found) {
         await humanDelay(1000)
       }
-    } catch (e) {
+    } catch (e: unknown) {
       console.log(`[Taobao] setQuantity error: ${e}`)
-    }
-  }
-
-  private async clickInShopWindow(selectors: string[], textTargets: string[]): Promise<{ clicked: boolean; selector?: string; text?: string }> {
-    const shopWindow = this.windowManager.getShopWindow()
-    if (!shopWindow || shopWindow.isDestroyed()) return { clicked: false }
-
-    try {
-      const result = await humanClickElement(shopWindow, selectors, textTargets)
-      if (result.clicked) {
-        return { clicked: true, selector: 'humanClick', text: result.text?.substring(0, 30) }
-      }
-
-      const fallbackResult = await execJS(shopWindow, `
-        (function(args) {
-          var loginKeywords = ['登录', '注册', '扫码', '快速进入', '密码登录', '短信登录'];
-          var allEls = document.querySelectorAll('button, a, [role="button"], span, div, input[type="submit"]');
-          for (var j = 0; j < allEls.length; j++) {
-            var el = allEls[j];
-            var text = (el.textContent || el.value || '').trim();
-            if (!text) continue;
-            var normalized = text.replace(/\\s+/g, '');
-            var isLogin = loginKeywords.some(function(k) { return normalized.includes(k); });
-            if (isLogin) continue;
-            var isMatch = args.textTargets.some(function(t) { return normalized.includes(t); });
-            if (isMatch) {
-              var rect = el.getBoundingClientRect();
-              if (rect.width > 0 && rect.height > 0) {
-                var x = rect.left + rect.width * (0.3 + Math.random() * 0.4);
-                var y = rect.top + rect.height * (0.3 + Math.random() * 0.4);
-                return { clicked: true, text: text.substring(0, 30), x: Math.round(x), y: Math.round(y) };
-              }
-            }
-          }
-          return { clicked: false };
-        })(${JSON.stringify({ selectors, textTargets })})
-      `)
-      if (fallbackResult && fallbackResult.clicked && fallbackResult.x !== undefined) {
-        await humanClickAt(shopWindow, fallbackResult.x, fallbackResult.y)
-        return { clicked: true, selector: 'text:' + (fallbackResult.text || '').substring(0, 20), text: fallbackResult.text?.substring(0, 30) }
-      }
-      return { clicked: false }
-    } catch (e) {
-      console.log(`[Taobao] clickInShopWindow error: ${e}`)
-      return { clicked: false }
     }
   }
 
@@ -354,8 +310,8 @@ export class CheckoutService {
         if (isLoginPage(frameUrl)) continue
 
         await frame.evaluate(HUMAN_SIM_JS).catch(() => {})
-        const locateResult = await frame.evaluate((args: { selectors: string[]; textTargets: string[] }) => {
-          const loginKeywords = ['登录', '注册', '扫码', '快速进入', '密码登录', '短信登录']
+        const locateResult = await frame.evaluate((args: { selectors: string[]; textTargets: string[]; loginKeywords: string[] }) => {
+          const loginKeywords = [...args.loginKeywords, '快速进入', '密码登录', '短信登录']
           for (const sel of args.selectors) {
             try {
               const el = document.querySelector(sel) as HTMLElement | null
@@ -384,7 +340,7 @@ export class CheckoutService {
           }
 
           return { found: false }
-        }, { selectors, textTargets })
+        }, { selectors, textTargets, loginKeywords: KEYWORDS.LOGIN })
 
         if (locateResult.found && locateResult.selector) {
           try {
@@ -396,11 +352,11 @@ export class CheckoutService {
               await locator.click({ timeout: 3000 })
               return { clicked: true, selector: locateResult.selector, text: locateResult.text }
             }
-          } catch (e) {
+          } catch (e: unknown) {
             console.log(`[Taobao] Playwright click failed for selector "${locateResult.selector}": ${e}`)
           }
         }
-      } catch (e) {
+      } catch (e: unknown) {
         console.log(`[Taobao] clickButtonByTextOrSelector frame error: ${e}`)
       }
     }
@@ -454,7 +410,7 @@ export class CheckoutService {
         console.log(`[Taobao] extractCheckoutPrice: ${price}`)
         return price
       }
-    } catch (e) {
+    } catch (e: unknown) {
       console.log(`[Taobao] extractCheckoutPrice error: ${e}`)
     }
     return undefined

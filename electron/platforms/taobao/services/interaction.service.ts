@@ -1,7 +1,8 @@
 import { BrowserWindow } from 'electron'
-import { isDisposableUrl, isLoginPage, isIdentityVerifyPage, isCheckoutOrPayPage } from '../utils/url-helper'
+import { isDisposableUrl, isLoginPage, isIdentityVerifyPage, isCheckoutOrPayPage, isBuyPage, isCartPage } from '../utils/url-helper'
 import { debugLog, setUserAgent, injectOverlayBanner, injectCenterToast } from '../utils/page-helper'
 import { APP_ICON } from '../utils/constants'
+import { tryAutoLoginThenShow, showConfirmationWindow } from '../utils/window-helper'
 import type { CookieManager } from '../infrastructure/cookie-manager'
 import type { WindowManager } from '../infrastructure/window-manager'
 import type { TaobaoAuth } from '../taobao.auth'
@@ -94,7 +95,7 @@ export class InteractionService {
             console.log(`[Taobao] Confirmation window navigated: ${this.pendingConfirmation.windowUrl} -> ${newUrl}`)
             debugLog(`Confirmation window navigated: ${this.pendingConfirmation.windowUrl} -> ${newUrl}`)
             this.pendingConfirmation.windowUrl = newUrl
-            if (isCheckoutOrPayPage(newUrl) || newUrl.includes('buy.tmall.com') || newUrl.includes('buy.taobao.com') || newUrl.includes('alipay.com')) {
+            if (isBuyPage(newUrl) || newUrl.includes('alipay.com')) {
               if (this.pendingConfirmation.scene !== 'payment') {
                 console.log(`[Taobao] Confirmation window navigated to payment page, updating scene from ${this.pendingConfirmation.scene} to payment`)
                 this.pendingConfirmation.scene = 'payment'
@@ -107,7 +108,7 @@ export class InteractionService {
           if (this.pendingConfirmation && this.pendingConfirmation.id === id && !win.isDestroyed()) {
             const newUrl = win.webContents.getURL()
             this.pendingConfirmation.windowUrl = newUrl
-            if (isCheckoutOrPayPage(newUrl) || newUrl.includes('buy.tmall.com') || newUrl.includes('buy.taobao.com') || newUrl.includes('alipay.com')) {
+            if (isBuyPage(newUrl) || newUrl.includes('alipay.com')) {
               if (this.pendingConfirmation.scene !== 'payment') {
                 this.pendingConfirmation.scene = 'payment'
                 this.emitStatus(`已进入支付页面，请在窗口中完成支付|SCENE:payment|`)
@@ -194,6 +195,7 @@ export class InteractionService {
     setUserAgent(win)
     const mainWindow = this.windowManager.getMainWindow()
     if (mainWindow) win.setParentWindow(mainWindow)
+    this.windowManager.trackWindow(win)
 
     win.webContents.setWindowOpenHandler(({ url: openUrl }) => {
       console.log('[Taobao] Reopened confirmation window open: ' + openUrl)
@@ -203,6 +205,7 @@ export class InteractionService {
     win.webContents.on('did-create-window', (newWindow) => {
       setUserAgent(newWindow)
       newWindow.setIcon(APP_ICON)
+      this.windowManager.trackWindow(newWindow)
 
       const handlePopupUrl = async (popupUrl: string) => {
         if (isIdentityVerifyPage(popupUrl)) {
@@ -222,7 +225,7 @@ export class InteractionService {
           return
         }
 
-        if (isCheckoutOrPayPage(popupUrl) || popupUrl.includes('buy.tmall.com') || popupUrl.includes('buy.taobao.com')) {
+        if (isBuyPage(popupUrl)) {
           await this.cookieManager.syncCookiesFromElectron(null, this.auth)
           this.emitStatus('已进入结算页面')
           return
@@ -295,35 +298,6 @@ export class InteractionService {
   }
 
   private async tryAutoLoginThenShow(win: BrowserWindow): Promise<void> {
-    this.cookieManager.resetToElectronSyncTimer()
-    await this.cookieManager.syncCookiesToElectron(null, this.auth)
-
-    const currentUrl = win.webContents.getURL()
-    if (!isLoginPage(currentUrl)) {
-      this.emitStatus('Cookie 已同步，页面已自动跳转')
-      win.show()
-      return
-    }
-
-    try {
-      const referrer = win.webContents.getURL()
-      await win.loadURL(referrer)
-      await new Promise(r => setTimeout(r, 3000))
-
-      if (!isLoginPage(win.webContents.getURL())) {
-        this.emitStatus('Cookie 已同步，页面已自动跳转')
-        win.show()
-        return
-      }
-    } catch { /* ignore */ }
-
-    this.emitStatus('登录已过期，请在弹出的窗口中重新登录...')
-    win.setSize(900, 700)
-    win.setTitle('淘宝登录 - 请重新登录')
-    const mw = this.windowManager.getMainWindow()
-    if (mw) win.setParentWindow(mw)
-    injectOverlayBanner(win, "🔑 自动购物助手：登录已过期，请在下方重新登录后继续")
-    injectCenterToast(win, "请重新登录")
-    win.show()
+    await tryAutoLoginThenShow(win, this.cookieManager, this.windowManager, this.auth, this.emitStatus)
   }
 }

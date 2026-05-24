@@ -14,7 +14,8 @@ export default function Dashboard({ tasks, onScrollToTasks }: DashboardProps) {
   const stats = {
     total: tasks.length,
     success: tasks.filter((t) => t.status === 'success').length,
-    running: tasks.filter((t) => ['running', 'pending', 'partial'].includes(t.status)).length,
+    running: tasks.filter((t) => ['running', 'pending'].includes(t.status)).length,
+    partial: tasks.filter((t) => t.status === 'partial').length,
     failed: tasks.filter((t) => t.status === 'failed').length,
     cancelled: tasks.filter((t) => t.status === 'cancelled').length,
   }
@@ -23,6 +24,7 @@ export default function Dashboard({ tasks, onScrollToTasks }: DashboardProps) {
     { label: '总任务', value: stats.total, color: 'bg-blue-500', action: onScrollToTasks ? () => onScrollToTasks() : undefined },
     { label: '已完成', value: stats.success, color: 'bg-green-500', action: onScrollToTasks ? () => onScrollToTasks('success') : undefined },
     { label: '执行中', value: stats.running, color: 'bg-amber-500', action: onScrollToTasks ? () => onScrollToTasks('running') : undefined },
+    { label: '待处理', value: stats.partial, color: 'bg-orange-500', action: onScrollToTasks ? () => onScrollToTasks('partial') : undefined },
     { label: '失败', value: stats.failed, color: 'bg-red-500', action: onScrollToTasks ? () => onScrollToTasks('failed') : undefined },
     { label: '已取消', value: stats.cancelled, color: 'bg-gray-400', action: onScrollToTasks ? () => onScrollToTasks('cancelled') : undefined },
   ]

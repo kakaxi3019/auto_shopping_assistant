@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import { api } from '../lib/api'
 
 interface Task {
@@ -46,8 +46,28 @@ interface TaskPreview {
   platform: string
 }
 
+interface Order {
+  id: number
+  platform: string
+  orderId: string
+  productName: string
+  productUrl: string
+  price: number
+  imageUrl: string
+  purchasedAt: string
+  shopName: string
+  sku: string
+  rawData: string
+  unavailable: number
+}
+
+interface RecentSuggestion {
+  instruction: string
+}
+
 export function useTasks() {
   const [tasks, setTasks] = useState<Task[]>([])
+  const [orders, setOrders] = useState<Order[]>([])
   const [loading, setLoading] = useState(false)
   const [preview, setPreview] = useState<TaskPreview | null>(null)
   const [previewLoading, setPreviewLoading] = useState(false)
@@ -57,8 +77,11 @@ export function useTasks() {
   const refresh = useCallback(async () => {
     setLoading(true)
     try {
-      const result = await api.listTasks() as Task[]
-      const parsed = result.map(t => ({
+      const [taskResult, orderResult] = await Promise.all([
+        api.listTasks() as Promise<Task[]>,
+        api.getAllOrders(50) as Promise<Order[]>,
+      ])
+      const parsed = taskResult.map(t => ({
         ...t,
         progressLog: typeof (t as any).progressLog === 'string'
           ? JSON.parse((t as any).progressLog as string)
@@ -83,6 +106,7 @@ export function useTasks() {
         })
         return merged
       })
+      setOrders(orderResult || [])
     } finally {
       setLoading(false)
     }
@@ -101,7 +125,7 @@ export function useTasks() {
             status: update.status,
             instruction: '',
             parsedItems: '[]',
-            platform: 'taobao',
+            platform: (update as any).platform || 'taobao',
             createdAt: new Date().toISOString(),
             completedAt: null,
             error: update.error || null,
@@ -141,6 +165,16 @@ export function useTasks() {
     return unsubscribe
   }, [refresh])
 
+  useEffect(() => {
+    const unsubscribe = api.onSyncStatusUpdate?.((data: unknown) => {
+      const statusData = data as { status: string }
+      if (statusData.status.startsWith('同步完成')) {
+        refresh()
+      }
+    })
+    return unsubscribe ?? (() => {})
+  }, [refresh])
+
   const previewTask = useCallback(async (instruction: string) => {
     setPreviewLoading(true)
     try {
@@ -155,8 +189,8 @@ export function useTasks() {
     }
   }, [])
 
-  const confirmTask = useCallback(async (instruction: string, items: PreviewItem[], dryRun?: boolean, paymentMode?: string) => {
-    console.log('[useTasks] confirmTask START', { instruction, itemCount: items.length, dryRun, paymentMode })
+  const confirmTask = useCallback(async (instruction: string, items: PreviewItem[], dryRun?: boolean, paymentMode?: string, platform?: string) => {
+    console.log('[useTasks] confirmTask START', { instruction, itemCount: items.length, dryRun, paymentMode, platform })
     const matchedItems = items.filter(item => item.matched)
     if (matchedItems.length === 0) {
       throw new Error('没有匹配的商品可以购买')
@@ -168,7 +202,7 @@ export function useTasks() {
       orderRef: item.orderRef,
     }))
     console.log('[useTasks] confirmTask calling api.confirmTask...', { confirmItemsCount: confirmItems.length })
-    const result = await api.confirmTask(instruction, confirmItems, undefined, dryRun, paymentMode) as { taskId?: number; error?: string }
+    const result = await api.confirmTask(instruction, confirmItems, platform, dryRun, paymentMode) as { taskId?: number; error?: string }
     console.log('[useTasks] confirmTask api result:', result)
     if (result && result.error) {
       throw new Error(result.error)
@@ -255,6 +289,51 @@ export function useTasks() {
     await refresh()
   }, [refresh])
 
+  const recentSuggestions = useMemo<RecentSuggestion[]>(() => {
+    const threeMonthsAgo = new Date()
+    threeMonthsAgo.setMonth(threeMonthsAgo.getMonth() - 3)
+
+    const taskSuccess = tasks.filter(t => t.status === 'success')
+    const orderAvailable = orders.filter(o => !o.unavailable)
+
+    const allItems = [
+      ...taskSuccess.map(t => ({
+        instruction: t.instruction,
+        time: t.completedAt || t.createdAt,
+      })),
+      ...orderAvailable.map(o => ({
+        instruction: o.productName,
+        time: o.purchasedAt,
+      })),
+    ].filter(item => new Date(item.time) >= threeMonthsAgo)
+
+    const freqMap = new Map<string, number>()
+    for (const item of allItems) {
+      freqMap.set(item.instruction, (freqMap.get(item.instruction) || 0) + 1)
+    }
+
+    const latestMap = new Map<string, string>()
+    for (const item of allItems) {
+      const existing = latestMap.get(item.instruction)
+      if (!existing || new Date(item.time) > new Date(existing)) {
+        latestMap.set(item.instruction, item.time)
+      }
+    }
+
+    const unique = [...latestMap.entries()].map(([instruction, time]) => ({
+      instruction,
+      time,
+      freq: freqMap.get(instruction) || 1,
+    }))
+
+    unique.sort((a, b) => {
+      if (b.freq !== a.freq) return b.freq - a.freq
+      return new Date(b.time).getTime() - new Date(a.time).getTime()
+    })
+
+    return unique.slice(0, 5)
+  }, [tasks, orders])
+
   return {
     tasks, loading, refresh,
     createTask, cancelTask, retryTaskItem,
@@ -262,5 +341,6 @@ export function useTasks() {
     preview, previewLoading, previewTask, confirmTask, cancelPreview,
     updatePreviewItem, removePreviewItem,
     activeTaskId, panelOpen, closePanel, openTaskPanel,
+    recentSuggestions,
   }
 }

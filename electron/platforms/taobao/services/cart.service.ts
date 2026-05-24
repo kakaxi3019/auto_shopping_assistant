@@ -8,9 +8,9 @@ import { CookieManager } from '../infrastructure/cookie-manager'
 import { VerificationService } from './verification.service'
 import { InteractionService } from './interaction.service'
 import { TaobaoAuth } from '../taobao.auth'
-import { setUserAgent, debugLog, humanDelay, humanClickAt, humanClickElement, execJS, injectOverlayBanner, injectCenterToast, rand } from '../utils/page-helper'
-import { APP_ICON } from '../utils/constants'
-import { isCheckoutOrPayPage, isLoginPage, isIdentityVerifyPage } from '../utils/url-helper'
+import { setUserAgent, debugLog, humanDelay, humanClickAt, humanClickElement, execJS, injectOverlayBanner, injectCenterToast, rand, ListenerTracker } from '../utils/page-helper'
+import { APP_ICON, WINDOW_SIZES, TIMEOUTS, KEYWORDS } from '../utils/constants'
+import { isCheckoutOrPayPage, isLoginPage, isIdentityVerifyPage, isBuyPage, isCartPage, isProductDetailPage, isOrderArchivePage, isOrderDetailPage } from '../utils/url-helper'
 import { TAOBAO_SELECTORS } from '../taobao.selectors'
 import { HUMAN_SIM_JS } from '../utils/human-sim'
 
@@ -71,7 +71,7 @@ export class CartService {
       if (result) return result
 
       return { success: false, error: '再买一单操作未返回结果' }
-    } catch (e) {
+    } catch (e: unknown) {
       debugLog(`[Taobao] addToCart error: ${e}`)
       this.emitStatus(`再买一单失败: ${e}`)
       return { success: false, error: String(e) }
@@ -99,8 +99,8 @@ export class CartService {
       }
 
       const newShopWindow = new BrowserWindow({
-        width: 1280,
-        height: 800,
+        width: WINDOW_SIZES.SHOP.width,
+        height: WINDOW_SIZES.SHOP.height,
         show: true,
         autoHideMenuBar: true,
         icon: APP_ICON,
@@ -120,11 +120,13 @@ export class CartService {
 
       return new Promise<AddToCartResult>((resolve) => {
         let resolved = false
+        const lt = new ListenerTracker()
 
         const doResolve = (result: AddToCartResult) => {
           if (resolved) return
           resolved = true
           clearTimeout(timeout)
+          lt.dispose()
           resolve(result)
         }
 
@@ -134,12 +136,12 @@ export class CartService {
             this.emitStatus('加入购物车超时')
             doResolve({ success: false, error: '加入购物车超时' })
           }
-        }, 1800000)
+        }, TIMEOUTS.OPERATION)
 
         const handleNavigation = async (url: string) => {
           if (resolved) return
 
-          if (url.includes('cart.taobao.com')) {
+          if (isCartPage(url)) {
             const sw = this.windowManager.getShopWindow()
             if (sw && !sw.isDestroyed()) sw.hide()
             await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth)
@@ -148,7 +150,7 @@ export class CartService {
             return
           }
 
-          if (isCheckoutOrPayPage(url) || url.includes('buy.tmall.com') || url.includes('buy.taobao.com')) {
+          if (isBuyPage(url)) {
             const sw = this.windowManager.getShopWindow()
             if (sw && !sw.isDestroyed()) sw.hide()
             await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth)
@@ -165,14 +167,15 @@ export class CartService {
           return { action: 'allow', overrideBrowserWindowOptions: { show: false } }
         })
 
-        currentShopWindow.webContents.on('did-create-window', (newWindow) => {
+        lt.on(currentShopWindow.webContents, 'did-create-window', (newWindow) => {
           setUserAgent(newWindow)
           newWindow.setIcon(APP_ICON)
+          this.windowManager.trackWindow(newWindow)
 
           const handlePopupUrl = async (popupUrl: string) => {
             if (resolved) return
 
-            if (popupUrl.includes('cart.taobao.com')) {
+            if (isCartPage(popupUrl)) {
               const sw = this.windowManager.getShopWindow()
               if (sw && !sw.isDestroyed()) sw.hide()
               this.windowManager.setShopWindow(newWindow)
@@ -182,7 +185,7 @@ export class CartService {
               return
             }
 
-            if (isCheckoutOrPayPage(popupUrl) || popupUrl.includes('buy.tmall.com') || popupUrl.includes('buy.taobao.com')) {
+            if (isBuyPage(popupUrl)) {
               const sw = this.windowManager.getShopWindow()
               if (sw && !sw.isDestroyed()) sw.hide()
               this.windowManager.setShopWindow(newWindow)
@@ -194,7 +197,7 @@ export class CartService {
 
             if (isIdentityVerifyPage(popupUrl)) {
               this.emitStatus('需要进行身份验证，请在弹出的窗口中完成验证...')
-              newWindow.setSize(500, 600)
+              newWindow.setSize(WINDOW_SIZES.SMALL.width, WINDOW_SIZES.SMALL.height)
               newWindow.setTitle('淘宝身份验证')
               const mw = this.windowManager.getMainWindow()
               if (mw) newWindow.setParentWindow(mw)
@@ -210,19 +213,19 @@ export class CartService {
             }
           }
 
-          newWindow.webContents.on('did-finish-load', async () => {
+          lt.on(newWindow.webContents, 'did-finish-load', async () => {
             await handlePopupUrl(newWindow.webContents.getURL())
           })
-          newWindow.webContents.on('did-navigate', async () => {
+          lt.on(newWindow.webContents, 'did-navigate', async () => {
             await handlePopupUrl(newWindow.webContents.getURL())
           })
         })
 
-        currentShopWindow.webContents.on('did-navigate', async (_event, url) => {
+        lt.on(currentShopWindow.webContents, 'did-navigate', async (_event, url) => {
           await handleNavigation(url)
         })
 
-        currentShopWindow.webContents.on('did-finish-load', async () => {
+        lt.on(currentShopWindow.webContents, 'did-finish-load', async () => {
           if (resolved) return
 
           const sw = this.windowManager.getShopWindow()
@@ -236,12 +239,12 @@ export class CartService {
             const pageStatus = await execJS(sw!, `
               (function() {
                 var bodyText = (document.body?.innerText || '');
-                var offShelfKeywords = ['已下架', '商品已下架', '宝贝不存在', '商品不存在', '已失效', '已卖完', '暂时缺货', '无法购买'];
+                var offShelfKeywords = ${JSON.stringify(KEYWORDS.OFF_SHELF)};
                 var matchedKeyword = '';
                 for (var i = 0; i < offShelfKeywords.length; i++) {
                   if (bodyText.includes(offShelfKeywords[i])) { matchedKeyword = offShelfKeywords[i]; break; }
                 }
-                var found = _hs.findVisible(['button', 'a', '[class*="btn"]', '[class*="Button"]', '[role="button"]', '[class*="action"]', '[class*="submit"]'], ['加入购物车', '加购']);
+                var found = _hs.findVisible(['button', 'a', '[class*="btn"]', '[class*="Button"]', '[role="button"]', '[class*="action"]', '[class*="submit"]'], ${JSON.stringify(KEYWORDS.CART_BUTTONS)});
                 var hasCartButton = found.length > 0;
                 return { offShelf: matchedKeyword !== '', keyword: matchedKeyword, hasCartButton: hasCartButton };
               })()
@@ -292,7 +295,7 @@ export class CartService {
                 (function() {
                   var result = _hs.findAndClick(
                     ['button', 'a', '[class*="btn"]', '[class*="Button"]', '[role="button"]', '[class*="action"]', '[class*="submit"]'],
-                    ['加入购物车', '加购']
+                    ${JSON.stringify(KEYWORDS.CART_BUTTONS)}
                   );
                   return result ? { clicked: true, text: result.text } : { clicked: false };
                 })()
@@ -303,7 +306,7 @@ export class CartService {
               if (resolved) return
 
               const afterUrl = sw!.webContents.getURL()
-              if (afterUrl.includes('cart.taobao.com')) {
+              if (isCartPage(afterUrl)) {
                 if (!sw?.isDestroyed()) sw?.hide()
                 await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth)
                 this.emitStatus('已加入购物车')
@@ -311,7 +314,7 @@ export class CartService {
                 return
               }
 
-              if (afterUrl.includes('buy.tmall.com') || afterUrl.includes('buy.taobao.com') || isCheckoutOrPayPage(afterUrl)) {
+              if (isBuyPage(afterUrl)) {
                 if (!sw?.isDestroyed()) sw?.hide()
                 await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth)
                 this.emitStatus('已进入结算页面（商品可能不支持加入购物车）')
@@ -322,7 +325,7 @@ export class CartService {
               const cartSuccessDetected = await sw!.webContents.executeJavaScript(`
                 (function() {
                   var bodyText = (document.body?.innerText || '');
-                  var successHints = ['已加入购物车', '添加成功', '成功加入', '加入成功', '已添加至购物车'];
+                  var successHints = ${JSON.stringify(KEYWORDS.CART_SUCCESS)};
                   for (var i = 0; i < successHints.length; i++) {
                     if (bodyText.includes(successHints[i])) return true;
                   }
@@ -356,7 +359,7 @@ export class CartService {
 
               if (hasSkuDialog) {
                 this.emitStatus('需要选择商品规格，请在弹出的窗口中选择后点击"加入购物车"')
-                sw!.setSize(900, 700)
+                sw!.setSize(WINDOW_SIZES.VERIFICATION.width, WINDOW_SIZES.VERIFICATION.height)
                 sw!.setTitle('请选择商品规格，选好后点击"加入购物车"')
                 const mw = this.windowManager.getMainWindow()
                 if (mw) sw!.setParentWindow(mw)
@@ -364,19 +367,20 @@ export class CartService {
                 injectCenterToast(sw!, "请选择规格后点击加入购物车")
                 sw!.show()
 
-                sw!.webContents.on('did-navigate', async (_evt, url: string) => {
+                lt.on(sw!.webContents, 'did-navigate', async (_evt, url: string) => {
                   await handleNavigation(url)
                 })
                 sw!.webContents.setWindowOpenHandler(({ url: openUrl }) => {
                   console.log('[Taobao] addToCartDirectly sku-select window open: ' + openUrl)
                   return { action: 'allow', overrideBrowserWindowOptions: { show: false } }
                 })
-                sw!.webContents.on('did-create-window', (newWin) => {
+                lt.on(sw!.webContents, 'did-create-window', (newWin) => {
                   setUserAgent(newWin)
                   newWin.setIcon(APP_ICON)
-                  newWin.webContents.on('did-finish-load', async () => {
+                  this.windowManager.trackWindow(newWin)
+                  lt.on(newWin.webContents, 'did-finish-load', async () => {
                     const popupUrl = newWin.webContents.getURL()
-                    if (popupUrl.includes('cart.taobao.com')) {
+                    if (isCartPage(popupUrl)) {
                       const s = this.windowManager.getShopWindow()
                       if (s && !s.isDestroyed()) s.hide()
                       this.windowManager.setShopWindow(newWin)
@@ -391,14 +395,14 @@ export class CartService {
 
               this.emitStatus('已点击加入购物车按钮，等待结果...')
             }
-          } catch (e) {
+          } catch (e: unknown) {
             console.log('[Taobao] addToCartDirectly page check error: ' + e)
           }
         })
 
         currentShopWindow.loadURL(fullUrl)
       })
-    } catch (e) {
+    } catch (e: unknown) {
       console.log('[Taobao] addToCartDirectly error: ' + e)
       return { success: false, error: String(e) }
     }
@@ -472,8 +476,8 @@ export class CartService {
       }
 
       const newShopWindow = new BrowserWindow({
-        width: 1280,
-        height: 800,
+        width: WINDOW_SIZES.SHOP.width,
+        height: WINDOW_SIZES.SHOP.height,
         show: false,
         autoHideMenuBar: true,
         icon: APP_ICON,
@@ -488,11 +492,13 @@ export class CartService {
 
       return new Promise<AddToCartResult>((resolve) => {
         let resolved = false
+        const lt = new ListenerTracker()
 
         const doResolve = (result: AddToCartResult) => {
           if (resolved) return
           resolved = true
           clearTimeout(timeout)
+          lt.dispose()
           resolve(result)
         }
 
@@ -502,12 +508,12 @@ export class CartService {
             this.emitStatus('操作超时')
             doResolve({ success: false, error: '操作超时' })
           }
-        }, 1800000)
+        }, TIMEOUTS.OPERATION)
 
         const handleNavigation = async (url: string) => {
           if (resolved) return
 
-          if (isCheckoutOrPayPage(url) || url.includes('buy.tmall.com') || url.includes('buy.taobao.com')) {
+          if (isBuyPage(url)) {
             const sw = this.windowManager.getShopWindow()
             if (sw && !sw.isDestroyed()) sw.hide()
             await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth)
@@ -516,7 +522,7 @@ export class CartService {
             return
           }
 
-          if (url.includes('cart.taobao.com')) {
+          if (isCartPage(url)) {
             const sw = this.windowManager.getShopWindow()
             if (sw && !sw.isDestroyed()) sw.hide()
             await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth)
@@ -533,14 +539,15 @@ export class CartService {
           return { action: 'allow', overrideBrowserWindowOptions: { show: false } }
         })
 
-        currentShopWindow.webContents.on('did-create-window', (newWindow) => {
+        lt.on(currentShopWindow.webContents, 'did-create-window', (newWindow) => {
           setUserAgent(newWindow)
           newWindow.setIcon(APP_ICON)
+          this.windowManager.trackWindow(newWindow)
 
           const handlePopupUrl = async (popupUrl: string) => {
             if (resolved) return
 
-            if (isCheckoutOrPayPage(popupUrl) || popupUrl.includes('buy.tmall.com') || popupUrl.includes('buy.taobao.com')) {
+            if (isBuyPage(popupUrl)) {
               const sw = this.windowManager.getShopWindow()
               if (sw && !sw.isDestroyed()) sw.hide()
               this.windowManager.setShopWindow(newWindow)
@@ -550,7 +557,7 @@ export class CartService {
               return
             }
 
-            if (popupUrl.includes('cart.taobao.com')) {
+            if (isCartPage(popupUrl)) {
               const sw = this.windowManager.getShopWindow()
               if (sw && !sw.isDestroyed()) sw.hide()
               this.windowManager.setShopWindow(newWindow)
@@ -562,7 +569,7 @@ export class CartService {
 
             if (isIdentityVerifyPage(popupUrl)) {
               this.emitStatus('需要进行身份验证，请在弹出的窗口中完成验证...')
-              newWindow.setSize(500, 600)
+              newWindow.setSize(WINDOW_SIZES.SMALL.width, WINDOW_SIZES.SMALL.height)
               newWindow.setTitle('淘宝身份验证')
               const mw = this.windowManager.getMainWindow()
               if (mw) newWindow.setParentWindow(mw)
@@ -578,19 +585,19 @@ export class CartService {
             }
           }
 
-          newWindow.webContents.on('did-finish-load', async () => {
+          lt.on(newWindow.webContents, 'did-finish-load', async () => {
             await handlePopupUrl(newWindow.webContents.getURL())
           })
-          newWindow.webContents.on('did-navigate', async () => {
+          lt.on(newWindow.webContents, 'did-navigate', async () => {
             await handlePopupUrl(newWindow.webContents.getURL())
           })
         })
 
-        currentShopWindow.webContents.on('did-navigate', async (_event, url) => {
+        lt.on(currentShopWindow.webContents, 'did-navigate', async (_event, url) => {
           await handleNavigation(url)
         })
 
-        currentShopWindow.webContents.on('did-finish-load', async () => {
+        lt.on(currentShopWindow.webContents, 'did-finish-load', async () => {
           if (resolved) return
 
           const sw = this.windowManager.getShopWindow()
@@ -604,12 +611,12 @@ export class CartService {
             const pageStatus = await execJS(sw!, `
               (function() {
                 var bodyText = (document.body?.innerText || '');
-                var offShelfKeywords = ['已下架', '商品已下架', '宝贝不存在', '商品不存在', '已失效', '已卖完', '暂时缺货', '无法购买'];
+                var offShelfKeywords = ${JSON.stringify(KEYWORDS.OFF_SHELF)};
                 var matchedKeyword = '';
                 for (var i = 0; i < offShelfKeywords.length; i++) {
                   if (bodyText.includes(offShelfKeywords[i])) { matchedKeyword = offShelfKeywords[i]; break; }
                 }
-                var found = _hs.findVisible(['button', 'a', '[class*="btn"]', '[class*="Button"]', '[role="button"]', '[class*="action"]', '[class*="submit"]'], ['立即购买', '领券购买', '加入购物车', '马上抢', '立刻购买', '加购', '去购买']);
+                var found = _hs.findVisible(['button', 'a', '[class*="btn"]', '[class*="Button"]', '[role="button"]', '[class*="action"]', '[class*="submit"]'], ${JSON.stringify(KEYWORDS.BUY_BUTTONS)});
                 var hasBuyButton = found.length > 0;
                 return { offShelf: matchedKeyword !== '', keyword: matchedKeyword, hasBuyButton: hasBuyButton };
               })()
@@ -660,7 +667,7 @@ export class CartService {
                 (function() {
                   var result = _hs.findAndClick(
                     ['button', 'a', '[class*="btn"]', '[class*="Button"]', '[role="button"]', '[class*="action"]', '[class*="submit"]'],
-                    ['立即购买', '领券购买', '加入购物车', '马上抢', '立刻购买', '加购', '去购买']
+                    ${JSON.stringify(KEYWORDS.BUY_BUTTONS)}
                   );
                   if (result) { return true; }
                   return false;
@@ -672,7 +679,7 @@ export class CartService {
               if (resolved) return
 
               const afterUrl = sw!.webContents.getURL()
-              if (afterUrl.includes('buy.tmall.com') || afterUrl.includes('buy.taobao.com') || isCheckoutOrPayPage(afterUrl)) {
+              if (isBuyPage(afterUrl)) {
                 if (!sw?.isDestroyed()) sw?.hide()
                 await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth)
                 this.emitStatus('已进入结算页面')
@@ -680,7 +687,7 @@ export class CartService {
                 return
               }
 
-              if (afterUrl.includes('cart.taobao.com')) {
+              if (isCartPage(afterUrl)) {
                 if (!sw?.isDestroyed()) sw?.hide()
                 await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth)
                 this.emitStatus('已加入购物车')
@@ -701,7 +708,7 @@ export class CartService {
 
               if (hasSkuDialog) {
                 this.emitStatus('需要选择商品规格，请在弹出的窗口中选择...')
-                sw!.setSize(900, 700)
+                sw!.setSize(WINDOW_SIZES.VERIFICATION.width, WINDOW_SIZES.VERIFICATION.height)
                 sw!.setTitle('请选择商品规格，选好后点击"立即购买"')
                 const mw = this.windowManager.getMainWindow()
                 if (mw) sw!.setParentWindow(mw)
@@ -709,19 +716,20 @@ export class CartService {
                 injectCenterToast(sw!, "请选择规格后点击立即购买")
                 sw!.show()
 
-                sw!.webContents.on('did-navigate', async (_evt, url: string) => {
+                lt.on(sw!.webContents, 'did-navigate', async (_evt, url: string) => {
                   await handleNavigation(url)
                 })
                 sw!.webContents.setWindowOpenHandler(({ url: openUrl }) => {
                   console.log('[Taobao] purchaseFromUrl sku-select window open: ' + openUrl)
                   return { action: 'allow', overrideBrowserWindowOptions: { show: false } }
                 })
-                sw!.webContents.on('did-create-window', (newWindow) => {
+                lt.on(sw!.webContents, 'did-create-window', (newWindow) => {
                   setUserAgent(newWindow)
                   newWindow.setIcon(APP_ICON)
-                  newWindow.webContents.on('did-finish-load', async () => {
+                  this.windowManager.trackWindow(newWindow)
+                  lt.on(newWindow.webContents, 'did-finish-load', async () => {
                     const popupUrl = newWindow.webContents.getURL()
-                    if (popupUrl.includes('buy.tmall.com') || popupUrl.includes('buy.taobao.com') || isCheckoutOrPayPage(popupUrl)) {
+                    if (isBuyPage(popupUrl)) {
                       const s = this.windowManager.getShopWindow()
                       if (s && !s.isDestroyed()) s.hide()
                       this.windowManager.setShopWindow(newWindow)
@@ -736,14 +744,14 @@ export class CartService {
 
               this.emitStatus('已点击购买按钮，等待页面跳转...')
             }
-          } catch (e) {
+          } catch (e: unknown) {
             console.log('[Taobao] purchaseFromUrl page check error: ' + e)
           }
         })
 
         currentShopWindow.loadURL(fullUrl)
       })
-    } catch (e) {
+    } catch (e: unknown) {
       console.log('[Taobao] purchaseFromUrl error: ' + e)
       return { success: false, error: String(e) }
     }
@@ -771,10 +779,11 @@ export class CartService {
     }
 
     return new Promise<AddToCartResult | null>((resolve) => {
+      const lt = new ListenerTracker()
       const newShopWindow = new BrowserWindow({
-        width: 1280,
-        height: 800,
-        show: true,
+        width: WINDOW_SIZES.SHOP.width,
+        height: WINDOW_SIZES.SHOP.height,
+        show: false,
         autoHideMenuBar: true,
         icon: APP_ICON,
         webPreferences: {
@@ -788,7 +797,6 @@ export class CartService {
       if (mainWindow) {
         newShopWindow.setParentWindow(mainWindow)
       }
-      newShopWindow.minimize()
       newShopWindow.loadURL(detailUrl)
 
       newShopWindow.webContents.setWindowOpenHandler(({ url: openUrl }) => {
@@ -796,10 +804,11 @@ export class CartService {
         return { action: 'allow', overrideBrowserWindowOptions: { show: false } }
       })
 
-      newShopWindow.webContents.on('did-create-window', (newWindow) => {
+      lt.on(newShopWindow.webContents, 'did-create-window', (newWindow) => {
         console.log(`[Taobao] Popup window created: ${newWindow.webContents.getURL()}`)
         setUserAgent(newWindow)
         newWindow.setIcon(APP_ICON)
+        this.windowManager.trackWindow(newWindow)
 
         let skuHandled = false
 
@@ -807,7 +816,7 @@ export class CartService {
           if (resolved) return
           debugLog(`[Taobao] Popup URL: ${popupUrl}`)
 
-          if (isCheckoutOrPayPage(popupUrl) || popupUrl.includes('buy.tmall.com') || popupUrl.includes('buy.taobao.com')) {
+          if (isBuyPage(popupUrl)) {
             if (cartOnly) {
               resolved = true
               clearTimeout(timeout)
@@ -825,7 +834,7 @@ export class CartService {
             this.windowManager.setShopWindow(newWindow)
             await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth)
             this.emitStatus('已进入结算页面')
-            newWindow.setSize(1100, 800)
+            newWindow.setSize(WINDOW_SIZES.CONFIRMATION.width, WINDOW_SIZES.CONFIRMATION.height)
             newWindow.setTitle('请确认订单信息并提交')
             const mw = this.windowManager.getMainWindow()
             if (mw) {
@@ -838,7 +847,7 @@ export class CartService {
             return
           }
 
-          if (popupUrl.includes('cart.taobao.com')) {
+          if (isCartPage(popupUrl)) {
             resolved = true
             clearTimeout(timeout)
             clearInterval(checkInterval)
@@ -854,7 +863,7 @@ export class CartService {
           if (isIdentityVerifyPage(popupUrl)) {
             console.log(`[Taobao] Identity verification required in popup, showing to user`)
             this.emitStatus('需要进行身份验证，请在弹出的窗口中完成验证...')
-            newWindow.setSize(500, 600)
+            newWindow.setSize(WINDOW_SIZES.SMALL.width, WINDOW_SIZES.SMALL.height)
             newWindow.setTitle('淘宝身份验证')
             const mw = this.windowManager.getMainWindow()
             if (mw) {
@@ -872,12 +881,12 @@ export class CartService {
             return
           }
 
-          if (popupUrl.includes('taobao.com') && !popupUrl.includes('login') && !popupUrl.includes('item.taobao.com') && !popupUrl.includes('detail.tmall.com')) {
+          if (popupUrl.includes('taobao.com') && !popupUrl.includes('login') && !isProductDetailPage(popupUrl)) {
             await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth)
             console.log(`[Taobao] Popup navigated to taobao page after login/verify: ${popupUrl}`)
           }
 
-          if (popupUrl.includes('item.taobao.com') || popupUrl.includes('detail.tmall.com')) {
+          if (isProductDetailPage(popupUrl)) {
             if (skuHandled) return
             skuHandled = true
             debugLog(`[Taobao] SKU popup detected, url: ${popupUrl}`)
@@ -942,8 +951,8 @@ export class CartService {
                 this.emitStatus(cartOnly ? '正在点击加入购物车...' : '正在点击购买...')
                 const clickResult = await execJS(newWindow, `
                   (function() {
-                    var priorityTargets = ${cartOnly} ? ['加入购物车', '加购'] : ['立即购买', '领券购买', '马上抢', '立刻购买', '去购买'];
-                    var secondaryTargets = ${cartOnly} ? [] : ['加入购物车', '加购'];
+                    var priorityTargets = ${cartOnly} ? ${JSON.stringify(KEYWORDS.CART_BUTTONS)} : ${JSON.stringify(KEYWORDS.BUY_BUTTONS)};
+                    var secondaryTargets = ${cartOnly} ? [] : ${JSON.stringify(KEYWORDS.CART_BUTTONS)};
                     var excludeTexts = ['万人加购', '人加购', '人购买', '万人团', '人收货', '人付款'];
                     var btnSelectors = ['button', 'a', '[class*="btn"]', '[class*="Button"]', '[role="button"]', '[class*="action"]', '[class*="submit"]'];
                     var allFound = _hs.findVisible(btnSelectors, priorityTargets.concat(secondaryTargets));
@@ -998,7 +1007,7 @@ export class CartService {
                       } catch(e) {}
                     })()
                   `).catch(() => {})
-                  newWindow.setSize(1100, 800)
+                  newWindow.setSize(WINDOW_SIZES.CONFIRMATION.width, WINDOW_SIZES.CONFIRMATION.height)
                   newWindow.setTitle('淘宝安全验证')
                   const mw = this.windowManager.getMainWindow()
                   if (mw) newWindow.setParentWindow(mw)
@@ -1021,10 +1030,10 @@ export class CartService {
                     this.windowManager.setShopWindow(newWindow)
                     await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth)
                     const afterVerifyUrl = newWindow.webContents.getURL()
-                    if (afterVerifyUrl.includes('cart.taobao.com')) {
+                    if (isCartPage(afterVerifyUrl)) {
                       this.emitStatus('已加入购物车')
                       resolve({ success: true, directToPay: false })
-                    } else if (isCheckoutOrPayPage(afterVerifyUrl) || afterVerifyUrl.includes('buy.tmall.com') || afterVerifyUrl.includes('buy.taobao.com')) {
+                    } else if (isBuyPage(afterVerifyUrl)) {
                       this.emitStatus('已进入结算页面')
                       resolve({ success: true, directToPay: true })
                     } else {
@@ -1040,7 +1049,7 @@ export class CartService {
                   return
                 }
 
-                if (isCheckoutOrPayPage(currentPopupUrl) || currentPopupUrl.includes('buy.tmall.com') || currentPopupUrl.includes('buy.taobao.com')) {
+                if (isBuyPage(currentPopupUrl)) {
                   debugLog(`[Taobao] Detected checkout page, handling...`)
                   await handlePopupUrl(currentPopupUrl)
                   return
@@ -1055,7 +1064,7 @@ export class CartService {
                       if (bodyText.includes(selectHints[i])) { matchedHint = selectHints[i]; break; }
                     }
                     var btnSelectors = ['button', 'a', '[class*="btn"]', '[class*="Button"]', '[role="button"]', '[class*="action"]', '[class*="submit"]'];
-                    var foundBtns = _hs.findVisible(btnSelectors, ['领券购买', '立即购买', '加入购物车', '马上抢', '立刻购买', '加购', '去购买', '万人加购', '确定']);
+                    var foundBtns = _hs.findVisible(btnSelectors, ${JSON.stringify([...KEYWORDS.BUY_BUTTONS, '万人加购', '确定'])});
                     var hasBuyBtn = foundBtns.length > 0;
                     var buyBtns = [];
                     for (var bi = 0; bi < foundBtns.length && buyBtns.length < 5; bi++) {
@@ -1087,7 +1096,7 @@ export class CartService {
 
                 if (pageDiag.hasCaptcha) {
                   debugLog(`[Taobao] Captcha detected in page diag: ${pageDiag.captchaInfo}`)
-                  newWindow.setSize(1100, 800)
+                  newWindow.setSize(WINDOW_SIZES.CONFIRMATION.width, WINDOW_SIZES.CONFIRMATION.height)
                   newWindow.setTitle('淘宝安全验证')
                   const mw = this.windowManager.getMainWindow()
                   if (mw) newWindow.setParentWindow(mw)
@@ -1110,7 +1119,7 @@ export class CartService {
                     this.windowManager.setShopWindow(newWindow)
                     await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth)
                     const afterVerifyUrl = newWindow.webContents.getURL()
-                    if (afterVerifyUrl.includes('cart.taobao.com')) {
+                    if (isCartPage(afterVerifyUrl)) {
                       this.emitStatus('已加入购物车')
                       resolve({ success: true, directToPay: false })
                     } else {
@@ -1132,7 +1141,7 @@ export class CartService {
                 if (checkResult.needSelect) {
                   const reopenUrl = newWindow.webContents.getURL()
                   const actionText = cartOnly ? '点击加入购物车' : '点击购买'
-                  newWindow.setSize(1100, 800)
+                  newWindow.setSize(WINDOW_SIZES.CONFIRMATION.width, WINDOW_SIZES.CONFIRMATION.height)
                   newWindow.setTitle(`请选择商品规格 - 选择后${actionText}`)
                   const mw = this.windowManager.getMainWindow()
                   if (mw) {
@@ -1159,7 +1168,7 @@ export class CartService {
                     this.windowManager.setShopWindow(newWindow)
                     await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth)
                     const currentUrl = newWindow.webContents.getURL()
-                    if (currentUrl.includes('cart.taobao.com')) {
+                    if (isCartPage(currentUrl)) {
                       this.emitStatus('已加入购物车')
                       resolve({ success: true, directToPay: false })
                     } else {
@@ -1184,7 +1193,7 @@ export class CartService {
                 } else if (!pageDiag.hasBuyBtn) {
                   fallbackReason = '页面上未找到可点击的购买按钮'
                 }
-                newWindow.setSize(1100, 800)
+                newWindow.setSize(WINDOW_SIZES.CONFIRMATION.width, WINDOW_SIZES.CONFIRMATION.height)
                 newWindow.setTitle('请手动完成购买操作')
                 const mw = this.windowManager.getMainWindow()
                 if (mw) {
@@ -1211,7 +1220,7 @@ export class CartService {
                   this.windowManager.setShopWindow(newWindow)
                   await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth)
                   const currentUrl = newWindow.webContents.getURL()
-                  if (currentUrl.includes('cart.taobao.com')) {
+                  if (isCartPage(currentUrl)) {
                     this.emitStatus('已加入购物车')
                     resolve({ success: true, directToPay: false })
                   } else {
@@ -1230,7 +1239,7 @@ export class CartService {
                 const pageStatus = await execJS(newWindow, `
                   (function() {
                     var bodyText = (document.body?.innerText || '');
-                    var offShelfKeywords = ['已下架', '商品已下架', '宝贝不存在', '商品不存在', '已失效', '商品已失效', '已卖完', '暂时缺货', '该商品已下架', '商品已售罄', '此商品已下架', '页面不存在', '很抱歉', '无法购买'];
+                    var offShelfKeywords = ${JSON.stringify(KEYWORDS.OFF_SHELF)};
                     var matchedKeyword = '';
                     for (var i = 0; i < offShelfKeywords.length; i++) {
                       if (bodyText.includes(offShelfKeywords[i])) {
@@ -1238,7 +1247,7 @@ export class CartService {
                         break;
                       }
                     }
-                    var found = _hs.findVisible(['button', 'a', '[class*="btn"]', '[class*="Button"]', '[role="button"]', '[class*="action"]', '[class*="submit"]'], ${cartOnly} ? ['加入购物车', '加购'] : ['领券购买', '立即购买', '加入购物车', '马上抢', '立刻购买', '加购', '去购买']);
+                    var found = _hs.findVisible(['button', 'a', '[class*="btn"]', '[class*="Button"]', '[role="button"]', '[class*="action"]', '[class*="submit"]'], ${cartOnly} ? ${JSON.stringify(KEYWORDS.CART_BUTTONS)} : ${JSON.stringify(KEYWORDS.BUY_BUTTONS)});
                     var hasBuyButton = found.length > 0;
                     return { offShelf: matchedKeyword !== '', keyword: matchedKeyword, hasBuyButton: hasBuyButton };
                   })()
@@ -1261,7 +1270,7 @@ export class CartService {
                     (function() {
                       var result = _hs.findAndClick(
                         ['button', 'a', '[class*="btn"]', '[class*="Button"]', '[role="button"]', '[class*="action"]', '[class*="submit"]'],
-                        ${cartOnly} ? ['加入购物车', '加购'] : ['领券购买', '立即购买', '加入购物车', '马上抢', '立刻购买', '加购', '去购买']
+                        ${cartOnly} ? ${JSON.stringify(KEYWORDS.CART_BUTTONS)} : ${JSON.stringify(KEYWORDS.BUY_BUTTONS)}
                       );
                       if (result) { return { clicked: true, text: result.text.substring(0, 30) }; }
                       return { clicked: false };
@@ -1299,7 +1308,7 @@ export class CartService {
                         if (rect.width > 100 && rect.height > 100) visibleSkuPanels.push({ cls: skuPanels[j].className.substring(0, 50), w: Math.round(rect.width), h: Math.round(rect.height) });
                       }
                       var btnSelectors = ['button', 'a', '[class*="btn"]', '[class*="Button"]', '[role="button"]', '[class*="action"]', '[class*="submit"]'];
-                      var foundBtns = _hs.findVisible(btnSelectors, ['领券购买', '立即购买', '加入购物车', '马上抢', '立刻购买', '加购', '去购买', '万人加购', '确定']);
+                      var foundBtns = _hs.findVisible(btnSelectors, ${JSON.stringify([...KEYWORDS.BUY_BUTTONS, '万人加购', '确定'])});
                       var hasBuyBtn = foundBtns.length > 0;
                       var buyBtns = [];
                       for (var bi = 0; bi < foundBtns.length && buyBtns.length < 5; bi++) {
@@ -1315,7 +1324,7 @@ export class CartService {
 
                   if (afterClickCheck.needSelect) {
                     const actionText2 = cartOnly ? '点击加入购物车' : '点击购买'
-                    newWindow.setSize(1100, 800)
+                    newWindow.setSize(WINDOW_SIZES.CONFIRMATION.width, WINDOW_SIZES.CONFIRMATION.height)
                     newWindow.setTitle(`请选择商品规格 - 选择后${actionText2}`)
                     const mw2 = this.windowManager.getMainWindow()
                     if (mw2) {
@@ -1342,7 +1351,7 @@ export class CartService {
                       this.windowManager.setShopWindow(newWindow)
                       await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth)
                       const currentUrl = newWindow.webContents.getURL()
-                      if (currentUrl.includes('cart.taobao.com')) {
+                      if (isCartPage(currentUrl)) {
                         this.emitStatus('已加入购物车')
                         resolve({ success: true, directToPay: false })
                       } else {
@@ -1359,7 +1368,7 @@ export class CartService {
                   }
 
                   debugLog(`[Taobao] No-SKU path: checking URL after click: ${afterClickUrl}`)
-                  if (isCheckoutOrPayPage(afterClickUrl) || afterClickUrl.includes('buy.tmall.com') || afterClickUrl.includes('buy.taobao.com')) {
+                  if (isBuyPage(afterClickUrl)) {
                     await handlePopupUrl(afterClickUrl)
                     return
                   }
@@ -1375,7 +1384,7 @@ export class CartService {
                       fallbackReason2 = '页面上未找到可点击的购买按钮'
                     }
                   }
-                  newWindow.setSize(1100, 800)
+                  newWindow.setSize(WINDOW_SIZES.CONFIRMATION.width, WINDOW_SIZES.CONFIRMATION.height)
                   newWindow.setTitle('请手动完成购买操作')
                   const mw3 = this.windowManager.getMainWindow()
                   if (mw3) {
@@ -1402,7 +1411,7 @@ export class CartService {
                     this.windowManager.setShopWindow(newWindow)
                     await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth)
                     const currentUrl = newWindow.webContents.getURL()
-                    if (currentUrl.includes('cart.taobao.com')) {
+                    if (isCartPage(currentUrl)) {
                       this.emitStatus('已加入购物车')
                       resolve({ success: true, directToPay: false })
                     } else {
@@ -1427,42 +1436,43 @@ export class CartService {
                   return
                 }
               }
-            } catch (e) {
+            } catch (e: unknown) {
               console.log(`[Taobao] Popup buy click error: ${e}`)
             }
           }
         }
 
-        newWindow.webContents.on('did-finish-load', async () => {
+        lt.on(newWindow.webContents, 'did-finish-load', async () => {
           const popupUrl = newWindow.webContents.getURL()
           await handlePopupUrl(popupUrl)
         })
 
-        newWindow.webContents.on('did-navigate', async () => {
+        lt.on(newWindow.webContents, 'did-navigate', async () => {
           const popupUrl = newWindow.webContents.getURL()
           await handlePopupUrl(popupUrl)
         })
 
         newWindow.webContents.setWindowOpenHandler(({ url: openUrl }) => {
           debugLog(`[Taobao] Popup window opening: ${openUrl}`)
-          if (openUrl.includes('buy.tmall.com') || openUrl.includes('buy.taobao.com') || openUrl.includes('cart.taobao.com')) {
+          if (isBuyPage(openUrl) || isCartPage(openUrl)) {
             return { action: 'allow' }
           }
           return { action: 'allow' }
         })
 
-        newWindow.webContents.on('did-create-window', (childWindow) => {
+        lt.on(newWindow.webContents, 'did-create-window', (childWindow) => {
           debugLog(`[Taobao] Child window created`)
           setUserAgent(childWindow)
           childWindow.setIcon(APP_ICON)
+          this.windowManager.trackWindow(childWindow)
 
-          childWindow.webContents.on('did-finish-load', async () => {
+          lt.on(childWindow.webContents, 'did-finish-load', async () => {
             const childUrl = childWindow.webContents.getURL()
             debugLog(`[Taobao] Child window loaded: ${childUrl}`)
             await handlePopupUrl(childUrl)
           })
 
-          childWindow.webContents.on('did-navigate', async () => {
+          lt.on(childWindow.webContents, 'did-navigate', async () => {
             const childUrl = childWindow.webContents.getURL()
             debugLog(`[Taobao] Child window navigated: ${childUrl}`)
             await handlePopupUrl(childUrl)
@@ -1470,8 +1480,14 @@ export class CartService {
         })
 
         const popupCheck = setInterval(async () => {
-          if (resolved || newWindow.isDestroyed()) {
+          if (resolved) { clearInterval(popupCheck); return }
+          if (this.isDestroyed() || newWindow.isDestroyed()) {
             clearInterval(popupCheck)
+            if (!resolved) {
+              resolved = true
+              clearTimeout(timeout)
+              resolve({ success: false, error: '任务已取消' })
+            }
             return
           }
           try {
@@ -1484,7 +1500,7 @@ export class CartService {
               if (frame === newWindow.webContents.mainFrame) continue
               try {
                 const frameUrl = frame.url
-                if (isCheckoutOrPayPage(frameUrl) || frameUrl.includes('buy.tmall.com') || frameUrl.includes('buy.taobao.com')) {
+                if (isBuyPage(frameUrl)) {
                   await handlePopupUrl(frameUrl)
                   break
                 }
@@ -1495,36 +1511,44 @@ export class CartService {
 
         newWindow.on('closed', async () => {
           clearInterval(popupCheck)
+          lt.dispose()
           await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth)
         })
       })
 
       let resolved = false
+      const doResolve = (result: AddToCartResult | null) => {
+        if (resolved) return
+        resolved = true
+        clearTimeout(timeout)
+        lt.dispose()
+        resolve(result)
+      }
       let sameUrlCount = 0
       let rebuyRetryCount = 0
       const MAX_REBUY_RETRIES = 3
       const timeout = setTimeout(() => {
         if (!resolved) {
-          resolved = true
+          doResolve(null)
           this.windowManager.closeShopWindow(async () => { await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth) })
           this.emitStatus('操作超时')
-          resolve(null)
         }
-      }, 1800000)
+      }, TIMEOUTS.OPERATION)
 
       const tryClickRebuy = async () => {
         const sw = this.windowManager.getShopWindow()
         if (resolved || this.isDestroyed() || !sw || sw.isDestroyed()) return
         try {
-          const cartTargets = cartOnly ? ['加入购物车', '加购'] : []
-          const rebuyTargets = ['再买一单', '再次购买', '再来一单', '重新购买', '去购买', '立即购买', '再次下单', '追加购买']
+          const cartTargets = cartOnly ? [...KEYWORDS.CART_BUTTONS] : []
+          const rebuyTargets = [...KEYWORDS.REBUY_BUTTONS]
           const allTargets = [...cartTargets, ...rebuyTargets]
 
           const mainResult = await execJS(sw, `
             (function() {
               var allTargets = ${JSON.stringify(allTargets)};
               var cartTargets = ${JSON.stringify(cartTargets)};
-              var found = _hs.findVisible(['button', 'a', '[class*="btn"]', '[class*="Button"]', '[role="button"]', '[class*="action"]', '[class*="submit"]'], allTargets);
+              var selectors = ['button', 'a', '[class*="btn"]', '[class*="Button"]', '[role="button"]', '[class*="action"]', '[class*="submit"]', '[class*="rebuy"]', '[class*="Rebuy"]', '[class*="buy-again"]', '[class*="BuyAgain"]', '[data-spm*="rebuy"]', '[data-spm*="buy"]', 'span[class*="click"]', 'div[class*="click"]'];
+              var found = _hs.findVisible(selectors, allTargets);
               var bestMatch = null;
               var bestCartMatch = null;
               var debugMatches = [];
@@ -1540,6 +1564,40 @@ export class CartService {
                 }
                 if (debugMatches.length < 5) {
                   debugMatches.push({ tag: item.el.tagName, text: item.text.substring(0, 40), w: Math.round(item.rect.width), h: Math.round(item.rect.height) });
+                }
+              }
+              if (!bestMatch) {
+                var broadFound = _hs.findByText(allTargets, 20);
+                for (var bi = 0; bi < broadFound.length; bi++) {
+                  var bItem = broadFound[bi];
+                  var bNormalized = bItem.text.replace(/\\s+/g, '');
+                  var bIsCart = cartTargets.some(function(t) { return bNormalized.includes(t); });
+                  if (bIsCart && (!bestCartMatch || bItem.area < bestCartMatch.area)) {
+                    bestCartMatch = { el: bItem.el, area: bItem.area, text: bItem.text.substring(0, 30) };
+                  }
+                  if (!bestMatch || bItem.area < bestMatch.area) {
+                    bestMatch = { el: bItem.el, area: bItem.area, text: bItem.text.substring(0, 30) };
+                  }
+                  if (debugMatches.length < 5) {
+                    debugMatches.push({ tag: bItem.el.tagName, text: bItem.text.substring(0, 40), w: Math.round(bItem.rect.width), h: Math.round(bItem.rect.height), method: 'findByText' });
+                  }
+                }
+              }
+              if (!bestMatch) {
+                var shadowFound = _hs.findInShadowDOM(selectors, allTargets);
+                for (var si = 0; si < shadowFound.length; si++) {
+                  var sItem = shadowFound[si];
+                  var sNormalized = sItem.text.replace(/\\s+/g, '');
+                  var sIsCart = cartTargets.some(function(t) { return sNormalized.includes(t); });
+                  if (sIsCart && (!bestCartMatch || sItem.area < bestCartMatch.area)) {
+                    bestCartMatch = { el: sItem.el, area: sItem.area, text: sItem.text.substring(0, 30) };
+                  }
+                  if (!bestMatch || sItem.area < bestMatch.area) {
+                    bestMatch = { el: sItem.el, area: sItem.area, text: sItem.text.substring(0, 30) };
+                  }
+                  if (debugMatches.length < 5) {
+                    debugMatches.push({ tag: sItem.el.tagName, text: sItem.text.substring(0, 40), w: Math.round(sItem.rect.width), h: Math.round(sItem.rect.height), method: 'shadowDOM' });
+                  }
                 }
               }
               var chosen = bestCartMatch || bestMatch;
@@ -1560,8 +1618,8 @@ export class CartService {
 
               const cartResultDetected = await sw.webContents.executeJavaScript(`
                 (function() {
-                  var successHints = ['已加入购物车', '添加成功', '成功加入', '加入成功', '已添加至购物车'];
-                  var errorHints = ['不能购买', '无法购买', '已下架', '已失效', '已售罄', '宝贝不存在', '商品不存在', '已卖完', '缺货', '不能买了', '无法加购', '加购失败', '添加失败', '操作失败'];
+                  var successHints = ${JSON.stringify(KEYWORDS.CART_SUCCESS)};
+                  var errorHints = ${JSON.stringify(KEYWORDS.CART_ERROR)};
                   var toastSelectors = '[class*="toast"], [class*="Toast"], [class*="message"], [class*="Message"], [class*="notice"], [class*="Notice"], [class*="success"], [class*="Success"], [class*="dialog"], [class*="Dialog"], [class*="error"], [class*="Error"], [class*="warning"], [class*="Warning"], [class*="popup"], [class*="Popup"], [class*="layer"], [class*="Layer"]';
                   var toastEls = document.querySelectorAll(toastSelectors);
                   for (var k = 0; k < toastEls.length; k++) {
@@ -1625,7 +1683,8 @@ export class CartService {
                 (function() {
                   var allTargets = ${JSON.stringify(allTargets)};
                   var cartTargets = ${JSON.stringify(cartTargets)};
-                  var found = _hs.findVisible(['button', 'a', '[class*="btn"]', '[class*="Button"]', '[role="button"]', '[class*="action"]', '[class*="submit"]'], allTargets);
+                  var selectors = ['button', 'a', '[class*="btn"]', '[class*="Button"]', '[role="button"]', '[class*="action"]', '[class*="submit"]', '[class*="rebuy"]', '[class*="Rebuy"]', '[class*="buy-again"]', '[class*="BuyAgain"]', '[data-spm*="rebuy"]', '[data-spm*="buy"]', 'span[class*="click"]', 'div[class*="click"]'];
+                  var found = _hs.findVisible(selectors, allTargets);
                   var bestMatch = null;
                   var bestCartMatch = null;
                   var debugMatches = [];
@@ -1641,6 +1700,40 @@ export class CartService {
                     }
                     if (debugMatches.length < 5) {
                       debugMatches.push({ tag: item.el.tagName, text: item.text.substring(0, 40), w: Math.round(item.rect.width), h: Math.round(item.rect.height) });
+                    }
+                  }
+                  if (!bestMatch) {
+                    var broadFound = _hs.findByText(allTargets, 20);
+                    for (var bi = 0; bi < broadFound.length; bi++) {
+                      var bItem = broadFound[bi];
+                      var bNormalized = bItem.text.replace(/\\s+/g, '');
+                      var bIsCart = cartTargets.some(function(t) { return bNormalized.includes(t); });
+                      if (bIsCart && (!bestCartMatch || bItem.area < bestCartMatch.area)) {
+                        bestCartMatch = { el: bItem.el, area: bItem.area, text: bItem.text.substring(0, 30) };
+                      }
+                      if (!bestMatch || bItem.area < bestMatch.area) {
+                        bestMatch = { el: bItem.el, area: bItem.area, text: bItem.text.substring(0, 30) };
+                      }
+                      if (debugMatches.length < 5) {
+                        debugMatches.push({ tag: bItem.el.tagName, text: bItem.text.substring(0, 40), w: Math.round(bItem.rect.width), h: Math.round(bItem.rect.height), method: 'findByText' });
+                      }
+                    }
+                  }
+                  if (!bestMatch) {
+                    var shadowFound = _hs.findInShadowDOM(selectors, allTargets);
+                    for (var si = 0; si < shadowFound.length; si++) {
+                      var sItem = shadowFound[si];
+                      var sNormalized = sItem.text.replace(/\\s+/g, '');
+                      var sIsCart = cartTargets.some(function(t) { return sNormalized.includes(t); });
+                      if (sIsCart && (!bestCartMatch || sItem.area < bestCartMatch.area)) {
+                        bestCartMatch = { el: sItem.el, area: sItem.area, text: sItem.text.substring(0, 30) };
+                      }
+                      if (!bestMatch || sItem.area < bestMatch.area) {
+                        bestMatch = { el: sItem.el, area: sItem.area, text: sItem.text.substring(0, 30) };
+                      }
+                      if (debugMatches.length < 5) {
+                        debugMatches.push({ tag: sItem.el.tagName, text: sItem.text.substring(0, 40), w: Math.round(sItem.rect.width), h: Math.round(sItem.rect.height), method: 'shadowDOM' });
+                      }
                     }
                   }
                   var chosen = bestCartMatch || bestMatch;
@@ -1660,8 +1753,8 @@ export class CartService {
 
                   const frameCartResult = await sw.webContents.executeJavaScript(`
                     (function() {
-                      var successHints = ['已加入购物车', '添加成功', '成功加入', '加入成功', '已添加至购物车'];
-                      var errorHints = ['不能购买', '无法购买', '已下架', '已失效', '已售罄', '宝贝不存在', '商品不存在', '已卖完', '缺货', '不能买了', '无法加购', '加购失败', '添加失败', '操作失败'];
+                      var successHints = ${JSON.stringify(KEYWORDS.CART_SUCCESS)};
+                      var errorHints = ${JSON.stringify(KEYWORDS.CART_ERROR)};
                       var toastSelectors = '[class*="toast"], [class*="Toast"], [class*="message"], [class*="Message"], [class*="notice"], [class*="Notice"], [class*="success"], [class*="Success"], [class*="dialog"], [class*="Dialog"], [class*="error"], [class*="Error"], [class*="warning"], [class*="Warning"], [class*="popup"], [class*="Popup"], [class*="layer"], [class*="Layer"]';
                       var toastEls = document.querySelectorAll(toastSelectors);
                       for (var k = 0; k < toastEls.length; k++) {
@@ -1712,7 +1805,7 @@ export class CartService {
                 }
                 return
               }
-            } catch (e) {
+            } catch (e: unknown) {
               debugLog(`[Taobao] Frame search error: ${e}`)
             }
           }
@@ -1723,7 +1816,7 @@ export class CartService {
           this.windowManager.closeShopWindow(async () => { await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth) })
           this.emitStatus('未找到再买一单入口')
           resolve({ success: false, error: '未找到再买一单入口' })
-        } catch (e) {
+        } catch (e: unknown) {
           debugLog(`[Taobao] Hidden window rebuy click error: ${e}`)
           resolved = true
           clearTimeout(timeout)
@@ -1736,7 +1829,7 @@ export class CartService {
       let loginRetryCount = 0
 
       const currentSw = this.windowManager.getShopWindow()!
-      currentSw.webContents.on('did-finish-load', async () => {
+      lt.on(currentSw.webContents, 'did-finish-load', async () => {
         if (resolved) return
         const sw = this.windowManager.getShopWindow()
         const url = sw?.webContents.getURL()
@@ -1756,7 +1849,7 @@ export class CartService {
             })()
           `).catch(() => {})
           sw?.restore()
-          sw?.setSize(1100, 800)
+          sw?.setSize(WINDOW_SIZES.CONFIRMATION.width, WINDOW_SIZES.CONFIRMATION.height)
           sw?.setTitle('淘宝安全验证')
           injectOverlayBanner(sw!, '🔐 自动购物助手：淘宝要求安全验证，请拖动滑块完成验证')
           injectCenterToast(sw!, "请拖动滑块完成验证")
@@ -1798,7 +1891,7 @@ export class CartService {
           return
         }
 
-        const directToPay = isCheckoutOrPayPage(url) || url.includes('buy.tmall.com') || url.includes('buy.taobao.com')
+        const directToPay = isBuyPage(url)
         if (directToPay) {
           resolved = true
           clearTimeout(timeout)
@@ -1815,7 +1908,7 @@ export class CartService {
           return
         }
 
-        if (url.includes('cart.taobao.com')) {
+        if (isCartPage(url)) {
           resolved = true
           clearTimeout(timeout)
           clearInterval(checkInterval)
@@ -1825,7 +1918,7 @@ export class CartService {
           return
         }
 
-        if (url.includes('tradearchive.taobao.com')) {
+        if (isOrderArchivePage(url)) {
           debugLog(`[Taobao] tradearchive page detected, no rebuy button available`)
           resolved = true
           clearTimeout(timeout)
@@ -1836,10 +1929,10 @@ export class CartService {
           return
         }
 
-        if (url.includes('detail.tmall.com') || url.includes('item.taobao.com') || url.includes('detail.1688.com')) {
+        if (isProductDetailPage(url)) {
           debugLog(`[Taobao] Product detail page detected after rebuy click, showing to user`)
           this.emitStatus('再买一单后跳转到商品详情页，请在弹出的窗口中选择规格并购买')
-          sw!.setSize(1100, 800)
+          sw!.setSize(WINDOW_SIZES.CONFIRMATION.width, WINDOW_SIZES.CONFIRMATION.height)
           sw!.setTitle('请选择规格并购买')
           const mw = this.windowManager.getMainWindow()
           if (mw) sw!.setParentWindow(mw)
@@ -1863,7 +1956,7 @@ export class CartService {
           }
           let afterUrl = ''
           try { afterUrl = sw!.webContents.getURL() } catch { /* window destroyed */ }
-          if (isCheckoutOrPayPage(afterUrl) || afterUrl.includes('buy.tmall.com') || afterUrl.includes('buy.taobao.com')) {
+          if (isBuyPage(afterUrl)) {
             resolved = true
             clearTimeout(timeout)
             clearInterval(checkInterval)
@@ -1872,7 +1965,7 @@ export class CartService {
             resolve({ success: true, directToPay: true })
             return
           }
-          if (afterUrl.includes('cart.taobao.com')) {
+          if (isCartPage(afterUrl)) {
             resolved = true
             clearTimeout(timeout)
             clearInterval(checkInterval)
@@ -1890,9 +1983,14 @@ export class CartService {
           return
         }
 
+        const btnSearchSelectors = ['button', 'a', '[class*="btn"]', '[class*="Button"]', '[role="button"]', '[class*="action"]', '[class*="submit"]', '[class*="rebuy"]', '[class*="Rebuy"]', '[class*="buy-again"]', '[class*="BuyAgain"]', '[data-spm*="rebuy"]', '[data-spm*="buy"]', 'span[class*="click"]', 'div[class*="click"]']
         let rebuyBtnFound = false
-        const btnSearchTargets = cartOnly ? ['加入购物车', '加购', '再买一单', '再次购买', '再来一单', '重新购买', '去购买', '立即购买', '再次下单', '追加购买'] : ['再买一单', '再次购买', '再来一单', '重新购买', '去购买', '立即购买', '再次下单', '追加购买']
-        for (let retry = 0; retry < 10 && !this.isDestroyed(); retry++) {
+        const btnSearchTargets = cartOnly ? [...KEYWORDS.CART_BUTTONS, ...KEYWORDS.REBUY_BUTTONS] : [...KEYWORDS.REBUY_BUTTONS]
+        const MAX_RETRIES = 10
+        const RETRY_DELAYS = [500, 500, 500, 1000, 1000, 1000, 2000, 2000, 2000, 2000]
+        let prevBodyLen = 0
+        let stableCount = 0
+        for (let retry = 0; retry < MAX_RETRIES && !this.isDestroyed(); retry++) {
           try {
             if (retry === 0) {
               const pageDiag = await execJS(sw, `
@@ -1906,7 +2004,12 @@ export class CartService {
                       allTexts.push(foundEls[fi].el.tagName + ':' + t);
                     }
                   }
-                  return { url: location.href, bodyLen: bodyText.length, bodyPreview: bodyText.substring(0, 500), visibleTexts: allTexts.join('|') };
+                  var broadResults = _hs.findByText(${JSON.stringify(btnSearchTargets)}, 20);
+                  var broadTexts = [];
+                  for (var bi = 0; bi < broadResults.length; bi++) {
+                    broadTexts.push(broadResults[bi].el.tagName + ':' + broadResults[bi].text.substring(0, 30));
+                  }
+                  return { url: location.href, bodyLen: bodyText.length, bodyPreview: bodyText.substring(0, 500), visibleTexts: allTexts.join('|'), broadMatchTexts: broadTexts.join('|') };
                 })()
               `)
               debugLog(`[Taobao] PAGE DIAG: ${JSON.stringify(pageDiag)}`)
@@ -1914,16 +2017,38 @@ export class CartService {
             const mainHasBtn = await execJS(sw, `
               (function() {
                 var targets = ${JSON.stringify(btnSearchTargets)};
-                var found = _hs.findVisible(['button', 'a', '[class*="btn"]', '[class*="Button"]', '[role="button"]', '[class*="action"]', '[class*="submit"]'], targets);
+                var found = _hs.findVisible(${JSON.stringify(btnSearchSelectors)}, targets);
                 var foundItems = [];
                 for (var fi = 0; fi < found.length; fi++) {
                   foundItems.push({ tag: found[fi].el.tagName, text: found[fi].text.substring(0, 40), w: Math.round(found[fi].rect.width), h: Math.round(found[fi].rect.height) });
                 }
-                return { found: found.length > 0, matches: foundItems };
+                if (found.length > 0) return { found: true, matches: foundItems, method: 'selector', bodyLen: (document.body?.innerText || '').length };
+                var broadFound = _hs.findByText(targets, 20);
+                for (var bi = 0; bi < broadFound.length; bi++) {
+                  foundItems.push({ tag: broadFound[bi].el.tagName, text: broadFound[bi].text.substring(0, 40), w: Math.round(broadFound[bi].rect.width), h: Math.round(broadFound[bi].rect.height) });
+                }
+                if (broadFound.length > 0) return { found: true, matches: foundItems, method: 'findByText', bodyLen: (document.body?.innerText || '').length };
+                var shadowFound = _hs.findInShadowDOM(${JSON.stringify(btnSearchSelectors)}, targets);
+                for (var si = 0; si < shadowFound.length; si++) {
+                  foundItems.push({ tag: shadowFound[si].el.tagName, text: shadowFound[si].text.substring(0, 40), w: Math.round(shadowFound[si].rect.width), h: Math.round(shadowFound[si].rect.height) });
+                }
+                if (shadowFound.length > 0) return { found: true, matches: foundItems, method: 'shadowDOM', bodyLen: (document.body?.innerText || '').length };
+                return { found: false, matches: foundItems, bodyLen: (document.body?.innerText || '').length };
               })()
             `)
             debugLog(`[Taobao] rebuyBtnFound retry ${retry} main: ${JSON.stringify(mainHasBtn)}`)
             if (mainHasBtn?.found) { rebuyBtnFound = true; break }
+            const currentBodyLen = mainHasBtn?.bodyLen || 0
+            if (retry >= 2 && currentBodyLen > 0 && currentBodyLen === prevBodyLen) {
+              stableCount++
+              if (stableCount >= 3) {
+                debugLog(`[Taobao] Page content stable for 3 consecutive checks (bodyLen=${currentBodyLen}), stopping early`)
+                break
+              }
+            } else {
+              stableCount = 0
+            }
+            prevBodyLen = currentBodyLen
             const frames = sw!.webContents.mainFrame.framesInSubtree
             for (const frame of frames) {
               if (frame === sw!.webContents.mainFrame) continue
@@ -1934,33 +2059,54 @@ export class CartService {
                 const fHasBtn = await frame.executeJavaScript(`
                   (function() {
                     var targets = ${JSON.stringify(btnSearchTargets)};
-                    var found = _hs.findVisible(['button', 'a', '[class*="btn"]', '[class*="Button"]', '[role="button"]', '[class*="action"]', '[class*="submit"]'], targets);
+                    var found = _hs.findVisible(${JSON.stringify(btnSearchSelectors)}, targets);
                     var foundItems = [];
                     for (var fi = 0; fi < found.length; fi++) {
                       foundItems.push({ tag: found[fi].el.tagName, text: found[fi].text.substring(0, 40), w: Math.round(found[fi].rect.width), h: Math.round(found[fi].rect.height) });
                     }
-                    return { found: found.length > 0, matches: foundItems };
+                    if (found.length > 0) return { found: true, matches: foundItems, method: 'selector' };
+                    var broadFound = _hs.findByText(targets, 20);
+                    for (var bi = 0; bi < broadFound.length; bi++) {
+                      foundItems.push({ tag: broadFound[bi].el.tagName, text: broadFound[bi].text.substring(0, 40), w: Math.round(broadFound[bi].rect.width), h: Math.round(broadFound[bi].rect.height) });
+                    }
+                    if (broadFound.length > 0) return { found: true, matches: foundItems, method: 'findByText' };
+                    var shadowFound = _hs.findInShadowDOM(${JSON.stringify(btnSearchSelectors)}, targets);
+                    for (var si = 0; si < shadowFound.length; si++) {
+                      foundItems.push({ tag: shadowFound[si].el.tagName, text: shadowFound[si].text.substring(0, 40), w: Math.round(shadowFound[si].rect.width), h: Math.round(shadowFound[si].rect.height) });
+                    }
+                    if (shadowFound.length > 0) return { found: true, matches: foundItems, method: 'shadowDOM' };
+                    return { found: false, matches: foundItems };
                   })()
                 `)
                 debugLog(`[Taobao] rebuyBtnFound frame ${fUrl.substring(0, 60)}: ${JSON.stringify(fHasBtn)}`)
                 if (fHasBtn?.found) { rebuyBtnFound = true; break }
-              } catch (e) {
+              } catch (e: unknown) {
                 debugLog(`[Taobao] rebuyBtnFound frame error: ${e}`)
               }
             }
-          } catch (e) {
+          } catch (e: unknown) {
             debugLog(`[Taobao] rebuyBtnFound retry ${retry} error: ${e}`)
           }
           if (rebuyBtnFound) break
-          await humanDelay(1000)
+          if (retry === 1 || retry === 4 || retry === 7) {
+            try {
+              await sw?.webContents.executeJavaScript(`window.scrollTo(0, document.body.scrollHeight);`).catch(() => {})
+              await humanDelay(300)
+              await sw?.webContents.executeJavaScript(`window.scrollTo(0, 0);`).catch(() => {})
+              await humanDelay(300)
+            } catch { /* ignore */ }
+          }
+          const delay = RETRY_DELAYS[retry] || 2000
+          await humanDelay(delay)
         }
 
         if (!rebuyBtnFound) {
+          debugLog(`[Taobao] Rebuy button not found after 20 retries, skipping to search fallback`)
+          this.emitStatus('未找到再买一单按钮，将搜索替代商品...')
           resolved = true
           clearTimeout(timeout)
           clearInterval(checkInterval)
-          this.windowManager.closeShopWindow(async () => { await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth) })
-          this.emitStatus('未找到再买一单入口')
+          if (!sw!.isDestroyed()) this.windowManager.closeShopWindow(async () => { await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth) })
           resolve({ success: false, error: '未找到再买一单入口' })
           return
         }
@@ -1970,7 +2116,7 @@ export class CartService {
           const mainOffShelf = await execJS(sw, `
             (function() {
               var bodyText = (document.body?.innerText || '');
-              var offShelfKeywords = ['已下架', '商品已下架', '宝贝不存在', '商品不存在', '已失效', '商品已失效', '已卖完', '暂时缺货', '该商品已下架', '商品已售罄', '此商品已下架', '页面不存在', '无法购买'];
+              var offShelfKeywords = ${JSON.stringify(KEYWORDS.OFF_SHELF)};
               var matchedKeyword = '';
               for (var i = 0; i < offShelfKeywords.length; i++) {
                 if (bodyText.includes(offShelfKeywords[i])) {
@@ -1979,7 +2125,7 @@ export class CartService {
                 }
               }
               if (!matchedKeyword) return { offShelf: false, keyword: '' };
-              var buyFound = _hs.findVisible(['button', 'a', '[class*="btn"]', '[class*="Button"]', '[role="button"]', '[class*="action"]', '[class*="submit"]'], ['领券购买', '立即购买', '加入购物车', '马上抢', '立刻购买', '加购', '去购买']);
+              var buyFound = _hs.findVisible(['button', 'a', '[class*="btn"]', '[class*="Button"]', '[role="button"]', '[class*="action"]', '[class*="submit"]'], ${JSON.stringify(KEYWORDS.BUY_BUTTONS)});
               if (buyFound.length > 0) return { offShelf: false, keyword: '' };
               return { offShelf: true, keyword: matchedKeyword };
             })()
@@ -1997,7 +2143,7 @@ export class CartService {
                 const fOffShelf = await frame.executeJavaScript(`
                   (function() {
                     var bodyText = (document.body?.innerText || '');
-                    var offShelfKeywords = ['已下架', '商品已下架', '宝贝不存在', '商品不存在', '已失效', '商品已失效', '已卖完', '暂时缺货', '该商品已下架', '商品已售罄', '此商品已下架', '页面不存在', '无法购买'];
+                    var offShelfKeywords = ${JSON.stringify(KEYWORDS.OFF_SHELF)};
                     var matchedKeyword = '';
                     for (var i = 0; i < offShelfKeywords.length; i++) {
                       if (bodyText.includes(offShelfKeywords[i])) {
@@ -2006,7 +2152,7 @@ export class CartService {
                       }
                     }
                     if (!matchedKeyword) return { offShelf: false, keyword: '' };
-                    var buyFound = _hs.findVisible(['button', 'a', '[class*="btn"]', '[class*="Button"]', '[role="button"]', '[class*="action"]', '[class*="submit"]'], ['领券购买', '立即购买', '加入购物车', '马上抢', '立刻购买', '加购', '去购买']);
+                    var buyFound = _hs.findVisible(['button', 'a', '[class*="btn"]', '[class*="Button"]', '[role="button"]', '[class*="action"]', '[class*="submit"]'], ${JSON.stringify(KEYWORDS.BUY_BUTTONS)});
                     if (buyFound.length > 0) return { offShelf: false, keyword: '' };
                     return { offShelf: true, keyword: matchedKeyword };
                   })()
@@ -2015,7 +2161,7 @@ export class CartService {
               } catch { /* ignore */ }
             }
           }
-          if (url.includes('trade.tmall.com') || url.includes('trade.taobao.com') || url.includes('buyertrade.taobao.com')) {
+          if (isOrderDetailPage(url)) {
             sameUrlCount++
             if (sameUrlCount >= 15) {
               rebuyRetryCount++
@@ -2051,7 +2197,7 @@ export class CartService {
         await tryClickRebuy()
       })
 
-      currentSw.webContents.on('did-navigate', async (_event, navUrl: string) => {
+      lt.on(currentSw.webContents, 'did-navigate', async (_event, navUrl: string) => {
         if (resolved) return
         debugLog(`[Taobao] Hidden window navigated: ${navUrl}`)
         await humanDelay(1500)
@@ -2059,7 +2205,7 @@ export class CartService {
         if (!sw || sw.isDestroyed()) return
         const url = sw.webContents.getURL()
 
-        if (isCheckoutOrPayPage(url) || url.includes('buy.tmall.com') || url.includes('buy.taobao.com')) {
+        if (isBuyPage(url)) {
           resolved = true
           clearTimeout(timeout)
           clearInterval(checkInterval)
@@ -2075,7 +2221,7 @@ export class CartService {
           return
         }
 
-        if (url.includes('cart.taobao.com')) {
+        if (isCartPage(url)) {
           resolved = true
           clearTimeout(timeout)
           clearInterval(checkInterval)
@@ -2085,10 +2231,10 @@ export class CartService {
           return
         }
 
-        if (url.includes('detail.tmall.com') || url.includes('item.taobao.com') || url.includes('detail.1688.com')) {
+        if (isProductDetailPage(url)) {
           debugLog(`[Taobao] did-navigate: Product detail page detected, showing to user`)
           this.emitStatus('再买一单后跳转到商品详情页，请在弹出的窗口中选择规格并购买')
-          sw.setSize(1100, 800)
+          sw.setSize(WINDOW_SIZES.CONFIRMATION.width, WINDOW_SIZES.CONFIRMATION.height)
           sw.setTitle('请选择规格并购买')
           const mw = this.windowManager.getMainWindow()
           if (mw) sw.setParentWindow(mw)
@@ -2112,7 +2258,7 @@ export class CartService {
           }
           let afterUrl = ''
           try { afterUrl = sw.webContents.getURL() } catch { /* window destroyed */ }
-          if (isCheckoutOrPayPage(afterUrl) || afterUrl.includes('buy.tmall.com') || afterUrl.includes('buy.taobao.com')) {
+          if (isBuyPage(afterUrl)) {
             resolved = true
             clearTimeout(timeout)
             clearInterval(checkInterval)
@@ -2121,7 +2267,7 @@ export class CartService {
             resolve({ success: true, directToPay: true })
             return
           }
-          if (afterUrl.includes('cart.taobao.com')) {
+          if (isCartPage(afterUrl)) {
             resolved = true
             clearTimeout(timeout)
             clearInterval(checkInterval)
@@ -2139,7 +2285,7 @@ export class CartService {
           return
         }
 
-        if (url.includes('tradearchive.taobao.com')) {
+        if (isOrderArchivePage(url)) {
           debugLog(`[Taobao] did-navigate: tradearchive page detected, no rebuy button available`)
           resolved = true
           clearTimeout(timeout)
@@ -2171,18 +2317,193 @@ export class CartService {
         }
       })
 
+      lt.on(currentSw.webContents, 'did-navigate-in-page', async (_event, navUrl: string) => {
+        if (resolved) return
+        debugLog(`[Taobao] Hidden window in-page navigation: ${navUrl}`)
+        const sw = this.windowManager.getShopWindow()
+        if (!sw || sw.isDestroyed()) return
+
+        if (isBuyPage(navUrl)) {
+          resolved = true
+          clearTimeout(timeout)
+          clearInterval(checkInterval)
+          await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth)
+          if (cartOnly) {
+            this.windowManager.closeShopWindow()
+            this.emitStatus('该商品不支持加入购物车，点击后直接进入了结算页面')
+            resolve({ success: false, error: '该商品不支持加入购物车，点击后直接进入了结算页面' })
+          } else {
+            this.emitStatus('已进入结算页面')
+            resolve({ success: true, directToPay: true })
+          }
+          return
+        }
+
+        if (isCartPage(navUrl)) {
+          resolved = true
+          clearTimeout(timeout)
+          clearInterval(checkInterval)
+          await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth)
+          this.emitStatus('已加入购物车')
+          resolve({ success: true, directToPay: false })
+          return
+        }
+
+        if (isProductDetailPage(navUrl)) {
+          debugLog(`[Taobao] did-navigate-in-page: Product detail page detected, showing to user`)
+          this.emitStatus('再买一单后跳转到商品详情页，请在弹出的窗口中选择规格并购买')
+          sw.setSize(WINDOW_SIZES.CONFIRMATION.width, WINDOW_SIZES.CONFIRMATION.height)
+          sw.setTitle('请选择规格并购买')
+          const mw = this.windowManager.getMainWindow()
+          if (mw) sw.setParentWindow(mw)
+          injectOverlayBanner(sw, '🛒 自动购物助手：请选择规格并点击"立即购买"或"加入购物车"')
+          injectCenterToast(sw, '请选择规格并购买')
+          sw.show()
+          const confirmed = await this.interactionService.waitForUserConfirmation(
+            sw,
+            '已进入商品详情页，请在弹出的窗口中选择规格并购买，完成后点击"已完成"',
+            '选择规格并购买',
+            '🛒 请选择规格并购买',
+            'add-to-cart',
+          )
+          if (!confirmed || sw.isDestroyed()) {
+            resolved = true
+            clearTimeout(timeout)
+            clearInterval(checkInterval)
+            if (!sw.isDestroyed()) this.windowManager.closeShopWindow(async () => { await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth) })
+            resolve({ success: false, error: '用户取消了购买' })
+            return
+          }
+          let afterUrl = ''
+          try { afterUrl = sw.webContents.getURL() } catch { /* window destroyed */ }
+          resolved = true
+          clearTimeout(timeout)
+          clearInterval(checkInterval)
+          await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth)
+          if (isBuyPage(afterUrl)) {
+            this.emitStatus('已进入结算页面')
+            resolve({ success: true, directToPay: true })
+          } else if (isCartPage(afterUrl)) {
+            this.emitStatus('已加入购物车')
+            resolve({ success: true, directToPay: false })
+          } else {
+            this.emitStatus('已加入购物车')
+            resolve({ success: true, directToPay: false })
+          }
+          return
+        }
+      })
+
+      lt.on(currentSw.webContents, 'frame-navigated', async (_event) => {
+        if (resolved) return
+        const sw = this.windowManager.getShopWindow()
+        if (!sw || sw.isDestroyed()) return
+        const frames = sw.webContents.mainFrame.framesInSubtree
+        for (const frame of frames) {
+          if (frame === sw.webContents.mainFrame) continue
+          const frameUrl = frame.url
+          if (isBuyPage(frameUrl)) {
+            debugLog(`[Taobao] frame-navigated: Buy page detected in iframe: ${frameUrl}`)
+            resolved = true
+            clearTimeout(timeout)
+            clearInterval(checkInterval)
+            await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth)
+            if (cartOnly) {
+              this.windowManager.closeShopWindow()
+              this.emitStatus('该商品不支持加入购物车，点击后直接进入了结算页面')
+              resolve({ success: false, error: '该商品不支持加入购物车，点击后直接进入了结算页面' })
+            } else {
+              this.emitStatus('已进入结算页面')
+              resolve({ success: true, directToPay: true })
+            }
+            return
+          }
+          if (isCartPage(frameUrl)) {
+            debugLog(`[Taobao] frame-navigated: Cart page detected in iframe: ${frameUrl}`)
+            resolved = true
+            clearTimeout(timeout)
+            clearInterval(checkInterval)
+            await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth)
+            this.emitStatus('已加入购物车')
+            resolve({ success: true, directToPay: false })
+            return
+          }
+          if (isProductDetailPage(frameUrl)) {
+            debugLog(`[Taobao] frame-navigated: Product detail page detected in iframe: ${frameUrl}`)
+            resolved = true
+            clearTimeout(timeout)
+            clearInterval(checkInterval)
+            sw.setSize(WINDOW_SIZES.CONFIRMATION.width, WINDOW_SIZES.CONFIRMATION.height)
+            sw.setTitle('请选择规格并购买')
+            const mw = this.windowManager.getMainWindow()
+            if (mw) sw.setParentWindow(mw)
+            injectOverlayBanner(sw, '🛒 自动购物助手：请选择规格并点击"立即购买"或"加入购物车"')
+            injectCenterToast(sw, '请选择规格并购买')
+            sw.show()
+            this.emitStatus('再买一单后跳转到商品详情页，请在弹出的窗口中选择规格并购买')
+            const confirmed = await this.interactionService.waitForUserConfirmation(
+              sw,
+              '已进入商品详情页，请在弹出的窗口中选择规格并购买，完成后点击"已完成"',
+              '选择规格并购买',
+              '🛒 请选择规格并购买',
+              'add-to-cart',
+            )
+            if (!confirmed || sw.isDestroyed()) {
+              if (!sw.isDestroyed()) this.windowManager.closeShopWindow(async () => { await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth) })
+              resolve({ success: false, error: '用户取消了购买' })
+            } else {
+              let afterUrl = ''
+              try { afterUrl = sw.webContents.getURL() } catch { /* window destroyed */ }
+              resolved = true
+              clearTimeout(timeout)
+              clearInterval(checkInterval)
+              await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth)
+              if (isBuyPage(afterUrl)) {
+                this.emitStatus('已进入结算页面')
+                resolve({ success: true, directToPay: true })
+              } else if (isCartPage(afterUrl)) {
+                this.emitStatus('已加入购物车')
+                resolve({ success: true, directToPay: false })
+              } else {
+                this.emitStatus('已加入购物车')
+                resolve({ success: true, directToPay: false })
+              }
+            }
+            return
+          }
+        }
+      })
+
       const checkInterval = setInterval(async () => {
-        if (resolved || this.isDestroyed()) { clearInterval(checkInterval); return }
+        if (resolved) { clearInterval(checkInterval); return }
+        if (this.isDestroyed()) {
+          clearInterval(checkInterval)
+          if (!resolved) {
+            resolved = true
+            clearTimeout(timeout)
+            resolve({ success: false, error: '任务已取消' })
+          }
+          return
+        }
         try {
           const sw = this.windowManager.getShopWindow()
-          const url = sw?.webContents.getURL()
+          if (!sw || sw.isDestroyed()) {
+            clearInterval(checkInterval)
+            if (!resolved) {
+              resolved = true
+              clearTimeout(timeout)
+              resolve({ success: false, error: '操作窗口已关闭' })
+            }
+            return
+          }
+          const url = sw.webContents.getURL()
           if (!url) return
 
-          if (cartOnly && (url.includes('trade.tmall.com') || url.includes('trade.taobao.com') || url.includes('orderDetail'))) {
+          if (cartOnly && (isOrderDetailPage(url) || url.includes('orderDetail'))) {
             const intervalCartResult = await sw?.webContents.executeJavaScript(`
               (function() {
-                var successHints = ['已加入购物车', '添加成功', '成功加入', '加入成功', '已添加至购物车'];
-                var errorHints = ['不能购买', '无法购买', '已下架', '已失效', '已售罄', '宝贝不存在', '商品不存在', '已卖完', '缺货', '不能买了', '无法加购', '加购失败', '添加失败', '操作失败'];
+                var successHints = ${JSON.stringify(KEYWORDS.CART_SUCCESS)};
+                var errorHints = ${JSON.stringify(KEYWORDS.CART_ERROR)};
                 var toastSelectors = '[class*="toast"], [class*="Toast"], [class*="message"], [class*="Message"], [class*="notice"], [class*="Notice"], [class*="success"], [class*="Success"], [class*="dialog"], [class*="Dialog"], [class*="error"], [class*="Error"], [class*="warning"], [class*="Warning"], [class*="popup"], [class*="Popup"], [class*="layer"], [class*="Layer"], [class*="modal"], [class*="Modal"]';
                 var toastEls = document.querySelectorAll(toastSelectors);
                 for (var k = 0; k < toastEls.length; k++) {
@@ -2227,7 +2548,108 @@ export class CartService {
             }
           }
 
-          if (isCheckoutOrPayPage(url) || url.includes('buy.tmall.com') || url.includes('buy.taobao.com')) {
+          if (isOrderDetailPage(url) || url.includes('orderDetail')) {
+            const frames = sw!.webContents.mainFrame.framesInSubtree
+            let iframeNavigated = false
+            for (const frame of frames) {
+              if (frame === sw!.webContents.mainFrame) continue
+              const frameUrl = frame.url
+              if (isBuyPage(frameUrl)) {
+                debugLog(`[Taobao] checkInterval: Buy page detected in iframe: ${frameUrl}`)
+                resolved = true
+                clearTimeout(timeout)
+                clearInterval(checkInterval)
+                await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth)
+                if (cartOnly) {
+                  this.windowManager.closeShopWindow()
+                  this.emitStatus('该商品不支持加入购物车，点击后直接进入了结算页面')
+                  resolve({ success: false, error: '该商品不支持加入购物车，点击后直接进入了结算页面' })
+                } else {
+                  this.emitStatus('已进入结算页面')
+                  resolve({ success: true, directToPay: true })
+                }
+                return
+              }
+              if (isCartPage(frameUrl)) {
+                debugLog(`[Taobao] checkInterval: Cart page detected in iframe: ${frameUrl}`)
+                resolved = true
+                clearTimeout(timeout)
+                clearInterval(checkInterval)
+                await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth)
+                this.emitStatus('已加入购物车')
+                resolve({ success: true, directToPay: false })
+                return
+              }
+              if (isProductDetailPage(frameUrl)) {
+                debugLog(`[Taobao] checkInterval: Product detail page detected in iframe: ${frameUrl}`)
+                resolved = true
+                clearTimeout(timeout)
+                clearInterval(checkInterval)
+                sw!.setSize(WINDOW_SIZES.CONFIRMATION.width, WINDOW_SIZES.CONFIRMATION.height)
+                sw!.setTitle('请选择规格并购买')
+                const mw = this.windowManager.getMainWindow()
+                if (mw) sw!.setParentWindow(mw)
+                injectOverlayBanner(sw!, '🛒 自动购物助手：请选择规格并点击"立即购买"或"加入购物车"')
+                injectCenterToast(sw!, '请选择规格并购买')
+                sw!.show()
+                this.emitStatus('再买一单后跳转到商品详情页，请在弹出的窗口中选择规格并购买')
+                const confirmed = await this.interactionService.waitForUserConfirmation(
+                  sw!,
+                  '已进入商品详情页，请在弹出的窗口中选择规格并购买，完成后点击"已完成"',
+                  '选择规格并购买',
+                  '🛒 请选择规格并购买',
+                  'add-to-cart',
+                )
+                if (!confirmed || sw!.isDestroyed()) {
+                  if (!sw!.isDestroyed()) this.windowManager.closeShopWindow(async () => { await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth) })
+                  resolve({ success: false, error: '用户取消了购买' })
+                } else {
+                  let afterUrl = ''
+                  try { afterUrl = sw!.webContents.getURL() } catch { /* window destroyed */ }
+                  if (isBuyPage(afterUrl)) {
+                    await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth)
+                    this.emitStatus('已进入结算页面')
+                    resolve({ success: true, directToPay: true })
+                  } else if (isCartPage(afterUrl)) {
+                    await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth)
+                    this.emitStatus('已加入购物车')
+                    resolve({ success: true, directToPay: false })
+                  } else {
+                    await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth)
+                    this.emitStatus('已加入购物车')
+                    resolve({ success: true, directToPay: false })
+                  }
+                }
+                return
+              }
+              if (frameUrl.includes('taobao.com') || frameUrl.includes('tmall.com')) {
+                iframeNavigated = true
+              }
+            }
+            if (!iframeNavigated) {
+              sameUrlCount++
+              if (sameUrlCount >= 15) {
+                rebuyRetryCount++
+                if (rebuyRetryCount > MAX_REBUY_RETRIES) {
+                  debugLog(`[Taobao] checkInterval: Max rebuy retries reached, giving up`)
+                  resolved = true
+                  clearTimeout(timeout)
+                  clearInterval(checkInterval)
+                  this.windowManager.closeShopWindow(async () => { await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth) })
+                  this.emitStatus('多次点击再买一单后页面未跳转，请尝试搜索购买')
+                  resolve({ success: false, error: '多次点击再买一单后页面未跳转' })
+                  return
+                }
+                debugLog(`[Taobao] checkInterval: Page still on order detail after ${sameUrlCount * 2}s, retrying rebuy click (${rebuyRetryCount}/${MAX_REBUY_RETRIES})`)
+                sameUrlCount = 0
+                tryClickRebuy()
+              }
+            } else {
+              sameUrlCount = 0
+            }
+          }
+
+          if (isBuyPage(url)) {
             resolved = true
             clearTimeout(timeout)
             clearInterval(checkInterval)
@@ -2240,18 +2662,18 @@ export class CartService {
               this.emitStatus('已进入结算页面')
               resolve({ success: true, directToPay: true })
             }
-          } else if (url.includes('cart.taobao.com')) {
+          } else if (isCartPage(url)) {
             resolved = true
             clearTimeout(timeout)
             clearInterval(checkInterval)
             await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth)
             this.emitStatus('已加入购物车')
             resolve({ success: true, directToPay: false })
-          } else if (url.includes('item.taobao.com') || url.includes('detail.tmall.com') || url.includes('detail.1688.com')) {
+          } else if (isProductDetailPage(url)) {
             const offShelfCheck = await execJS(sw, `
               (function() {
                 var bodyText = (document.body?.innerText || '');
-                var keywords = ['已下架', '商品已下架', '宝贝不存在', '商品不存在', '已失效', '商品已失效', '已卖完', '暂时缺货', '该商品已下架', '商品已售罄', '此商品已下架', '页面不存在', '无法购买'];
+                var keywords = ${JSON.stringify(KEYWORDS.OFF_SHELF)};
                 var matchedKeyword = '';
                 for (var i = 0; i < keywords.length; i++) {
                   if (bodyText.includes(keywords[i])) {
@@ -2260,7 +2682,7 @@ export class CartService {
                   }
                 }
                 if (!matchedKeyword) return '';
-                var buyFound = _hs.findVisible(['button', 'a', '[class*="btn"]', '[class*="Button"]', '[role="button"]', '[class*="action"]', '[class*="submit"]'], ['领券购买', '立即购买', '加入购物车', '马上抢', '立刻购买', '加购', '去购买']);
+                var buyFound = _hs.findVisible(['button', 'a', '[class*="btn"]', '[class*="Button"]', '[role="button"]', '[class*="action"]', '[class*="submit"]'], ${JSON.stringify(KEYWORDS.BUY_BUTTONS)});
                 if (buyFound.length > 0) return '';
                 return matchedKeyword;
               })()
@@ -2275,7 +2697,7 @@ export class CartService {
             } else {
               debugLog(`[Taobao] checkInterval: Product detail page detected, showing to user`)
               this.emitStatus('再买一单后跳转到商品详情页，请在弹出的窗口中选择规格并购买')
-              sw!.setSize(1100, 800)
+              sw!.setSize(WINDOW_SIZES.CONFIRMATION.width, WINDOW_SIZES.CONFIRMATION.height)
               sw!.setTitle('请选择规格并购买')
               const mw = this.windowManager.getMainWindow()
               if (mw) sw!.setParentWindow(mw)
@@ -2299,7 +2721,7 @@ export class CartService {
               }
               let afterUrl = ''
               try { afterUrl = sw!.webContents.getURL() } catch { /* window destroyed */ }
-              if (isCheckoutOrPayPage(afterUrl) || afterUrl.includes('buy.tmall.com') || afterUrl.includes('buy.taobao.com')) {
+              if (isBuyPage(afterUrl)) {
                 resolved = true
                 clearTimeout(timeout)
                 clearInterval(checkInterval)
@@ -2308,7 +2730,7 @@ export class CartService {
                 resolve({ success: true, directToPay: true })
                 return
               }
-              if (afterUrl.includes('cart.taobao.com')) {
+              if (isCartPage(afterUrl)) {
                 resolved = true
                 clearTimeout(timeout)
                 clearInterval(checkInterval)
@@ -2352,7 +2774,7 @@ export class CartService {
       const detailUrl = `https://buyertrade.taobao.com/trade/detail/trade_item_detail.htm?bizOrderId=${bizOrderId}`
       console.log(`[Taobao] Playwright: Opening order detail: ${detailUrl}`)
       this.emitStatus('正在打开订单详情页（Playwright）...')
-      await page.goto(detailUrl, { waitUntil: 'domcontentloaded', timeout: 30000 })
+      await page.goto(detailUrl, { waitUntil: 'domcontentloaded', timeout: TIMEOUTS.PAGE_LOAD })
 
       const pageUrl = page.url()
       console.log(`[Taobao] Page URL after navigation: ${pageUrl}`)
@@ -2414,7 +2836,7 @@ export class CartService {
       }
 
       return await this.fallbackManualAddToCart(productUrl)
-    } catch (e) {
+    } catch (e: unknown) {
       console.log(`[Taobao] Playwright addToCart error: ${e}`)
       this.emitStatus(`再买一单失败: ${e}`)
       return { success: false, error: String(e) }
@@ -2449,7 +2871,7 @@ export class CartService {
         this.emitStatus('已进入结算页面')
         return { success: true, directToPay: true }
       }
-      if (loadedUrl.includes('cart.taobao.com')) {
+      if (isCartPage(loadedUrl)) {
         this.browserManager.setPage(popup)
         this.emitStatus('已加入购物车')
         return { success: true, directToPay: false }
@@ -2465,7 +2887,7 @@ export class CartService {
         this.emitStatus('已进入结算页面（新标签页）')
         return { success: true, directToPay: true }
       }
-      if (pUrl.includes('cart.taobao.com')) {
+      if (isCartPage(pUrl)) {
         this.browserManager.setPage(p)
         this.emitStatus('已加入购物车（新标签页）')
         return { success: true, directToPay: false }
@@ -2478,7 +2900,7 @@ export class CartService {
       this.emitStatus('已进入结算页面')
       return { success: true, directToPay: true }
     }
-    if (afterUrl.includes('cart.taobao.com')) {
+    if (isCartPage(afterUrl)) {
       this.emitStatus('已加入购物车')
       return { success: true, directToPay: false }
     }
@@ -2559,13 +2981,22 @@ export class CartService {
             this.emitStatus('手动操作超时')
             resolve({ success: false, error: '手动操作超时' })
           }
-        }, 1800000)
+        }, TIMEOUTS.OPERATION)
 
         const checkDone = setInterval(async () => {
           if (resolved) return
+          if (this.isDestroyed()) {
+            clearInterval(checkDone)
+            if (!resolved) {
+              resolved = true
+              clearTimeout(timeout)
+              resolve({ success: false, error: '任务已取消' })
+            }
+            return
+          }
           try {
             const pageUrl = manualWindow.webContents.getURL()
-            if (pageUrl.includes('cart.taobao.com')) {
+            if (isCartPage(pageUrl)) {
               resolved = true
               clearTimeout(timeout)
               clearInterval(checkDone)
@@ -2596,7 +3027,7 @@ export class CartService {
           }
         })
       })
-    } catch (e) {
+    } catch (e: unknown) {
       this.emitStatus(`手动操作失败: ${e}`)
       return { success: false, error: String(e) }
     }
@@ -2606,7 +3037,8 @@ export class CartService {
     const page = this.browserManager.getPage()
     if (!page) return false
 
-    const targets = ['再买一单', '再次购买', '再来一单', '重新购买', '去购买', '立即购买', '再次下单', '追加购买']
+    const targets = [...KEYWORDS.REBUY_BUTTONS]
+    const selectors = ['button', 'a', '[class*="btn"]', '[class*="Button"]', '[role="button"]', '[class*="action"]', '[class*="submit"]', '[class*="rebuy"]', '[class*="Rebuy"]', '[class*="buy-again"]', '[class*="BuyAgain"]', '[data-spm*="rebuy"]', '[data-spm*="buy"]', 'span[class*="click"]', 'div[class*="click"]']
 
     try {
       const frames = page.frames()
@@ -2615,11 +3047,10 @@ export class CartService {
       for (const frame of frames) {
         try {
           await frame.evaluate(HUMAN_SIM_JS).catch(() => {})
-          const diag = await frame.evaluate(() => {
-            const targets = ['再买一单', '再次购买', '再来一单', '重新购买', '去购买', '立即购买', '再次下单', '追加购买']
+          const diag = await frame.evaluate((arg: { targets: string[]; selectors: string[] }) => {
             const nearMatches: { tag: string; text: string; cls: string; rect: string }[] = []
 
-            const found = _hs.findVisible(['button', 'a', '[class*="btn"]', '[class*="Button"]', '[role="button"]', '[class*="action"]', '[class*="submit"]'], targets)
+            const found = _hs.findVisible(arg.selectors, arg.targets)
             for (const item of found) {
               nearMatches.push({
                 tag: item.el.tagName,
@@ -2629,8 +3060,20 @@ export class CartService {
               })
             }
 
+            if (nearMatches.length === 0) {
+              const broadFound = _hs.findByText(arg.targets, 20)
+              for (const item of broadFound) {
+                nearMatches.push({
+                  tag: item.el.tagName,
+                  text: item.text.substring(0, 60),
+                  cls: (item.el as HTMLElement).className?.substring?.(0, 80) || '',
+                  rect: `${Math.round(item.rect.width)}x${Math.round(item.rect.height)}@${Math.round(item.rect.x)},${Math.round(item.rect.y)}`,
+                })
+              }
+            }
+
             return { nearMatches, bodyLen: document.body?.innerText?.length || 0 }
-          })
+          }, { targets: [...KEYWORDS.REBUY_BUTTONS], selectors })
 
           console.log(`[Taobao] Frame ${frame.url().substring(0, 80)} nearMatches (${diag.nearMatches.length}):`)
           for (const m of diag.nearMatches) {
@@ -2638,24 +3081,40 @@ export class CartService {
           }
 
           if (diag.nearMatches.length > 0) {
-            const clicked = await frame.evaluate(() => {
-              const targets = ['再买一单', '再次购买', '再来一单', '重新购买', '去购买', '立即购买', '再次下单', '追加购买']
-              const result = _hs.findAndClick(
-                ['button', 'a', '[class*="btn"]', '[class*="Button"]', '[role="button"]', '[class*="action"]', '[class*="submit"]'],
-                targets
-              )
+            const clicked = await frame.evaluate((arg: { targets: string[]; selectors: string[] }) => {
+              let result = _hs.findAndClick(arg.selectors, arg.targets)
+
+              if (!result) {
+                const broadFound = _hs.findByText(arg.targets, 20)
+                if (broadFound.length > 0) {
+                  broadFound.sort((a: { area: number }, b: { area: number }) => a.area - b.area)
+                  if (_hs.click(broadFound[0].el)) {
+                    result = broadFound[0]
+                  }
+                }
+              }
+
+              if (!result) {
+                const shadowFound = _hs.findInShadowDOM(arg.selectors, arg.targets)
+                if (shadowFound.length > 0) {
+                  shadowFound.sort((a: { area: number }, b: { area: number }) => a.area - b.area)
+                  if (_hs.click(shadowFound[0].el)) {
+                    result = shadowFound[0]
+                  }
+                }
+              }
 
               if (result) {
                 return { clicked: true, tag: result.el.tagName, text: result.text.substring(0, 40), area: result.area }
               }
 
               return { clicked: false }
-            })
+            }, { targets: [...KEYWORDS.REBUY_BUTTONS], selectors })
 
             console.log(`[Taobao] clickRebuyButton click result:`, JSON.stringify(clicked))
             if (clicked.clicked) return true
           }
-        } catch (e) {
+        } catch (e: unknown) {
           console.log(`[Taobao] clickRebuyButton frame error: ${e}`)
         }
       }
@@ -2684,14 +3143,14 @@ export class CartService {
 
           console.log(`[Taobao] clickRebuyButton CSS result:`, JSON.stringify(cssResult))
           if (cssResult.clicked) return true
-        } catch (e) {
+        } catch (e: unknown) {
           console.log(`[Taobao] clickRebuyButton CSS frame error: ${e}`)
         }
       }
 
       console.log(`[Taobao] clickRebuyButton: no button found with any method`)
       return false
-    } catch (e) {
+    } catch (e: unknown) {
       console.log(`[Taobao] clickRebuyButton error: ${e}`)
     }
 
