@@ -1,4 +1,4 @@
-import { BrowserWindow, dialog } from 'electron'
+﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿import { BrowserWindow } from 'electron'
 import type { Page, BrowserContext } from 'playwright'
 import type { Database } from '../../../db/database'
 import type { AddToCartResult, Order } from '../../../../shared/types/platform.types'
@@ -8,7 +8,7 @@ import { CookieManager } from '../infrastructure/cookie-manager'
 import { VerificationService } from './verification.service'
 import { InteractionService } from './interaction.service'
 import { TaobaoAuth } from '../taobao.auth'
-import { setUserAgent, debugLog, humanDelay, humanClickAt, humanClickElement, execJS, injectOverlayBanner, injectCenterToast, rand, ListenerTracker } from '../utils/page-helper'
+import { setUserAgent, humanDelay, humanClickAt, humanClickElement, execJS, injectOverlayBanner, injectCenterToast, rand, ListenerTracker, cleanupForCaptcha, resetCaptchaMode } from '../utils/page-helper'
 import { APP_ICON, WINDOW_SIZES, TIMEOUTS, KEYWORDS } from '../utils/constants'
 import { isCheckoutOrPayPage, isLoginPage, isIdentityVerifyPage, isBuyPage, isCartPage, isProductDetailPage, isOrderArchivePage, isOrderDetailPage } from '../utils/url-helper'
 import { TAOBAO_SELECTORS } from '../taobao.selectors'
@@ -59,8 +59,6 @@ export class CartService {
   async addToCart(productUrl: string, sku?: string, orderId?: string, cartOnly?: boolean): Promise<AddToCartResult> {
     this.emitStatus('正在再买一单...')
 
-    debugLog(`[Taobao] addToCart called with orderId: "${orderId}", productUrl: "${productUrl}", cartOnly: ${cartOnly}`)
-
     if (!orderId) {
       this.emitStatus('没有订单号，无法再买一单')
       return { success: false, error: '没有订单号' }
@@ -72,7 +70,6 @@ export class CartService {
 
       return { success: false, error: '再买一单操作未返回结果' }
     } catch (e: unknown) {
-      debugLog(`[Taobao] addToCart error: ${e}`)
       this.emitStatus(`再买一单失败: ${e}`)
       return { success: false, error: String(e) }
     }
@@ -107,15 +104,12 @@ export class CartService {
         webPreferences: {
           nodeIntegration: false,
           contextIsolation: true,
+          sandbox: false,
           backgroundThrottling: false,
         },
       })
       this.windowManager.setShopWindow(newShopWindow)
       setUserAgent(newShopWindow)
-      const mainWindow = this.windowManager.getMainWindow()
-      if (mainWindow) {
-        newShopWindow.setParentWindow(mainWindow)
-      }
       newShopWindow.minimize()
 
       return new Promise<AddToCartResult>((resolve) => {
@@ -163,8 +157,7 @@ export class CartService {
         const currentShopWindow = this.windowManager.getShopWindow()!
 
         currentShopWindow.webContents.setWindowOpenHandler(({ url: openUrl }) => {
-          console.log('[Taobao] addToCartDirectly window open: ' + openUrl)
-          return { action: 'allow', overrideBrowserWindowOptions: { show: false } }
+          return { action: 'allow', overrideBrowserWindowOptions: { show: false, webPreferences: { backgroundThrottling: false } } }
         })
 
         lt.on(currentShopWindow.webContents, 'did-create-window', (newWindow) => {
@@ -371,8 +364,7 @@ export class CartService {
                   await handleNavigation(url)
                 })
                 sw!.webContents.setWindowOpenHandler(({ url: openUrl }) => {
-                  console.log('[Taobao] addToCartDirectly sku-select window open: ' + openUrl)
-                  return { action: 'allow', overrideBrowserWindowOptions: { show: false } }
+                  return { action: 'allow', overrideBrowserWindowOptions: { show: false, webPreferences: { backgroundThrottling: false } } }
                 })
                 lt.on(sw!.webContents, 'did-create-window', (newWin) => {
                   setUserAgent(newWin)
@@ -435,6 +427,7 @@ export class CartService {
       webPreferences: {
         nodeIntegration: false,
         contextIsolation: true,
+        sandbox: false,
         backgroundThrottling: false,
       },
     })
@@ -484,6 +477,7 @@ export class CartService {
         webPreferences: {
           nodeIntegration: false,
           contextIsolation: true,
+          sandbox: false,
           backgroundThrottling: false,
         },
       })
@@ -535,8 +529,7 @@ export class CartService {
         const currentShopWindow = this.windowManager.getShopWindow()!
 
         currentShopWindow.webContents.setWindowOpenHandler(({ url: openUrl }) => {
-          console.log('[Taobao] purchaseFromUrl window open: ' + openUrl)
-          return { action: 'allow', overrideBrowserWindowOptions: { show: false } }
+          return { action: 'allow', overrideBrowserWindowOptions: { show: false, webPreferences: { backgroundThrottling: false } } }
         })
 
         lt.on(currentShopWindow.webContents, 'did-create-window', (newWindow) => {
@@ -616,8 +609,18 @@ export class CartService {
                 for (var i = 0; i < offShelfKeywords.length; i++) {
                   if (bodyText.includes(offShelfKeywords[i])) { matchedKeyword = offShelfKeywords[i]; break; }
                 }
-                var found = _hs.findVisible(['button', 'a', '[class*="btn"]', '[class*="Button"]', '[role="button"]', '[class*="action"]', '[class*="submit"]'], ${JSON.stringify(KEYWORDS.BUY_BUTTONS)});
-                var hasBuyButton = found.length > 0;
+                var buyTexts = ${JSON.stringify(KEYWORDS.BUY_BUTTONS)};
+                var btns = document.querySelectorAll('button, a, [class*="btn"], [class*="Button"], [role="button"], [class*="action"], [class*="submit"]');
+                var hasBuyButton = false;
+                for (var j = 0; j < btns.length; j++) {
+                  var btnText = (btns[j].textContent || '').replace(/\\s+/g, '');
+                  var rect = btns[j].getBoundingClientRect();
+                  if (rect.width <= 0 || rect.height <= 0) continue;
+                  for (var k = 0; k < buyTexts.length; k++) {
+                    if (btnText.includes(buyTexts[k])) { hasBuyButton = true; break; }
+                  }
+                  if (hasBuyButton) break;
+                }
                 return { offShelf: matchedKeyword !== '', keyword: matchedKeyword, hasBuyButton: hasBuyButton };
               })()
             `)
@@ -720,8 +723,7 @@ export class CartService {
                   await handleNavigation(url)
                 })
                 sw!.webContents.setWindowOpenHandler(({ url: openUrl }) => {
-                  console.log('[Taobao] purchaseFromUrl sku-select window open: ' + openUrl)
-                  return { action: 'allow', overrideBrowserWindowOptions: { show: false } }
+                  return { action: 'allow', overrideBrowserWindowOptions: { show: false, webPreferences: { backgroundThrottling: false } } }
                 })
                 lt.on(sw!.webContents, 'did-create-window', (newWindow) => {
                   setUserAgent(newWindow)
@@ -760,13 +762,10 @@ export class CartService {
   private async runInHiddenWindow(orderId: string, productUrl?: string, cartOnly?: boolean): Promise<AddToCartResult | null> {
     const mainWindow = this.windowManager.getMainWindow()
     if (!mainWindow) {
-      debugLog(`[Taobao] runInHiddenWindow: mainWindow is null, returning null`)
       return null
     }
-
     const bizOrderId = orderId.replace(/_\d+$/, '')
     const detailUrl = `https://trade.tmall.com/detail/orderDetail.htm?bizOrderId=${bizOrderId}`
-    debugLog(`[Taobao] runInHiddenWindow: ${detailUrl}`)
     this.emitStatus('正在打开订单详情页...')
 
     this.cookieManager.resetToElectronSyncTimer()
@@ -777,7 +776,6 @@ export class CartService {
       shopWindow.close()
       this.windowManager.setShopWindow(null)
     }
-
     return new Promise<AddToCartResult | null>((resolve) => {
       const lt = new ListenerTracker()
       const newShopWindow = new BrowserWindow({
@@ -789,6 +787,7 @@ export class CartService {
         webPreferences: {
           nodeIntegration: false,
           contextIsolation: true,
+          sandbox: false,
           backgroundThrottling: false,
         },
       })
@@ -800,12 +799,10 @@ export class CartService {
       newShopWindow.loadURL(detailUrl)
 
       newShopWindow.webContents.setWindowOpenHandler(({ url: openUrl }) => {
-        console.log(`[Taobao] Window open requested: ${openUrl}`)
-        return { action: 'allow', overrideBrowserWindowOptions: { show: false } }
+        return { action: 'allow', overrideBrowserWindowOptions: { show: false, webPreferences: { sandbox: false, contextIsolation: true, nodeIntegration: false, backgroundThrottling: false } } }
       })
 
       lt.on(newShopWindow.webContents, 'did-create-window', (newWindow) => {
-        console.log(`[Taobao] Popup window created: ${newWindow.webContents.getURL()}`)
         setUserAgent(newWindow)
         newWindow.setIcon(APP_ICON)
         this.windowManager.trackWindow(newWindow)
@@ -814,21 +811,14 @@ export class CartService {
 
         const handlePopupUrl = async (popupUrl: string) => {
           if (resolved) return
-          debugLog(`[Taobao] Popup URL: ${popupUrl}`)
 
           if (isBuyPage(popupUrl)) {
             if (cartOnly) {
-              resolved = true
-              clearTimeout(timeout)
-              clearInterval(checkInterval)
               this.windowManager.closeShopWindow(async () => { await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth) })
               this.emitStatus('该商品不支持加入购物车，点击后直接进入了结算页面')
-              resolve({ success: false, error: '该商品不支持加入购物车，点击后直接进入了结算页面' })
+              doResolve({ success: false, error: '该商品不支持加入购物车，点击后直接进入了结算页面' })
               return
             }
-            resolved = true
-            clearTimeout(timeout)
-            clearInterval(checkInterval)
             const sw = this.windowManager.getShopWindow()
             if (sw && !sw.isDestroyed()) sw.hide()
             this.windowManager.setShopWindow(newWindow)
@@ -843,25 +833,19 @@ export class CartService {
             injectOverlayBanner(newWindow, "💳 自动购物助手：请确认订单信息并提交")
             injectCenterToast(newWindow, "请确认订单信息并提交")
             newWindow.show()
-            resolve({ success: true, directToPay: true })
+            doResolve({ success: true, directToPay: true })
             return
           }
-
           if (isCartPage(popupUrl)) {
-            resolved = true
-            clearTimeout(timeout)
-            clearInterval(checkInterval)
             const sw = this.windowManager.getShopWindow()
             if (sw && !sw.isDestroyed()) sw.hide()
             this.windowManager.setShopWindow(newWindow)
             await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth)
             this.emitStatus('已加入购物车')
-            resolve({ success: true, directToPay: false })
+            doResolve({ success: true, directToPay: false })
             return
           }
-
           if (isIdentityVerifyPage(popupUrl)) {
-            console.log(`[Taobao] Identity verification required in popup, showing to user`)
             this.emitStatus('需要进行身份验证，请在弹出的窗口中完成验证...')
             newWindow.setSize(WINDOW_SIZES.SMALL.width, WINDOW_SIZES.SMALL.height)
             newWindow.setTitle('淘宝身份验证')
@@ -874,24 +858,25 @@ export class CartService {
             newWindow.show()
             return
           }
-
           if (isLoginPage(popupUrl)) {
-            console.log(`[Taobao] Login page in popup, trying auto login first`)
             await this.verificationService.tryAutoLoginThenShow(newWindow)
             return
           }
-
           if (popupUrl.includes('taobao.com') && !popupUrl.includes('login') && !isProductDetailPage(popupUrl)) {
             await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth)
-            console.log(`[Taobao] Popup navigated to taobao page after login/verify: ${popupUrl}`)
           }
-
           if (isProductDetailPage(popupUrl)) {
             if (skuHandled) return
             skuHandled = true
-            debugLog(`[Taobao] SKU popup detected, url: ${popupUrl}`)
             await humanDelay(1500)
             try {
+              const popupOffShelf = await checkOffShelf(newWindow)
+              if (popupOffShelf) {
+                this.windowManager.closeShopWindow(async () => { await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth) })
+                this.emitStatus(`商品不可购买（${popupOffShelf}）`)
+                doResolve({ success: false, error: `商品不可购买（${popupOffShelf}）` })
+                return
+              }
               if (popupUrl.includes('openSku=true') || popupUrl.includes('sku_properties=') || popupUrl.includes('skuId=')) {
                 this.emitStatus('正在选择商品规格...')
                 const skuClickCount = await execJS(newWindow, `
@@ -945,7 +930,6 @@ export class CartService {
                     return { skuProps: skuProps, skuId: skuId, clicked: clicked };
                   })()
                 `)
-                debugLog(`[Taobao] SKU select result: ${JSON.stringify(skuClickCount)}`)
                 await humanDelay(1000)
 
                 this.emitStatus(cartOnly ? '正在点击加入购物车...' : '正在点击购买...')
@@ -981,80 +965,95 @@ export class CartService {
                     return { clicked: false, matches: allMatches };
                   })()
                 `)
-                debugLog(`[Taobao] SKU popup click result: ${JSON.stringify(clickResult)}`)
 
                 if (cartOnly && !clickResult?.clicked) {
-                  resolved = true
-                  clearTimeout(timeout)
-                  clearInterval(checkInterval)
                   this.windowManager.closeShopWindow(async () => { await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth) })
                   this.emitStatus('该商品不支持加入购物车（未找到加购按钮）')
-                  resolve({ success: false, error: '该商品不支持加入购物车（未找到加购按钮）' })
+                  doResolve({ success: false, error: '该商品不支持加入购物车（未找到加购按钮）' })
                   return
                 }
                 await humanDelay(2000)
 
                 const currentPopupUrl = newWindow.webContents.getURL()
-                debugLog(`[Taobao] After buy click, current URL: ${currentPopupUrl}`)
                 if (isIdentityVerifyPage(currentPopupUrl) || currentPopupUrl.includes('nocaptcha') || currentPopupUrl.includes('slider')) {
-                  await newWindow.webContents.executeJavaScript(`
-                    (function() {
-                      try {
-                        Object.defineProperty(Document.prototype, 'visibilityState', { get: function() { return document.hidden ? 'hidden' : 'visible'; }, configurable: true });
-                        Object.defineProperty(Document.prototype, 'hidden', { get: function() { return !document.hasFocus(); }, configurable: true });
-                        Object.defineProperty(document, 'visibilityState', { get: function() { return document.hidden ? 'hidden' : 'visible'; }, configurable: true });
-                        Object.defineProperty(document, 'hidden', { get: function() { return !document.hasFocus(); }, configurable: true });
-                      } catch(e) {}
-                    })()
-                  `).catch(() => {})
+                  cleanupForCaptcha(newWindow)
                   newWindow.setSize(WINDOW_SIZES.CONFIRMATION.width, WINDOW_SIZES.CONFIRMATION.height)
                   newWindow.setTitle('淘宝安全验证')
-                  const mw = this.windowManager.getMainWindow()
-                  if (mw) newWindow.setParentWindow(mw)
-                  const captchaBanner = '🔐 自动购物助手：淘宝要求安全验证，请拖动滑块或完成验证后继续'
-                  injectOverlayBanner(newWindow, captchaBanner)
-                  injectCenterToast(newWindow, "请完成安全验证")
+                  newWindow.setAlwaysOnTop(true)
+                  if (newWindow.isMinimized()) {
+                    newWindow.restore()
+                  }
                   newWindow.show()
+                  newWindow.focus()
                   const verified = await this.interactionService.waitForUserConfirmation(
                     newWindow,
                     '淘宝要求安全验证（滑块验证），请在弹出的窗口中完成验证，完成后点击"已完成"',
                     '淘宝安全验证',
-                    captchaBanner,
+                    '🔐 请拖动滑块完成验证',
+                    'verification',
                   )
                   if (verified) {
-                    resolved = true
-                    clearTimeout(timeout)
-                    clearInterval(checkInterval)
+                    resetCaptchaMode(newWindow)
+
                     const sw = this.windowManager.getShopWindow()
                     if (sw && !sw.isDestroyed()) sw.hide()
                     this.windowManager.setShopWindow(newWindow)
                     await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth)
+                    await humanDelay(1500)
                     const afterVerifyUrl = newWindow.webContents.getURL()
                     if (isCartPage(afterVerifyUrl)) {
-                      this.emitStatus('已加入购物车')
-                      resolve({ success: true, directToPay: false })
+                      this.emitStatus('验证完成，已加入购物车')
+                      doResolve({ success: true, directToPay: false })
                     } else if (isBuyPage(afterVerifyUrl)) {
-                      this.emitStatus('已进入结算页面')
-                      resolve({ success: true, directToPay: true })
+                      this.emitStatus('验证完成，已进入结算页面')
+                      doResolve({ success: true, directToPay: true })
+                    } else if (isProductDetailPage(afterVerifyUrl)) {
+                      this.emitStatus('验证完成，请在弹出的窗口中选择规格并购买')
+                      newWindow.setSize(WINDOW_SIZES.CONFIRMATION.width, WINDOW_SIZES.CONFIRMATION.height)
+                      newWindow.setTitle('请选择规格并购买')
+                      const mw = this.windowManager.getMainWindow()
+                      if (mw) newWindow.setParentWindow(mw)
+                      injectOverlayBanner(newWindow, '🛒 自动购物助手：验证通过，请选择规格并点击"立即购买"或"加入购物车"')
+                      injectCenterToast(newWindow, '验证通过，请选择规格并购买')
+                      newWindow.show()
+                      const confirmed = await this.interactionService.waitForUserConfirmation(
+                        newWindow,
+                        '验证通过，已进入商品详情页，请在弹出的窗口中选择规格并购买，完成后点击"已完成"',
+                        '选择规格并购买',
+                        '🛒 验证通过，请选择规格并购买',
+                        'add-to-cart',
+                      )
+                      if (!confirmed || newWindow.isDestroyed()) {
+                        if (!newWindow.isDestroyed()) this.windowManager.closeShopWindow(async () => { await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth) })
+                        doResolve({ success: false, error: '用户取消了购买' })
+                      } else {
+                        let afterUrl = ''
+                        try { afterUrl = newWindow.webContents.getURL() } catch { /* window destroyed */ }
+                        await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth)
+                        if (isBuyPage(afterUrl)) {
+                          this.emitStatus('已进入结算页面')
+                          doResolve({ success: true, directToPay: true })
+                        } else if (isCartPage(afterUrl)) {
+                          this.emitStatus('已加入购物车')
+                          doResolve({ success: true, directToPay: false })
+                        } else {
+                          this.emitStatus('操作完成')
+                          doResolve({ success: true, directToPay: true })
+                        }
+                      }
                     } else {
                       this.emitStatus('验证完成，请继续操作')
-                      resolve({ success: true, directToPay: true })
+                      doResolve({ success: true, directToPay: true })
                     }
                   } else {
-                    resolved = true
-                    clearTimeout(timeout)
-                    clearInterval(checkInterval)
-                    resolve({ success: false, error: '安全验证未完成' })
+                    doResolve({ success: false, error: '安全验证未完成' })
                   }
                   return
                 }
-
                 if (isBuyPage(currentPopupUrl)) {
-                  debugLog(`[Taobao] Detected checkout page, handling...`)
                   await handlePopupUrl(currentPopupUrl)
                   return
                 }
-
                 const pageDiag = await execJS(newWindow, `
                   (function() {
                     var bodyText = (document.body?.innerText || '').substring(0, 500);
@@ -1092,51 +1091,83 @@ export class CartService {
                     return { needSelect: matchedHint !== '', hint: matchedHint, hasBuyBtn: hasBuyBtn, buyBtns: buyBtns, visibleDialogs: visibleDialogs, hasCaptcha: hasCaptcha, captchaInfo: captchaInfo, bodyPreview: bodyText.substring(0, 200) };
                   })()
                 `)
-                debugLog(`[Taobao] After buy click page diag: ${JSON.stringify(pageDiag)}`)
 
                 if (pageDiag.hasCaptcha) {
-                  debugLog(`[Taobao] Captcha detected in page diag: ${pageDiag.captchaInfo}`)
+                  cleanupForCaptcha(newWindow)
                   newWindow.setSize(WINDOW_SIZES.CONFIRMATION.width, WINDOW_SIZES.CONFIRMATION.height)
                   newWindow.setTitle('淘宝安全验证')
-                  const mw = this.windowManager.getMainWindow()
-                  if (mw) newWindow.setParentWindow(mw)
-                  const captchaBanner = '🔐 自动购物助手：淘宝要求安全验证，请拖动滑块或完成验证后继续'
-                  injectOverlayBanner(newWindow, captchaBanner)
-                  injectCenterToast(newWindow, "请完成安全验证")
+                  newWindow.setAlwaysOnTop(true)
+                  if (newWindow.isMinimized()) {
+                    newWindow.restore()
+                  }
                   newWindow.show()
+                  newWindow.focus()
                   const captchaConfirmed = await this.interactionService.waitForUserConfirmation(
                     newWindow,
                     '淘宝要求安全验证（滑块验证），请在弹出的窗口中完成验证，完成后点击"已完成"',
                     '淘宝安全验证',
-                    captchaBanner,
+                    '🔐 请拖动滑块完成验证',
+                    'verification',
                   )
                   if (captchaConfirmed) {
-                    resolved = true
-                    clearTimeout(timeout)
-                    clearInterval(checkInterval)
+                    resetCaptchaMode(newWindow)
+
                     const sw = this.windowManager.getShopWindow()
                     if (sw && !sw.isDestroyed()) sw.hide()
                     this.windowManager.setShopWindow(newWindow)
                     await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth)
+                    await humanDelay(1500)
                     const afterVerifyUrl = newWindow.webContents.getURL()
                     if (isCartPage(afterVerifyUrl)) {
-                      this.emitStatus('已加入购物车')
-                      resolve({ success: true, directToPay: false })
+                      this.emitStatus('验证完成，已加入购物车')
+                      doResolve({ success: true, directToPay: false })
+                    } else if (isBuyPage(afterVerifyUrl)) {
+                      this.emitStatus('验证完成，已进入结算页面')
+                      doResolve({ success: true, directToPay: true })
+                    } else if (isProductDetailPage(afterVerifyUrl)) {
+                      this.emitStatus('验证完成，请在弹出的窗口中选择规格并购买')
+                      newWindow.setSize(WINDOW_SIZES.CONFIRMATION.width, WINDOW_SIZES.CONFIRMATION.height)
+                      newWindow.setTitle('请选择规格并购买')
+                      const mw = this.windowManager.getMainWindow()
+                      if (mw) newWindow.setParentWindow(mw)
+                      injectOverlayBanner(newWindow, '🛒 自动购物助手：验证通过，请选择规格并点击"立即购买"或"加入购物车"')
+                      injectCenterToast(newWindow, '验证通过，请选择规格并购买')
+                      newWindow.show()
+                      const confirmed = await this.interactionService.waitForUserConfirmation(
+                        newWindow,
+                        '验证通过，已进入商品详情页，请在弹出的窗口中选择规格并购买，完成后点击"已完成"',
+                        '选择规格并购买',
+                        '🛒 验证通过，请选择规格并购买',
+                        'add-to-cart',
+                      )
+                      if (!confirmed || newWindow.isDestroyed()) {
+                        if (!newWindow.isDestroyed()) this.windowManager.closeShopWindow(async () => { await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth) })
+                        doResolve({ success: false, error: '用户取消了购买' })
+                      } else {
+                        let afterUrl = ''
+                        try { afterUrl = newWindow.webContents.getURL() } catch { /* window destroyed */ }
+                        await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth)
+                        if (isBuyPage(afterUrl)) {
+                          this.emitStatus('已进入结算页面')
+                          doResolve({ success: true, directToPay: true })
+                        } else if (isCartPage(afterUrl)) {
+                          this.emitStatus('已加入购物车')
+                          doResolve({ success: true, directToPay: false })
+                        } else {
+                          this.emitStatus('操作完成')
+                          doResolve({ success: true, directToPay: true })
+                        }
+                      }
                     } else {
                       this.emitStatus('验证完成，请继续操作')
-                      resolve({ success: true, directToPay: true })
+                      doResolve({ success: true, directToPay: true })
                     }
                   } else {
-                    resolved = true
-                    clearTimeout(timeout)
-                    clearInterval(checkInterval)
-                    resolve({ success: false, error: '安全验证未完成' })
+                    doResolve({ success: false, error: '安全验证未完成' })
                   }
                   return
                 }
-
                 const checkResult = { needSelect: pageDiag.needSelect, hint: pageDiag.hint }
-                debugLog(`[Taobao] After buy click check: ${JSON.stringify(checkResult)}`)
 
                 if (checkResult.needSelect) {
                   const reopenUrl = newWindow.webContents.getURL()
@@ -1160,9 +1191,6 @@ export class CartService {
                   )
 
                   if (confirmed) {
-                    resolved = true
-                    clearTimeout(timeout)
-                    clearInterval(checkInterval)
                     const sw = this.windowManager.getShopWindow()
                     if (sw && !sw.isDestroyed()) sw.hide()
                     this.windowManager.setShopWindow(newWindow)
@@ -1170,21 +1198,16 @@ export class CartService {
                     const currentUrl = newWindow.webContents.getURL()
                     if (isCartPage(currentUrl)) {
                       this.emitStatus('已加入购物车')
-                      resolve({ success: true, directToPay: false })
+                      doResolve({ success: true, directToPay: false })
                     } else {
                       this.emitStatus('已进入结算页面')
-                      resolve({ success: true, directToPay: true })
+                      doResolve({ success: true, directToPay: true })
                     }
                   } else {
-                    resolved = true
-                    clearTimeout(timeout)
-                    clearInterval(checkInterval)
-                    resolve({ success: false, error: '用户取消操作' })
+                    doResolve({ success: false, error: '用户取消操作' })
                   }
                   return
                 }
-
-                debugLog(`[Taobao] SKU path: buy clicked but no checkout redirect and no needSelect, showing interaction window`)
                 let fallbackReason = '点击购买后页面未跳转到结算页'
                 if (pageDiag.visibleDialogs && pageDiag.visibleDialogs.length > 0) {
                   fallbackReason = `点击购买后出现弹窗（${pageDiag.visibleDialogs.map((d: any) => d.cls?.substring(0, 20) || '未知').join(', ')}），页面未跳转到结算页`
@@ -1212,9 +1235,6 @@ export class CartService {
                 )
 
                 if (confirmed) {
-                  resolved = true
-                  clearTimeout(timeout)
-                  clearInterval(checkInterval)
                   const sw = this.windowManager.getShopWindow()
                   if (sw && !sw.isDestroyed()) sw.hide()
                   this.windowManager.setShopWindow(newWindow)
@@ -1222,18 +1242,14 @@ export class CartService {
                   const currentUrl = newWindow.webContents.getURL()
                   if (isCartPage(currentUrl)) {
                     this.emitStatus('已加入购物车')
-                    resolve({ success: true, directToPay: false })
+                    doResolve({ success: true, directToPay: false })
                   } else {
                     this.emitStatus('已进入结算页面')
-                    resolve({ success: true, directToPay: true })
+                    doResolve({ success: true, directToPay: true })
                   }
                 } else {
-                  resolved = true
-                  clearTimeout(timeout)
-                  clearInterval(checkInterval)
-                  resolve({ success: false, error: '用户取消操作' })
+                  doResolve({ success: false, error: '用户取消操作' })
                 }
-
                 return
               } else {
                 const pageStatus = await execJS(newWindow, `
@@ -1247,23 +1263,28 @@ export class CartService {
                         break;
                       }
                     }
-                    var found = _hs.findVisible(['button', 'a', '[class*="btn"]', '[class*="Button"]', '[role="button"]', '[class*="action"]', '[class*="submit"]'], ${cartOnly} ? ${JSON.stringify(KEYWORDS.CART_BUTTONS)} : ${JSON.stringify(KEYWORDS.BUY_BUTTONS)});
-                    var hasBuyButton = found.length > 0;
+                    var buyTexts = ${cartOnly} ? ${JSON.stringify(KEYWORDS.CART_BUTTONS)} : ${JSON.stringify(KEYWORDS.BUY_BUTTONS)};
+                    var btns = document.querySelectorAll('button, a, [class*="btn"], [class*="Button"], [role="button"], [class*="action"], [class*="submit"]');
+                    var hasBuyButton = false;
+                    for (var j = 0; j < btns.length; j++) {
+                      var btnText = (btns[j].textContent || '').replace(/\\s+/g, '');
+                      var rect = btns[j].getBoundingClientRect();
+                      if (rect.width <= 0 || rect.height <= 0) continue;
+                      for (var k = 0; k < buyTexts.length; k++) {
+                        if (btnText.includes(buyTexts[k])) { hasBuyButton = true; break; }
+                      }
+                      if (hasBuyButton) break;
+                    }
                     return { offShelf: matchedKeyword !== '', keyword: matchedKeyword, hasBuyButton: hasBuyButton };
                   })()
                 `)
-                debugLog(`[Taobao] Popup product page status: ${JSON.stringify(pageStatus)}`)
 
                 if (pageStatus.offShelf && !pageStatus.hasBuyButton) {
-                  resolved = true
-                  clearTimeout(timeout)
-                  clearInterval(checkInterval)
                   this.windowManager.closeShopWindow(async () => { await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth) })
                   this.emitStatus(`商品不可购买（${pageStatus.keyword}）`)
-                  resolve({ success: false, error: `商品不可购买（${pageStatus.keyword}）` })
+                  doResolve({ success: false, error: `商品不可购买（${pageStatus.keyword}）` })
                   return
                 }
-
                 if (pageStatus.hasBuyButton) {
                   this.emitStatus(cartOnly ? '正在点击加入购物车...' : '正在点击领券购买...')
                   const noSkuClickResult = await execJS(newWindow, `
@@ -1276,22 +1297,16 @@ export class CartService {
                       return { clicked: false };
                     })()
                   `)
-                  debugLog(`[Taobao] No-SKU popup click result: ${JSON.stringify(noSkuClickResult)}`)
 
                   if (cartOnly && !noSkuClickResult?.clicked) {
-                    resolved = true
-                    clearTimeout(timeout)
-                    clearInterval(checkInterval)
                     this.windowManager.closeShopWindow(async () => { await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth) })
                     this.emitStatus('该商品不支持加入购物车（未找到加购按钮）')
-                    resolve({ success: false, error: '该商品不支持加入购物车（未找到加购按钮）' })
+                    doResolve({ success: false, error: '该商品不支持加入购物车（未找到加购按钮）' })
                     return
                   }
-
                   await humanDelay(2000)
 
                   const afterClickUrl = newWindow.webContents.getURL()
-                  debugLog(`[Taobao] No-SKU after click URL: ${afterClickUrl}`)
 
                   const afterClickDiag = await execJS(newWindow, `
                     (function() {
@@ -1317,10 +1332,8 @@ export class CartService {
                       return { needSelect: matchedHint !== '' || visibleSkuPanels.length > 0, hint: matchedHint || (visibleSkuPanels.length > 0 ? 'SKU选择面板' : ''), hasBuyBtn: hasBuyBtn, buyBtns: buyBtns, visibleSkuPanels: visibleSkuPanels, bodyPreview: bodyText.substring(0, 200) };
                     })()
                   `)
-                  debugLog(`[Taobao] No-SKU after click diag: ${JSON.stringify(afterClickDiag)}`)
 
                   const afterClickCheck = { needSelect: afterClickDiag.needSelect, hint: afterClickDiag.hint }
-                  debugLog(`[Taobao] After buy click check: ${JSON.stringify(afterClickCheck)}`)
 
                   if (afterClickCheck.needSelect) {
                     const actionText2 = cartOnly ? '点击加入购物车' : '点击购买'
@@ -1343,9 +1356,6 @@ export class CartService {
                     )
 
                     if (confirmed) {
-                      resolved = true
-                      clearTimeout(timeout)
-                      clearInterval(checkInterval)
                       const sw = this.windowManager.getShopWindow()
                       if (sw && !sw.isDestroyed()) sw.hide()
                       this.windowManager.setShopWindow(newWindow)
@@ -1353,27 +1363,20 @@ export class CartService {
                       const currentUrl = newWindow.webContents.getURL()
                       if (isCartPage(currentUrl)) {
                         this.emitStatus('已加入购物车')
-                        resolve({ success: true, directToPay: false })
+                        doResolve({ success: true, directToPay: false })
                       } else {
                         this.emitStatus('已进入结算页面')
-                        resolve({ success: true, directToPay: true })
+                        doResolve({ success: true, directToPay: true })
                       }
                     } else {
-                      resolved = true
-                      clearTimeout(timeout)
-                      clearInterval(checkInterval)
-                      resolve({ success: false, error: '用户取消操作' })
+                      doResolve({ success: false, error: '用户取消操作' })
                     }
                     return
                   }
-
-                  debugLog(`[Taobao] No-SKU path: checking URL after click: ${afterClickUrl}`)
                   if (isBuyPage(afterClickUrl)) {
                     await handlePopupUrl(afterClickUrl)
                     return
                   }
-
-                  debugLog(`[Taobao] No-SKU path: buy clicked but no checkout redirect, showing interaction window`)
                   let fallbackReason2 = '点击购买后页面未跳转到结算页'
                   if (afterClickDiag) {
                     if (afterClickDiag.visibleSkuPanels && afterClickDiag.visibleSkuPanels.length > 0) {
@@ -1403,9 +1406,6 @@ export class CartService {
                   )
 
                   if (confirmed2) {
-                    resolved = true
-                    clearTimeout(timeout)
-                    clearInterval(checkInterval)
                     const sw = this.windowManager.getShopWindow()
                     if (sw && !sw.isDestroyed()) sw.hide()
                     this.windowManager.setShopWindow(newWindow)
@@ -1413,26 +1413,19 @@ export class CartService {
                     const currentUrl = newWindow.webContents.getURL()
                     if (isCartPage(currentUrl)) {
                       this.emitStatus('已加入购物车')
-                      resolve({ success: true, directToPay: false })
+                      doResolve({ success: true, directToPay: false })
                     } else {
                       this.emitStatus('已进入结算页面')
-                      resolve({ success: true, directToPay: true })
+                      doResolve({ success: true, directToPay: true })
                     }
                   } else {
-                    resolved = true
-                    clearTimeout(timeout)
-                    clearInterval(checkInterval)
-                    resolve({ success: false, error: '用户取消操作' })
+                    doResolve({ success: false, error: '用户取消操作' })
                   }
-
                   return
                 } else if (cartOnly) {
-                  resolved = true
-                  clearTimeout(timeout)
-                  clearInterval(checkInterval)
                   this.windowManager.closeShopWindow(async () => { await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth) })
                   this.emitStatus('该商品不支持加入购物车（未找到加购按钮）')
-                  resolve({ success: false, error: '该商品不支持加入购物车（未找到加购按钮）' })
+                  doResolve({ success: false, error: '该商品不支持加入购物车（未找到加购按钮）' })
                   return
                 }
               }
@@ -1441,7 +1434,6 @@ export class CartService {
             }
           }
         }
-
         lt.on(newWindow.webContents, 'did-finish-load', async () => {
           const popupUrl = newWindow.webContents.getURL()
           await handlePopupUrl(popupUrl)
@@ -1452,29 +1444,25 @@ export class CartService {
           await handlePopupUrl(popupUrl)
         })
 
-        newWindow.webContents.setWindowOpenHandler(({ url: openUrl }) => {
-          debugLog(`[Taobao] Popup window opening: ${openUrl}`)
+        newWindow.webContents.setWindowOpenHandler(({ url: openUrl }: { url: string }) => {
           if (isBuyPage(openUrl) || isCartPage(openUrl)) {
-            return { action: 'allow' }
+            return { action: 'allow', overrideBrowserWindowOptions: { webPreferences: { backgroundThrottling: false } } }
           }
-          return { action: 'allow' }
+          return { action: 'allow', overrideBrowserWindowOptions: { webPreferences: { backgroundThrottling: false } } }
         })
 
         lt.on(newWindow.webContents, 'did-create-window', (childWindow) => {
-          debugLog(`[Taobao] Child window created`)
           setUserAgent(childWindow)
           childWindow.setIcon(APP_ICON)
           this.windowManager.trackWindow(childWindow)
 
           lt.on(childWindow.webContents, 'did-finish-load', async () => {
             const childUrl = childWindow.webContents.getURL()
-            debugLog(`[Taobao] Child window loaded: ${childUrl}`)
             await handlePopupUrl(childUrl)
           })
 
           lt.on(childWindow.webContents, 'did-navigate', async () => {
             const childUrl = childWindow.webContents.getURL()
-            debugLog(`[Taobao] Child window navigated: ${childUrl}`)
             await handlePopupUrl(childUrl)
           })
         })
@@ -1484,9 +1472,7 @@ export class CartService {
           if (this.isDestroyed() || newWindow.isDestroyed()) {
             clearInterval(popupCheck)
             if (!resolved) {
-              resolved = true
-              clearTimeout(timeout)
-              resolve({ success: false, error: '任务已取消' })
+              doResolve({ success: false, error: '任务已取消' })
             }
             return
           }
@@ -1521,7 +1507,15 @@ export class CartService {
         if (resolved) return
         resolved = true
         clearTimeout(timeout)
+        clearInterval(checkInterval)
         lt.dispose()
+        if (!result?.directToPay) {
+          const sw = this.windowManager.getShopWindow()
+          if (sw && !sw.isDestroyed()) {
+            try { sw.close() } catch { /* ignore */ }
+            this.windowManager.setShopWindow(null)
+          }
+        }
         resolve(result)
       }
       let sameUrlCount = 0
@@ -1535,9 +1529,46 @@ export class CartService {
         }
       }, TIMEOUTS.OPERATION)
 
+      const checkOffShelf = async (win: BrowserWindow): Promise<string> => {
+        try {
+          const result = await execJS(win, `
+            (function() {
+              var bodyText = (document.body?.innerText || '');
+              var keywords = ${JSON.stringify(KEYWORDS.OFF_SHELF)};
+              var extraKeywords = ['下架啦', '已经下架', '已下架啦', '悄悄别的', '看看别的'];
+              var allKeywords = keywords.concat(extraKeywords);
+              var matchedKeyword = '';
+              for (var i = 0; i < allKeywords.length; i++) {
+                if (bodyText.includes(allKeywords[i])) {
+                  matchedKeyword = allKeywords[i];
+                  break;
+                }
+              }
+              if (!matchedKeyword) return '';
+              var buyTexts = ${JSON.stringify(KEYWORDS.BUY_BUTTONS)};
+              var btns = document.querySelectorAll('button, a, [class*="btn"], [class*="Button"], [role="button"], [class*="action"], [class*="submit"]');
+              for (var j = 0; j < btns.length; j++) {
+                var btnText = (btns[j].textContent || '').replace(/\\s+/g, '');
+                var rect = btns[j].getBoundingClientRect();
+                if (rect.width <= 0 || rect.height <= 0) continue;
+                for (var k = 0; k < buyTexts.length; k++) {
+                  if (btnText.includes(buyTexts[k])) return '';
+                }
+              }
+              return matchedKeyword;
+            })()
+          `)
+          return result || ''
+        } catch {
+          return ''
+        }
+      }
+
       const tryClickRebuy = async () => {
         const sw = this.windowManager.getShopWindow()
-        if (resolved || this.isDestroyed() || !sw || sw.isDestroyed()) return
+        if (resolved || this.isDestroyed() || !sw || sw.isDestroyed()) {
+          return
+        }
         try {
           const cartTargets = cartOnly ? [...KEYWORDS.CART_BUTTONS] : []
           const rebuyTargets = [...KEYWORDS.REBUY_BUTTONS]
@@ -1608,7 +1639,6 @@ export class CartService {
               return { clicked: false, matches: debugMatches };
             })()
           `)
-          debugLog(`[Taobao] Main frame rebuy result: ${JSON.stringify(mainResult)}`)
 
           if (mainResult && mainResult.clicked) {
             if (mainResult.isCart) {
@@ -1642,42 +1672,52 @@ export class CartService {
                   return null;
                 })()
               `)
-              debugLog(`[Taobao] Cart result detected: ${JSON.stringify(cartResultDetected)}`)
 
               if (cartResultDetected?.type === 'success') {
-                resolved = true
-                clearTimeout(timeout)
-                clearInterval(checkInterval)
                 await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth)
                 this.windowManager.closeShopWindow()
                 this.emitStatus('已加入购物车')
-                resolve({ success: true, directToPay: false })
+                doResolve({ success: true, directToPay: false })
                 return
               }
-
               if (cartResultDetected?.type === 'error') {
-                resolved = true
-                clearTimeout(timeout)
-                clearInterval(checkInterval)
                 this.windowManager.closeShopWindow(async () => { await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth) })
                 const errorMsg = `商品不可购买（${cartResultDetected.hint}）`
                 this.emitStatus(errorMsg)
-                resolve({ success: false, error: errorMsg })
+                doResolve({ success: false, error: errorMsg })
                 return
               }
             } else {
               this.emitStatus('已点击再买一单，等待页面跳转...')
+              await humanDelay(3000)
+              if (resolved) return
+
+              const afterClickUrl = sw.webContents.getURL()
+              if (isProductDetailPage(afterClickUrl)) {
+                const offShelfKeyword = await checkOffShelf(sw)
+                if (offShelfKeyword) {
+                  this.windowManager.closeShopWindow(async () => { await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth) })
+                  this.emitStatus(`商品不可购买（${offShelfKeyword}）`)
+                  doResolve({ success: false, error: `商品不可购买（${offShelfKeyword}）` })
+                  return
+                }
+              } else if (!isOrderDetailPage(afterClickUrl) && !afterClickUrl.includes('orderDetail')) {
+                const offShelfKeyword = await checkOffShelf(sw)
+                if (offShelfKeyword) {
+                  this.windowManager.closeShopWindow(async () => { await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth) })
+                  this.emitStatus(`商品不可购买（${offShelfKeyword}）`)
+                  doResolve({ success: false, error: `商品不可购买（${offShelfKeyword}）` })
+                  return
+                }
+              }
             }
             return
           }
-
           const frames = sw.webContents.mainFrame.framesInSubtree
-          console.log(`[Taobao] Main frame not found, searching ${frames.length} frames...`)
           for (const frame of frames) {
             if (frame === sw!.webContents.mainFrame) continue
             try {
               const frameUrl = frame.url
-              debugLog(`[Taobao] Checking frame: ${frameUrl.substring(0, 100)}`)
               await frame.executeJavaScript(HUMAN_SIM_JS).catch(() => {})
               const frameResult = await frame.executeJavaScript(`
                 (function() {
@@ -1744,9 +1784,9 @@ export class CartService {
                   return { clicked: false, matches: debugMatches };
                 })()
               `)
-              debugLog(`[Taobao] Frame ${frameUrl.substring(0, 80)} result: ${JSON.stringify(frameResult)}`)
-              if (frameResult && frameResult.clicked) {
-                if (frameResult.isCart) {
+              const fr = frameResult as Record<string, unknown> | null
+              if (fr && fr.clicked) {
+                if (fr.isCart) {
                   this.emitStatus('已点击加入购物车，等待结果...')
                   await humanDelay(3000)
                   if (resolved) return
@@ -1777,105 +1817,176 @@ export class CartService {
                       return null;
                     })()
                   `)
-                  debugLog(`[Taobao] Frame cart result detected: ${JSON.stringify(frameCartResult)}`)
 
                   if (frameCartResult?.type === 'success') {
-                    resolved = true
-                    clearTimeout(timeout)
-                    clearInterval(checkInterval)
                     await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth)
                     this.windowManager.closeShopWindow()
                     this.emitStatus('已加入购物车')
-                    resolve({ success: true, directToPay: false })
+                    doResolve({ success: true, directToPay: false })
                     return
                   }
-
                   if (frameCartResult?.type === 'error') {
-                    resolved = true
-                    clearTimeout(timeout)
-                    clearInterval(checkInterval)
                     this.windowManager.closeShopWindow(async () => { await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth) })
                     const errorMsg = `商品不可购买（${frameCartResult.hint}）`
                     this.emitStatus(errorMsg)
-                    resolve({ success: false, error: errorMsg })
+                    doResolve({ success: false, error: errorMsg })
                     return
                   }
                 } else {
                   this.emitStatus('已点击再买一单，等待页面跳转...')
+                  await humanDelay(3000)
+                  if (resolved) return
+
+                  const afterFrameClickUrl = sw.webContents.getURL()
+                  if (isProductDetailPage(afterFrameClickUrl)) {
+                    const offShelfKeyword = await checkOffShelf(sw)
+                    if (offShelfKeyword) {
+                      this.windowManager.closeShopWindow(async () => { await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth) })
+                      this.emitStatus(`商品不可购买（${offShelfKeyword}）`)
+                      doResolve({ success: false, error: `商品不可购买（${offShelfKeyword}）` })
+                      return
+                    }
+                  } else if (!isOrderDetailPage(afterFrameClickUrl) && !afterFrameClickUrl.includes('orderDetail')) {
+                    const offShelfKeyword = await checkOffShelf(sw)
+                    if (offShelfKeyword) {
+                      this.windowManager.closeShopWindow(async () => { await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth) })
+                      this.emitStatus(`商品不可购买（${offShelfKeyword}）`)
+                      doResolve({ success: false, error: `商品不可购买（${offShelfKeyword}）` })
+                      return
+                    }
+                  }
                 }
                 return
               }
             } catch (e: unknown) {
-              debugLog(`[Taobao] Frame search error: ${e}`)
             }
           }
-
-          resolved = true
-          clearTimeout(timeout)
-          clearInterval(checkInterval)
           this.windowManager.closeShopWindow(async () => { await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth) })
           this.emitStatus('未找到再买一单入口')
-          resolve({ success: false, error: '未找到再买一单入口' })
+          doResolve({ success: false, error: '未找到再买一单入口' })
         } catch (e: unknown) {
-          debugLog(`[Taobao] Hidden window rebuy click error: ${e}`)
-          resolved = true
-          clearTimeout(timeout)
-          clearInterval(checkInterval)
+
           this.windowManager.closeShopWindow(async () => { await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth) })
-          resolve({ success: false, error: String(e) })
+          doResolve({ success: false, error: String(e) })
         }
       }
-
       let loginRetryCount = 0
 
       const currentSw = this.windowManager.getShopWindow()!
       lt.on(currentSw.webContents, 'did-finish-load', async () => {
-        if (resolved) return
+        if (resolved) {
+          return
+        }
         const sw = this.windowManager.getShopWindow()
         const url = sw?.webContents.getURL()
         if (!url) return
-        debugLog(`[Taobao] Hidden window loaded: ${url}`)
 
         const hasCaptcha = await this.verificationService.detectCaptcha(sw!)
         if (hasCaptcha) {
-          await sw?.webContents.executeJavaScript(`
-            (function() {
-              try {
-                Object.defineProperty(Document.prototype, 'visibilityState', { get: function() { return document.hidden ? 'hidden' : 'visible'; }, configurable: true });
-                Object.defineProperty(Document.prototype, 'hidden', { get: function() { return !document.hasFocus(); }, configurable: true });
-                Object.defineProperty(document, 'visibilityState', { get: function() { return document.hidden ? 'hidden' : 'visible'; }, configurable: true });
-                Object.defineProperty(document, 'hidden', { get: function() { return !document.hasFocus(); }, configurable: true });
-              } catch(e) {}
-            })()
-          `).catch(() => {})
-          sw?.restore()
+          cleanupForCaptcha(sw!)
           sw?.setSize(WINDOW_SIZES.CONFIRMATION.width, WINDOW_SIZES.CONFIRMATION.height)
           sw?.setTitle('淘宝安全验证')
-          injectOverlayBanner(sw!, '🔐 自动购物助手：淘宝要求安全验证，请拖动滑块完成验证')
-          injectCenterToast(sw!, "请拖动滑块完成验证")
+          sw?.setAlwaysOnTop(true)
+          if (sw?.isMinimized()) {
+            sw.restore()
+          }
+          sw?.show()
+          sw?.focus()
           this.emitStatus('需要进行滑块验证，请在弹出的窗口中完成验证...')
           const verified = await this.interactionService.waitForUserConfirmation(
             sw!,
             '淘宝要求安全验证（滑块验证），请在弹出的窗口中拖动滑块完成验证，然后点击"已完成"',
             '淘宝安全验证',
             '🔐 请拖动滑块完成验证',
+            'verification',
           )
           if (!verified) {
-            resolved = true
-            clearTimeout(timeout)
-            clearInterval(checkInterval)
             this.windowManager.closeShopWindow(async () => { await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth) })
-            resolve({ success: false, error: '安全验证未完成' })
+            doResolve({ success: false, error: '安全验证未完成' })
             return
           }
-          await humanDelay(1000)
+          resetCaptchaMode(sw!)
+          const swAfterVerify = this.windowManager.getShopWindow()
+          if (!swAfterVerify || swAfterVerify.isDestroyed()) {
+            const vWin = this.interactionService.getVerificationWindow()
+            if (vWin && !vWin.isDestroyed()) {
+              this.windowManager.setShopWindow(vWin)
+              this.emitStatus('验证完成，正在继续购买流程...')
+              const vUrl = vWin.webContents.getURL()
+              if (isOrderDetailPage(vUrl) || vUrl.includes('orderDetail')) {
+                vWin.hide()
+              }
+            } else {
+              doResolve({ success: false, error: '验证完成但操作窗口已关闭' })
+              return
+            }
+          }
+          await humanDelay(1500)
+          const currentSw = this.windowManager.getShopWindow()
+          if (currentSw && !currentSw.isDestroyed()) {
+            const afterVerifyUrl = currentSw.webContents.getURL()
+            if (isBuyPage(afterVerifyUrl)) {
+              await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth)
+              if (cartOnly) {
+                this.windowManager.closeShopWindow()
+                this.emitStatus('该商品不支持加入购物车，点击后直接进入了结算页面')
+                doResolve({ success: false, error: '该商品不支持加入购物车，点击后直接进入了结算页面' })
+              } else {
+                this.emitStatus('验证完成，已进入结算页面')
+                doResolve({ success: true, directToPay: true })
+              }
+              return
+            }
+            if (isCartPage(afterVerifyUrl)) {
+              await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth)
+              this.emitStatus('验证完成，已加入购物车')
+              doResolve({ success: true, directToPay: false })
+              return
+            }
+            if (isProductDetailPage(afterVerifyUrl)) {
+              this.emitStatus('验证完成，请在弹出的窗口中选择规格并购买')
+              currentSw.setSize(WINDOW_SIZES.CONFIRMATION.width, WINDOW_SIZES.CONFIRMATION.height)
+              currentSw.setTitle('请选择规格并购买')
+              const mw = this.windowManager.getMainWindow()
+              if (mw) currentSw.setParentWindow(mw)
+              injectOverlayBanner(currentSw, '🛒 自动购物助手：验证通过，请选择规格并点击"立即购买"或"加入购物车"')
+              injectCenterToast(currentSw, '验证通过，请选择规格并购买')
+              currentSw.show()
+              const confirmed = await this.interactionService.waitForUserConfirmation(
+                currentSw,
+                '验证通过，已进入商品详情页，请在弹出的窗口中选择规格并购买，完成后点击"已完成"',
+                '选择规格并购买',
+                '🛒 验证通过，请选择规格并购买',
+                'add-to-cart',
+              )
+              if (!confirmed || currentSw.isDestroyed()) {
+                if (!currentSw.isDestroyed()) this.windowManager.closeShopWindow(async () => { await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth) })
+                doResolve({ success: false, error: '用户取消了购买' })
+                return
+              }
+              let afterUrl = ''
+              try { afterUrl = currentSw.webContents.getURL() } catch { /* window destroyed */ }
+              if (isBuyPage(afterUrl)) {
+                await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth)
+                this.emitStatus('已进入结算页面')
+                doResolve({ success: true, directToPay: true })
+              } else if (isCartPage(afterUrl)) {
+                await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth)
+                this.emitStatus('已加入购物车')
+                doResolve({ success: true, directToPay: false })
+              } else {
+                await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth)
+                this.emitStatus('操作完成')
+                doResolve({ success: true, directToPay: true })
+              }
+              return
+            }
+          }
           return
         }
-
         if (isLoginPage(url)) {
           if (loginRetryCount < 1) {
             loginRetryCount++
-            debugLog(`[Taobao] Login page detected, re-syncing cookies and retrying...`)
             this.emitStatus('检测到登录页面，正在重新同步登录状态...')
             this.cookieManager.resetToElectronSyncTimer()
             await this.cookieManager.syncCookiesToElectron(this.getContext(), this.auth)
@@ -1883,54 +1994,45 @@ export class CartService {
             sw?.loadURL(detailUrl)
             return
           }
-          resolved = true
-          clearTimeout(timeout)
           this.windowManager.closeShopWindow(async () => { await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth) })
           this.emitStatus('登录已过期，请重新登录')
-          resolve({ success: false, error: '登录已过期' })
+          doResolve({ success: false, error: '登录已过期' })
           return
         }
-
         const directToPay = isBuyPage(url)
         if (directToPay) {
-          resolved = true
-          clearTimeout(timeout)
-          clearInterval(checkInterval)
           await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth)
           if (cartOnly) {
             this.windowManager.closeShopWindow()
             this.emitStatus('该商品不支持加入购物车，点击后直接进入了结算页面')
-            resolve({ success: false, error: '该商品不支持加入购物车，点击后直接进入了结算页面' })
+            doResolve({ success: false, error: '该商品不支持加入购物车，点击后直接进入了结算页面' })
           } else {
             this.emitStatus('已进入结算页面')
-            resolve({ success: true, directToPay: true })
+            doResolve({ success: true, directToPay: true })
           }
           return
         }
-
         if (isCartPage(url)) {
-          resolved = true
-          clearTimeout(timeout)
-          clearInterval(checkInterval)
           await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth)
           this.emitStatus('已加入购物车')
-          resolve({ success: true, directToPay: false })
+          doResolve({ success: true, directToPay: false })
           return
         }
-
         if (isOrderArchivePage(url)) {
-          debugLog(`[Taobao] tradearchive page detected, no rebuy button available`)
-          resolved = true
-          clearTimeout(timeout)
-          clearInterval(checkInterval)
+
           this.windowManager.closeShopWindow(async () => { await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth) })
           this.emitStatus('未找到再买一单入口')
-          resolve({ success: false, error: '未找到再买一单入口' })
+          doResolve({ success: false, error: '未找到再买一单入口' })
           return
         }
-
         if (isProductDetailPage(url)) {
-          debugLog(`[Taobao] Product detail page detected after rebuy click, showing to user`)
+          const offShelfKeyword = await checkOffShelf(sw!)
+          if (offShelfKeyword) {
+            this.windowManager.closeShopWindow(async () => { await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth) })
+            this.emitStatus(`商品不可购买（${offShelfKeyword}）`)
+            doResolve({ success: false, error: `商品不可购买（${offShelfKeyword}）` })
+            return
+          }
           this.emitStatus('再买一单后跳转到商品详情页，请在弹出的窗口中选择规格并购买')
           sw!.setSize(WINDOW_SIZES.CONFIRMATION.width, WINDOW_SIZES.CONFIRMATION.height)
           sw!.setTitle('请选择规格并购买')
@@ -1947,42 +2049,29 @@ export class CartService {
             'add-to-cart',
           )
           if (!confirmed || sw!.isDestroyed()) {
-            resolved = true
-            clearTimeout(timeout)
-            clearInterval(checkInterval)
             if (!sw!.isDestroyed()) this.windowManager.closeShopWindow(async () => { await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth) })
-            resolve({ success: false, error: '用户取消了购买' })
+            doResolve({ success: false, error: '用户取消了购买' })
             return
           }
           let afterUrl = ''
           try { afterUrl = sw!.webContents.getURL() } catch { /* window destroyed */ }
           if (isBuyPage(afterUrl)) {
-            resolved = true
-            clearTimeout(timeout)
-            clearInterval(checkInterval)
             await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth)
             this.emitStatus('已进入结算页面')
-            resolve({ success: true, directToPay: true })
+            doResolve({ success: true, directToPay: true })
             return
           }
           if (isCartPage(afterUrl)) {
-            resolved = true
-            clearTimeout(timeout)
-            clearInterval(checkInterval)
             await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth)
             this.emitStatus('已加入购物车')
-            resolve({ success: true, directToPay: false })
+            doResolve({ success: true, directToPay: false })
             return
           }
-          resolved = true
-          clearTimeout(timeout)
-          clearInterval(checkInterval)
           await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth)
           this.emitStatus('已加入购物车')
-          resolve({ success: true, directToPay: false })
+          doResolve({ success: true, directToPay: false })
           return
         }
-
         const btnSearchSelectors = ['button', 'a', '[class*="btn"]', '[class*="Button"]', '[role="button"]', '[class*="action"]', '[class*="submit"]', '[class*="rebuy"]', '[class*="Rebuy"]', '[class*="buy-again"]', '[class*="BuyAgain"]', '[data-spm*="rebuy"]', '[data-spm*="buy"]', 'span[class*="click"]', 'div[class*="click"]']
         let rebuyBtnFound = false
         const btnSearchTargets = cartOnly ? [...KEYWORDS.CART_BUTTONS, ...KEYWORDS.REBUY_BUTTONS] : [...KEYWORDS.REBUY_BUTTONS]
@@ -1990,8 +2079,12 @@ export class CartService {
         const RETRY_DELAYS = [500, 500, 500, 1000, 1000, 1000, 2000, 2000, 2000, 2000]
         let prevBodyLen = 0
         let stableCount = 0
-        for (let retry = 0; retry < MAX_RETRIES && !this.isDestroyed(); retry++) {
+        for (let retry = 0; retry < MAX_RETRIES; retry++) {
+          if (resolved || this.isDestroyed()) {
+            break
+          }
           try {
+            const hsCheck = await execJS(sw, `(function() { return typeof _hs !== 'undefined'; })()`)
             if (retry === 0) {
               const pageDiag = await execJS(sw, `
                 (function() {
@@ -2012,7 +2105,6 @@ export class CartService {
                   return { url: location.href, bodyLen: bodyText.length, bodyPreview: bodyText.substring(0, 500), visibleTexts: allTexts.join('|'), broadMatchTexts: broadTexts.join('|') };
                 })()
               `)
-              debugLog(`[Taobao] PAGE DIAG: ${JSON.stringify(pageDiag)}`)
             }
             const mainHasBtn = await execJS(sw, `
               (function() {
@@ -2036,24 +2128,12 @@ export class CartService {
                 return { found: false, matches: foundItems, bodyLen: (document.body?.innerText || '').length };
               })()
             `)
-            debugLog(`[Taobao] rebuyBtnFound retry ${retry} main: ${JSON.stringify(mainHasBtn)}`)
             if (mainHasBtn?.found) { rebuyBtnFound = true; break }
             const currentBodyLen = mainHasBtn?.bodyLen || 0
-            if (retry >= 2 && currentBodyLen > 0 && currentBodyLen === prevBodyLen) {
-              stableCount++
-              if (stableCount >= 3) {
-                debugLog(`[Taobao] Page content stable for 3 consecutive checks (bodyLen=${currentBodyLen}), stopping early`)
-                break
-              }
-            } else {
-              stableCount = 0
-            }
-            prevBodyLen = currentBodyLen
             const frames = sw!.webContents.mainFrame.framesInSubtree
             for (const frame of frames) {
               if (frame === sw!.webContents.mainFrame) continue
               const fUrl = frame.url
-              debugLog(`[Taobao] rebuyBtnFound retry ${retry} frame: ${fUrl.substring(0, 100)}`)
               try {
                 await frame.executeJavaScript(HUMAN_SIM_JS).catch(() => {})
                 const fHasBtn = await frame.executeJavaScript(`
@@ -2078,14 +2158,21 @@ export class CartService {
                     return { found: false, matches: foundItems };
                   })()
                 `)
-                debugLog(`[Taobao] rebuyBtnFound frame ${fUrl.substring(0, 60)}: ${JSON.stringify(fHasBtn)}`)
-                if (fHasBtn?.found) { rebuyBtnFound = true; break }
+                const fhb = fHasBtn as Record<string, unknown> | null
+                if (fhb?.found) { rebuyBtnFound = true; break }
               } catch (e: unknown) {
-                debugLog(`[Taobao] rebuyBtnFound frame error: ${e}`)
               }
             }
+            if (retry >= 2 && currentBodyLen > 0 && currentBodyLen === prevBodyLen) {
+              stableCount++
+              if (stableCount >= 3) {
+                break
+              }
+            } else {
+              stableCount = 0
+            }
+            prevBodyLen = currentBodyLen
           } catch (e: unknown) {
-            debugLog(`[Taobao] rebuyBtnFound retry ${retry} error: ${e}`)
           }
           if (rebuyBtnFound) break
           if (retry === 1 || retry === 4 || retry === 7) {
@@ -2099,18 +2186,11 @@ export class CartService {
           const delay = RETRY_DELAYS[retry] || 2000
           await humanDelay(delay)
         }
-
         if (!rebuyBtnFound) {
-          debugLog(`[Taobao] Rebuy button not found after 20 retries, skipping to search fallback`)
           this.emitStatus('未找到再买一单按钮，将搜索替代商品...')
-          resolved = true
-          clearTimeout(timeout)
-          clearInterval(checkInterval)
-          if (!sw!.isDestroyed()) this.windowManager.closeShopWindow(async () => { await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth) })
-          resolve({ success: false, error: '未找到再买一单入口' })
+          doResolve({ success: false, error: '未找到再买一单入口' })
           return
         }
-
         let offShelfResult: { offShelf: boolean; keyword: string } | null = null
         try {
           const mainOffShelf = await execJS(sw, `
@@ -2125,8 +2205,16 @@ export class CartService {
                 }
               }
               if (!matchedKeyword) return { offShelf: false, keyword: '' };
-              var buyFound = _hs.findVisible(['button', 'a', '[class*="btn"]', '[class*="Button"]', '[role="button"]', '[class*="action"]', '[class*="submit"]'], ${JSON.stringify(KEYWORDS.BUY_BUTTONS)});
-              if (buyFound.length > 0) return { offShelf: false, keyword: '' };
+              var buyTexts = ${JSON.stringify(KEYWORDS.BUY_BUTTONS)};
+              var btns = document.querySelectorAll('button, a, [class*="btn"], [class*="Button"], [role="button"], [class*="action"], [class*="submit"]');
+              for (var j = 0; j < btns.length; j++) {
+                var btnText = (btns[j].textContent || '').replace(/\\s+/g, '');
+                var rect = btns[j].getBoundingClientRect();
+                if (rect.width <= 0 || rect.height <= 0) continue;
+                for (var k = 0; k < buyTexts.length; k++) {
+                  if (btnText.includes(buyTexts[k])) return { offShelf: false, keyword: '' };
+                }
+              }
               return { offShelf: true, keyword: matchedKeyword };
             })()
           `)
@@ -2152,12 +2240,20 @@ export class CartService {
                       }
                     }
                     if (!matchedKeyword) return { offShelf: false, keyword: '' };
-                    var buyFound = _hs.findVisible(['button', 'a', '[class*="btn"]', '[class*="Button"]', '[role="button"]', '[class*="action"]', '[class*="submit"]'], ${JSON.stringify(KEYWORDS.BUY_BUTTONS)});
-                    if (buyFound.length > 0) return { offShelf: false, keyword: '' };
+                    var buyTexts = ${JSON.stringify(KEYWORDS.BUY_BUTTONS)};
+                    var btns = document.querySelectorAll('button, a, [class*="btn"], [class*="Button"], [role="button"], [class*="action"], [class*="submit"]');
+                    for (var j = 0; j < btns.length; j++) {
+                      var btnText = (btns[j].textContent || '').replace(/\\s+/g, '');
+                      var rect = btns[j].getBoundingClientRect();
+                      if (rect.width <= 0 || rect.height <= 0) continue;
+                      for (var k = 0; k < buyTexts.length; k++) {
+                        if (btnText.includes(buyTexts[k])) return { offShelf: false, keyword: '' };
+                      }
+                    }
                     return { offShelf: true, keyword: matchedKeyword };
                   })()
                 `)
-                if (fOffShelf?.offShelf) { offShelfResult = fOffShelf; break }
+                if ((fOffShelf as Record<string, unknown> | null)?.offShelf) { offShelfResult = fOffShelf as { offShelf: boolean; keyword: string }; break }
               } catch { /* ignore */ }
             }
           }
@@ -2166,16 +2262,12 @@ export class CartService {
             if (sameUrlCount >= 15) {
               rebuyRetryCount++
               if (rebuyRetryCount > MAX_REBUY_RETRIES) {
-                debugLog(`[Taobao] checkInterval: Max rebuy retries reached, giving up`)
-                resolved = true
-                clearTimeout(timeout)
-                clearInterval(checkInterval)
+
                 this.windowManager.closeShopWindow(async () => { await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth) })
                 this.emitStatus('多次点击再买一单后页面未跳转，请尝试搜索购买')
-                resolve({ success: false, error: '多次点击再买一单后页面未跳转' })
+                doResolve({ success: false, error: '多次点击再买一单后页面未跳转' })
                 return
               }
-              debugLog(`[Taobao] checkInterval: Page still on order detail after ${sameUrlCount * 2}s, retrying rebuy click (${rebuyRetryCount}/${MAX_REBUY_RETRIES})`)
               sameUrlCount = 0
               tryClickRebuy()
             }
@@ -2183,56 +2275,48 @@ export class CartService {
             sameUrlCount = 0
           }
         } catch { /* ignore */ }
-
         if (offShelfResult?.offShelf) {
-          resolved = true
-          clearTimeout(timeout)
-          clearInterval(checkInterval)
           this.windowManager.closeShopWindow(async () => { await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth) })
           this.emitStatus(`商品不可购买（${offShelfResult.keyword}）`)
-          resolve({ success: false, error: `商品不可购买（${offShelfResult.keyword}）` })
+          doResolve({ success: false, error: `商品不可购买（${offShelfResult.keyword}）` })
           return
         }
-
         await tryClickRebuy()
       })
 
       lt.on(currentSw.webContents, 'did-navigate', async (_event, navUrl: string) => {
         if (resolved) return
-        debugLog(`[Taobao] Hidden window navigated: ${navUrl}`)
         await humanDelay(1500)
         const sw = this.windowManager.getShopWindow()
         if (!sw || sw.isDestroyed()) return
         const url = sw.webContents.getURL()
 
         if (isBuyPage(url)) {
-          resolved = true
-          clearTimeout(timeout)
-          clearInterval(checkInterval)
           await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth)
           if (cartOnly) {
             this.windowManager.closeShopWindow()
             this.emitStatus('该商品不支持加入购物车，点击后直接进入了结算页面')
-            resolve({ success: false, error: '该商品不支持加入购物车，点击后直接进入了结算页面' })
+            doResolve({ success: false, error: '该商品不支持加入购物车，点击后直接进入了结算页面' })
           } else {
             this.emitStatus('已进入结算页面')
-            resolve({ success: true, directToPay: true })
+            doResolve({ success: true, directToPay: true })
           }
           return
         }
-
         if (isCartPage(url)) {
-          resolved = true
-          clearTimeout(timeout)
-          clearInterval(checkInterval)
           await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth)
           this.emitStatus('已加入购物车')
-          resolve({ success: true, directToPay: false })
+          doResolve({ success: true, directToPay: false })
           return
         }
-
         if (isProductDetailPage(url)) {
-          debugLog(`[Taobao] did-navigate: Product detail page detected, showing to user`)
+          const offShelfKeyword = await checkOffShelf(sw)
+          if (offShelfKeyword) {
+            this.windowManager.closeShopWindow(async () => { await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth) })
+            this.emitStatus(`商品不可购买（${offShelfKeyword}）`)
+            doResolve({ success: false, error: `商品不可购买（${offShelfKeyword}）` })
+            return
+          }
           this.emitStatus('再买一单后跳转到商品详情页，请在弹出的窗口中选择规格并购买')
           sw.setSize(WINDOW_SIZES.CONFIRMATION.width, WINDOW_SIZES.CONFIRMATION.height)
           sw.setTitle('请选择规格并购买')
@@ -2249,57 +2333,39 @@ export class CartService {
             'add-to-cart',
           )
           if (!confirmed || sw.isDestroyed()) {
-            resolved = true
-            clearTimeout(timeout)
-            clearInterval(checkInterval)
             if (!sw.isDestroyed()) this.windowManager.closeShopWindow(async () => { await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth) })
-            resolve({ success: false, error: '用户取消了购买' })
+            doResolve({ success: false, error: '用户取消了购买' })
             return
           }
           let afterUrl = ''
           try { afterUrl = sw.webContents.getURL() } catch { /* window destroyed */ }
           if (isBuyPage(afterUrl)) {
-            resolved = true
-            clearTimeout(timeout)
-            clearInterval(checkInterval)
             await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth)
             this.emitStatus('已进入结算页面')
-            resolve({ success: true, directToPay: true })
+            doResolve({ success: true, directToPay: true })
             return
           }
           if (isCartPage(afterUrl)) {
-            resolved = true
-            clearTimeout(timeout)
-            clearInterval(checkInterval)
             await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth)
             this.emitStatus('已加入购物车')
-            resolve({ success: true, directToPay: false })
+            doResolve({ success: true, directToPay: false })
             return
           }
-          resolved = true
-          clearTimeout(timeout)
-          clearInterval(checkInterval)
           await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth)
           this.emitStatus('已加入购物车')
-          resolve({ success: true, directToPay: false })
+          doResolve({ success: true, directToPay: false })
           return
         }
-
         if (isOrderArchivePage(url)) {
-          debugLog(`[Taobao] did-navigate: tradearchive page detected, no rebuy button available`)
-          resolved = true
-          clearTimeout(timeout)
-          clearInterval(checkInterval)
+
           this.windowManager.closeShopWindow(async () => { await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth) })
           this.emitStatus('未找到再买一单入口')
-          resolve({ success: false, error: '未找到再买一单入口' })
+          doResolve({ success: false, error: '未找到再买一单入口' })
           return
         }
-
         if (isLoginPage(url)) {
           if (loginRetryCount < 1) {
             loginRetryCount++
-            debugLog(`[Taobao] did-navigate: Login page detected, re-syncing cookies and retrying...`)
             this.emitStatus('检测到登录页面，正在重新同步登录状态...')
             this.cookieManager.resetToElectronSyncTimer()
             await this.cookieManager.syncCookiesToElectron(this.getContext(), this.auth)
@@ -2307,50 +2373,44 @@ export class CartService {
             sw.loadURL(detailUrl)
             return
           }
-          resolved = true
-          clearTimeout(timeout)
-          clearInterval(checkInterval)
           this.windowManager.closeShopWindow(async () => { await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth) })
           this.emitStatus('登录已过期，请重新登录')
-          resolve({ success: false, error: '登录已过期' })
+          doResolve({ success: false, error: '登录已过期' })
           return
         }
       })
 
       lt.on(currentSw.webContents, 'did-navigate-in-page', async (_event, navUrl: string) => {
         if (resolved) return
-        debugLog(`[Taobao] Hidden window in-page navigation: ${navUrl}`)
         const sw = this.windowManager.getShopWindow()
         if (!sw || sw.isDestroyed()) return
 
         if (isBuyPage(navUrl)) {
-          resolved = true
-          clearTimeout(timeout)
-          clearInterval(checkInterval)
           await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth)
           if (cartOnly) {
             this.windowManager.closeShopWindow()
             this.emitStatus('该商品不支持加入购物车，点击后直接进入了结算页面')
-            resolve({ success: false, error: '该商品不支持加入购物车，点击后直接进入了结算页面' })
+            doResolve({ success: false, error: '该商品不支持加入购物车，点击后直接进入了结算页面' })
           } else {
             this.emitStatus('已进入结算页面')
-            resolve({ success: true, directToPay: true })
+            doResolve({ success: true, directToPay: true })
           }
           return
         }
-
         if (isCartPage(navUrl)) {
-          resolved = true
-          clearTimeout(timeout)
-          clearInterval(checkInterval)
           await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth)
           this.emitStatus('已加入购物车')
-          resolve({ success: true, directToPay: false })
+          doResolve({ success: true, directToPay: false })
           return
         }
-
         if (isProductDetailPage(navUrl)) {
-          debugLog(`[Taobao] did-navigate-in-page: Product detail page detected, showing to user`)
+          const offShelfKeyword = await checkOffShelf(sw)
+          if (offShelfKeyword) {
+            this.windowManager.closeShopWindow(async () => { await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth) })
+            this.emitStatus(`商品不可购买（${offShelfKeyword}）`)
+            doResolve({ success: false, error: `商品不可购买（${offShelfKeyword}）` })
+            return
+          }
           this.emitStatus('再买一单后跳转到商品详情页，请在弹出的窗口中选择规格并购买')
           sw.setSize(WINDOW_SIZES.CONFIRMATION.width, WINDOW_SIZES.CONFIRMATION.height)
           sw.setTitle('请选择规格并购买')
@@ -2367,28 +2427,22 @@ export class CartService {
             'add-to-cart',
           )
           if (!confirmed || sw.isDestroyed()) {
-            resolved = true
-            clearTimeout(timeout)
-            clearInterval(checkInterval)
             if (!sw.isDestroyed()) this.windowManager.closeShopWindow(async () => { await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth) })
-            resolve({ success: false, error: '用户取消了购买' })
+            doResolve({ success: false, error: '用户取消了购买' })
             return
           }
           let afterUrl = ''
           try { afterUrl = sw.webContents.getURL() } catch { /* window destroyed */ }
-          resolved = true
-          clearTimeout(timeout)
-          clearInterval(checkInterval)
           await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth)
           if (isBuyPage(afterUrl)) {
             this.emitStatus('已进入结算页面')
-            resolve({ success: true, directToPay: true })
+            doResolve({ success: true, directToPay: true })
           } else if (isCartPage(afterUrl)) {
             this.emitStatus('已加入购物车')
-            resolve({ success: true, directToPay: false })
+            doResolve({ success: true, directToPay: false })
           } else {
             this.emitStatus('已加入购物车')
-            resolve({ success: true, directToPay: false })
+            doResolve({ success: true, directToPay: false })
           }
           return
         }
@@ -2403,36 +2457,34 @@ export class CartService {
           if (frame === sw.webContents.mainFrame) continue
           const frameUrl = frame.url
           if (isBuyPage(frameUrl)) {
-            debugLog(`[Taobao] frame-navigated: Buy page detected in iframe: ${frameUrl}`)
-            resolved = true
-            clearTimeout(timeout)
-            clearInterval(checkInterval)
+
             await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth)
             if (cartOnly) {
               this.windowManager.closeShopWindow()
               this.emitStatus('该商品不支持加入购物车，点击后直接进入了结算页面')
-              resolve({ success: false, error: '该商品不支持加入购物车，点击后直接进入了结算页面' })
+              doResolve({ success: false, error: '该商品不支持加入购物车，点击后直接进入了结算页面' })
             } else {
               this.emitStatus('已进入结算页面')
-              resolve({ success: true, directToPay: true })
+              doResolve({ success: true, directToPay: true })
             }
             return
           }
           if (isCartPage(frameUrl)) {
-            debugLog(`[Taobao] frame-navigated: Cart page detected in iframe: ${frameUrl}`)
-            resolved = true
-            clearTimeout(timeout)
-            clearInterval(checkInterval)
+
             await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth)
             this.emitStatus('已加入购物车')
-            resolve({ success: true, directToPay: false })
+            doResolve({ success: true, directToPay: false })
             return
           }
           if (isProductDetailPage(frameUrl)) {
-            debugLog(`[Taobao] frame-navigated: Product detail page detected in iframe: ${frameUrl}`)
-            resolved = true
-            clearTimeout(timeout)
-            clearInterval(checkInterval)
+            const offShelfKeyword = await checkOffShelf(sw)
+            if (offShelfKeyword) {
+              this.windowManager.closeShopWindow(async () => { await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth) })
+              this.emitStatus(`商品不可购买（${offShelfKeyword}）`)
+              doResolve({ success: false, error: `商品不可购买（${offShelfKeyword}）` })
+              return
+            }
+
             sw.setSize(WINDOW_SIZES.CONFIRMATION.width, WINDOW_SIZES.CONFIRMATION.height)
             sw.setTitle('请选择规格并购买')
             const mw = this.windowManager.getMainWindow()
@@ -2450,23 +2502,20 @@ export class CartService {
             )
             if (!confirmed || sw.isDestroyed()) {
               if (!sw.isDestroyed()) this.windowManager.closeShopWindow(async () => { await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth) })
-              resolve({ success: false, error: '用户取消了购买' })
+              doResolve({ success: false, error: '用户取消了购买' })
             } else {
               let afterUrl = ''
               try { afterUrl = sw.webContents.getURL() } catch { /* window destroyed */ }
-              resolved = true
-              clearTimeout(timeout)
-              clearInterval(checkInterval)
               await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth)
               if (isBuyPage(afterUrl)) {
                 this.emitStatus('已进入结算页面')
-                resolve({ success: true, directToPay: true })
+                doResolve({ success: true, directToPay: true })
               } else if (isCartPage(afterUrl)) {
                 this.emitStatus('已加入购物车')
-                resolve({ success: true, directToPay: false })
+                doResolve({ success: true, directToPay: false })
               } else {
                 this.emitStatus('已加入购物车')
-                resolve({ success: true, directToPay: false })
+                doResolve({ success: true, directToPay: false })
               }
             }
             return
@@ -2475,29 +2524,134 @@ export class CartService {
       })
 
       const checkInterval = setInterval(async () => {
-        if (resolved) { clearInterval(checkInterval); return }
+        if (resolved) { return }
         if (this.isDestroyed()) {
-          clearInterval(checkInterval)
           if (!resolved) {
-            resolved = true
-            clearTimeout(timeout)
-            resolve({ success: false, error: '任务已取消' })
+            doResolve({ success: false, error: '任务已取消' })
           }
           return
         }
         try {
           const sw = this.windowManager.getShopWindow()
           if (!sw || sw.isDestroyed()) {
-            clearInterval(checkInterval)
             if (!resolved) {
-              resolved = true
-              clearTimeout(timeout)
-              resolve({ success: false, error: '操作窗口已关闭' })
+              if (this.interactionService.hasPendingConfirmation()) {
+                return
+              }
+              doResolve({ success: false, error: '操作窗口已关闭' })
             }
             return
           }
           const url = sw.webContents.getURL()
           if (!url) return
+
+          const hasCaptcha = await this.verificationService.detectCaptcha(sw)
+          if (hasCaptcha) {
+            cleanupForCaptcha(sw)
+            sw.setSize(WINDOW_SIZES.CONFIRMATION.width, WINDOW_SIZES.CONFIRMATION.height)
+            sw.setTitle('淘宝安全验证')
+            sw.setAlwaysOnTop(true)
+            if (sw.isMinimized()) {
+              sw.restore()
+            }
+            sw.show()
+            sw.focus()
+            this.emitStatus('需要进行滑块验证，请在弹出的窗口中完成验证...')
+            const verified = await this.interactionService.waitForUserConfirmation(
+              sw,
+              '淘宝要求安全验证（滑块验证），请在弹出的窗口中拖动滑块完成验证，然后点击"已完成"',
+              '淘宝安全验证',
+              '🔐 请拖动滑块完成验证',
+              'verification',
+            )
+            if (!verified) {
+              this.windowManager.closeShopWindow(async () => { await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth) })
+              doResolve({ success: false, error: '安全验证未完成' })
+              return
+            }
+            resetCaptchaMode(sw)
+            const swAfterVerify = this.windowManager.getShopWindow()
+            if (!swAfterVerify || swAfterVerify.isDestroyed()) {
+              doResolve({ success: false, error: '验证完成但操作窗口已关闭' })
+              return
+            }
+            await humanDelay(1500)
+            const checkSw = this.windowManager.getShopWindow()
+            if (checkSw && !checkSw.isDestroyed()) {
+              const afterVerifyUrl = checkSw.webContents.getURL()
+              if (isBuyPage(afterVerifyUrl)) {
+                await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth)
+                if (cartOnly) {
+                  this.windowManager.closeShopWindow()
+                  this.emitStatus('该商品不支持加入购物车，点击后直接进入了结算页面')
+                  doResolve({ success: false, error: '该商品不支持加入购物车，点击后直接进入了结算页面' })
+                } else {
+                  this.emitStatus('验证完成，已进入结算页面')
+                  doResolve({ success: true, directToPay: true })
+                }
+                return
+              }
+              if (isCartPage(afterVerifyUrl)) {
+                await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth)
+                this.emitStatus('验证完成，已加入购物车')
+                doResolve({ success: true, directToPay: false })
+                return
+              }
+              if (isProductDetailPage(afterVerifyUrl)) {
+                this.emitStatus('验证完成，请在弹出的窗口中选择规格并购买')
+                checkSw.setSize(WINDOW_SIZES.CONFIRMATION.width, WINDOW_SIZES.CONFIRMATION.height)
+                checkSw.setTitle('请选择规格并购买')
+                const mw = this.windowManager.getMainWindow()
+                if (mw) checkSw.setParentWindow(mw)
+                injectOverlayBanner(checkSw, '🛒 自动购物助手：验证通过，请选择规格并点击"立即购买"或"加入购物车"')
+                injectCenterToast(checkSw, '验证通过，请选择规格并购买')
+                checkSw.show()
+                const confirmed = await this.interactionService.waitForUserConfirmation(
+                  checkSw,
+                  '验证通过，已进入商品详情页，请在弹出的窗口中选择规格并购买，完成后点击"已完成"',
+                  '选择规格并购买',
+                  '🛒 验证通过，请选择规格并购买',
+                  'add-to-cart',
+                )
+                if (!confirmed || checkSw.isDestroyed()) {
+                  if (!checkSw.isDestroyed()) this.windowManager.closeShopWindow(async () => { await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth) })
+                  doResolve({ success: false, error: '用户取消了购买' })
+                } else {
+                  let afterUrl = ''
+                  try { afterUrl = checkSw.webContents.getURL() } catch { /* window destroyed */ }
+                  await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth)
+                  if (isBuyPage(afterUrl)) {
+                    this.emitStatus('已进入结算页面')
+                    doResolve({ success: true, directToPay: true })
+                  } else if (isCartPage(afterUrl)) {
+                    this.emitStatus('已加入购物车')
+                    doResolve({ success: true, directToPay: false })
+                  } else {
+                    this.emitStatus('操作完成')
+                    doResolve({ success: true, directToPay: true })
+                  }
+                }
+                return
+              }
+            }
+            return
+          }
+
+          if (isLoginPage(url)) {
+            if (loginRetryCount < 1) {
+              loginRetryCount++
+              this.emitStatus('检测到登录页面，正在重新同步登录状态...')
+              this.cookieManager.resetToElectronSyncTimer()
+              await this.cookieManager.syncCookiesToElectron(this.getContext(), this.auth)
+              await humanDelay(500)
+              sw.loadURL(detailUrl)
+              return
+            }
+            this.windowManager.closeShopWindow(async () => { await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth) })
+            this.emitStatus('登录已过期，请重新登录')
+            doResolve({ success: false, error: '登录已过期' })
+            return
+          }
 
           if (cartOnly && (isOrderDetailPage(url) || url.includes('orderDetail'))) {
             const intervalCartResult = await sw?.webContents.executeJavaScript(`
@@ -2527,27 +2681,20 @@ export class CartService {
               })()
             `).catch(() => null)
             if (intervalCartResult?.type === 'success') {
-              resolved = true
-              clearTimeout(timeout)
-              clearInterval(checkInterval)
               await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth)
               this.windowManager.closeShopWindow()
               this.emitStatus('已加入购物车')
-              resolve({ success: true, directToPay: false })
+              doResolve({ success: true, directToPay: false })
               return
             }
             if (intervalCartResult?.type === 'error') {
-              resolved = true
-              clearTimeout(timeout)
-              clearInterval(checkInterval)
               this.windowManager.closeShopWindow(async () => { await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth) })
               const errorMsg = `商品不可购买（${intervalCartResult.hint}）`
               this.emitStatus(errorMsg)
-              resolve({ success: false, error: errorMsg })
+              doResolve({ success: false, error: errorMsg })
               return
             }
           }
-
           if (isOrderDetailPage(url) || url.includes('orderDetail')) {
             const frames = sw!.webContents.mainFrame.framesInSubtree
             let iframeNavigated = false
@@ -2555,36 +2702,34 @@ export class CartService {
               if (frame === sw!.webContents.mainFrame) continue
               const frameUrl = frame.url
               if (isBuyPage(frameUrl)) {
-                debugLog(`[Taobao] checkInterval: Buy page detected in iframe: ${frameUrl}`)
-                resolved = true
-                clearTimeout(timeout)
-                clearInterval(checkInterval)
+
                 await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth)
                 if (cartOnly) {
                   this.windowManager.closeShopWindow()
                   this.emitStatus('该商品不支持加入购物车，点击后直接进入了结算页面')
-                  resolve({ success: false, error: '该商品不支持加入购物车，点击后直接进入了结算页面' })
+                  doResolve({ success: false, error: '该商品不支持加入购物车，点击后直接进入了结算页面' })
                 } else {
                   this.emitStatus('已进入结算页面')
-                  resolve({ success: true, directToPay: true })
+                  doResolve({ success: true, directToPay: true })
                 }
                 return
               }
               if (isCartPage(frameUrl)) {
-                debugLog(`[Taobao] checkInterval: Cart page detected in iframe: ${frameUrl}`)
-                resolved = true
-                clearTimeout(timeout)
-                clearInterval(checkInterval)
+
                 await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth)
                 this.emitStatus('已加入购物车')
-                resolve({ success: true, directToPay: false })
+                doResolve({ success: true, directToPay: false })
                 return
               }
               if (isProductDetailPage(frameUrl)) {
-                debugLog(`[Taobao] checkInterval: Product detail page detected in iframe: ${frameUrl}`)
-                resolved = true
-                clearTimeout(timeout)
-                clearInterval(checkInterval)
+                const offShelfKeyword = await checkOffShelf(sw!)
+                if (offShelfKeyword) {
+                  this.windowManager.closeShopWindow(async () => { await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth) })
+                  this.emitStatus(`商品不可购买（${offShelfKeyword}）`)
+                  doResolve({ success: false, error: `商品不可购买（${offShelfKeyword}）` })
+                  return
+                }
+
                 sw!.setSize(WINDOW_SIZES.CONFIRMATION.width, WINDOW_SIZES.CONFIRMATION.height)
                 sw!.setTitle('请选择规格并购买')
                 const mw = this.windowManager.getMainWindow()
@@ -2602,22 +2747,22 @@ export class CartService {
                 )
                 if (!confirmed || sw!.isDestroyed()) {
                   if (!sw!.isDestroyed()) this.windowManager.closeShopWindow(async () => { await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth) })
-                  resolve({ success: false, error: '用户取消了购买' })
+                  doResolve({ success: false, error: '用户取消了购买' })
                 } else {
                   let afterUrl = ''
                   try { afterUrl = sw!.webContents.getURL() } catch { /* window destroyed */ }
                   if (isBuyPage(afterUrl)) {
                     await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth)
                     this.emitStatus('已进入结算页面')
-                    resolve({ success: true, directToPay: true })
+                    doResolve({ success: true, directToPay: true })
                   } else if (isCartPage(afterUrl)) {
                     await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth)
                     this.emitStatus('已加入购物车')
-                    resolve({ success: true, directToPay: false })
+                    doResolve({ success: true, directToPay: false })
                   } else {
                     await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth)
                     this.emitStatus('已加入购物车')
-                    resolve({ success: true, directToPay: false })
+                    doResolve({ success: true, directToPay: false })
                   }
                 }
                 return
@@ -2631,16 +2776,12 @@ export class CartService {
               if (sameUrlCount >= 15) {
                 rebuyRetryCount++
                 if (rebuyRetryCount > MAX_REBUY_RETRIES) {
-                  debugLog(`[Taobao] checkInterval: Max rebuy retries reached, giving up`)
-                  resolved = true
-                  clearTimeout(timeout)
-                  clearInterval(checkInterval)
+
                   this.windowManager.closeShopWindow(async () => { await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth) })
                   this.emitStatus('多次点击再买一单后页面未跳转，请尝试搜索购买')
-                  resolve({ success: false, error: '多次点击再买一单后页面未跳转' })
+                  doResolve({ success: false, error: '多次点击再买一单后页面未跳转' })
                   return
                 }
-                debugLog(`[Taobao] checkInterval: Page still on order detail after ${sameUrlCount * 2}s, retrying rebuy click (${rebuyRetryCount}/${MAX_REBUY_RETRIES})`)
                 sameUrlCount = 0
                 tryClickRebuy()
               }
@@ -2648,27 +2789,20 @@ export class CartService {
               sameUrlCount = 0
             }
           }
-
           if (isBuyPage(url)) {
-            resolved = true
-            clearTimeout(timeout)
-            clearInterval(checkInterval)
             await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth)
             if (cartOnly) {
               this.windowManager.closeShopWindow()
               this.emitStatus('该商品不支持加入购物车，点击后直接进入了结算页面')
-              resolve({ success: false, error: '该商品不支持加入购物车，点击后直接进入了结算页面' })
+              doResolve({ success: false, error: '该商品不支持加入购物车，点击后直接进入了结算页面' })
             } else {
               this.emitStatus('已进入结算页面')
-              resolve({ success: true, directToPay: true })
+              doResolve({ success: true, directToPay: true })
             }
           } else if (isCartPage(url)) {
-            resolved = true
-            clearTimeout(timeout)
-            clearInterval(checkInterval)
             await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth)
             this.emitStatus('已加入购物车')
-            resolve({ success: true, directToPay: false })
+            doResolve({ success: true, directToPay: false })
           } else if (isProductDetailPage(url)) {
             const offShelfCheck = await execJS(sw, `
               (function() {
@@ -2682,20 +2816,24 @@ export class CartService {
                   }
                 }
                 if (!matchedKeyword) return '';
-                var buyFound = _hs.findVisible(['button', 'a', '[class*="btn"]', '[class*="Button"]', '[role="button"]', '[class*="action"]', '[class*="submit"]'], ${JSON.stringify(KEYWORDS.BUY_BUTTONS)});
-                if (buyFound.length > 0) return '';
+                var buyTexts = ${JSON.stringify(KEYWORDS.BUY_BUTTONS)};
+                var btns = document.querySelectorAll('button, a, [class*="btn"], [class*="Button"], [role="button"], [class*="action"], [class*="submit"]');
+                for (var j = 0; j < btns.length; j++) {
+                  var btnText = (btns[j].textContent || '').replace(/\\s+/g, '');
+                  var rect = btns[j].getBoundingClientRect();
+                  if (rect.width <= 0 || rect.height <= 0) continue;
+                  for (var k = 0; k < buyTexts.length; k++) {
+                    if (btnText.includes(buyTexts[k])) return '';
+                  }
+                }
                 return matchedKeyword;
               })()
             `).catch(() => '')
             if (offShelfCheck) {
-              resolved = true
-              clearTimeout(timeout)
-              clearInterval(checkInterval)
               this.windowManager.closeShopWindow(async () => { await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth) })
               this.emitStatus(`商品不可购买（${offShelfCheck}）`)
-              resolve({ success: false, error: `商品不可购买（${offShelfCheck}）` })
+              doResolve({ success: false, error: `商品不可购买（${offShelfCheck}）` })
             } else {
-              debugLog(`[Taobao] checkInterval: Product detail page detected, showing to user`)
               this.emitStatus('再买一单后跳转到商品详情页，请在弹出的窗口中选择规格并购买')
               sw!.setSize(WINDOW_SIZES.CONFIRMATION.width, WINDOW_SIZES.CONFIRMATION.height)
               sw!.setTitle('请选择规格并购买')
@@ -2712,39 +2850,35 @@ export class CartService {
                 'add-to-cart',
               )
               if (!confirmed || sw!.isDestroyed()) {
-                resolved = true
-                clearTimeout(timeout)
-                clearInterval(checkInterval)
                 if (!sw!.isDestroyed()) this.windowManager.closeShopWindow(async () => { await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth) })
-                resolve({ success: false, error: '用户取消了购买' })
+                doResolve({ success: false, error: '用户取消了购买' })
                 return
               }
               let afterUrl = ''
               try { afterUrl = sw!.webContents.getURL() } catch { /* window destroyed */ }
               if (isBuyPage(afterUrl)) {
-                resolved = true
-                clearTimeout(timeout)
-                clearInterval(checkInterval)
                 await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth)
                 this.emitStatus('已进入结算页面')
-                resolve({ success: true, directToPay: true })
+                doResolve({ success: true, directToPay: true })
                 return
               }
               if (isCartPage(afterUrl)) {
-                resolved = true
-                clearTimeout(timeout)
-                clearInterval(checkInterval)
                 await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth)
                 this.emitStatus('已加入购物车')
-                resolve({ success: true, directToPay: false })
+                doResolve({ success: true, directToPay: false })
                 return
               }
-              resolved = true
-              clearTimeout(timeout)
-              clearInterval(checkInterval)
               await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth)
               this.emitStatus('已加入购物车')
-              resolve({ success: true, directToPay: false })
+              doResolve({ success: true, directToPay: false })
+              return
+            }
+          } else if (!isOrderDetailPage(url) && !url.includes('orderDetail') && !isLoginPage(url)) {
+            const offShelfKeyword = await checkOffShelf(sw!)
+            if (offShelfKeyword) {
+              this.windowManager.closeShopWindow(async () => { await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth) })
+              this.emitStatus(`商品不可购买（${offShelfKeyword}）`)
+              doResolve({ success: false, error: `商品不可购买（${offShelfKeyword}）` })
               return
             }
           }
@@ -2753,12 +2887,13 @@ export class CartService {
 
       currentSw.on('closed', async () => {
         if (!resolved) {
-          resolved = true
-          clearTimeout(timeout)
-          clearInterval(checkInterval)
+          if (this.interactionService.hasPendingConfirmation()) {
+            this.windowManager.setShopWindow(null)
+            return
+          }
           await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth)
           this.windowManager.setShopWindow(null)
-          resolve(null)
+          doResolve(null)
         }
       })
     })
@@ -2772,12 +2907,10 @@ export class CartService {
     try {
       const bizOrderId = orderId.replace(/_\d+$/, '')
       const detailUrl = `https://buyertrade.taobao.com/trade/detail/trade_item_detail.htm?bizOrderId=${bizOrderId}`
-      console.log(`[Taobao] Playwright: Opening order detail: ${detailUrl}`)
       this.emitStatus('正在打开订单详情页（Playwright）...')
       await page.goto(detailUrl, { waitUntil: 'domcontentloaded', timeout: TIMEOUTS.PAGE_LOAD })
 
       const pageUrl = page.url()
-      console.log(`[Taobao] Page URL after navigation: ${pageUrl}`)
       if (pageUrl.includes('login.taobao.com')) {
         this.emitStatus('登录已过期，请重新登录')
         return { success: false, error: '登录已过期' }
@@ -2835,7 +2968,7 @@ export class CartService {
         if (result) return result
       }
 
-      return await this.fallbackManualAddToCart(productUrl)
+      return { success: false, error: '未找到再买一单入口' }
     } catch (e: unknown) {
       console.log(`[Taobao] Playwright addToCart error: ${e}`)
       this.emitStatus(`再买一单失败: ${e}`)
@@ -2854,10 +2987,8 @@ export class CartService {
 
     if (popup) {
       const popupUrl = popup.url()
-      console.log(`[Taobao] New popup opened: ${popupUrl}`)
 
       if (isIdentityVerifyPage(popupUrl)) {
-        console.log(`[Taobao] Identity verification required, showing to user`)
         const verifyResult = await this.verificationService.handleIdentityVerification(popup)
         if (verifyResult) return verifyResult
       }
@@ -2895,7 +3026,6 @@ export class CartService {
     }
 
     const afterUrl = page.url()
-    console.log(`[Taobao] After rebuy click, URL: ${afterUrl}`)
     if (isCheckoutOrPayPage(afterUrl)) {
       this.emitStatus('已进入结算页面')
       return { success: true, directToPay: true }
@@ -2918,119 +3048,12 @@ export class CartService {
     })
 
     if (hasCheckoutButton) {
-      console.log(`[Taobao] Checkout button found on current page, treating as directToPay`)
       this.emitStatus('已进入结算页面')
       return { success: true, directToPay: true }
     }
 
     this.emitStatus('已加入购物车')
     return { success: true, directToPay: false }
-  }
-
-  private async fallbackManualAddToCart(productUrl?: string): Promise<AddToCartResult> {
-    const page = this.browserManager.getPage()
-    if (!page) return { success: false, error: '浏览器未初始化' }
-
-    this.emitStatus('自动再买一单失败，请在弹出的窗口中手动操作...')
-
-    const orderDetailUrl = page.url()
-
-    try {
-      await this.cookieManager.syncCookiesToElectron(this.getContext(), this.auth)
-
-      const mainWindow = this.windowManager.getMainWindow()
-      if (mainWindow) {
-        await dialog.showMessageBox(mainWindow, {
-          type: 'info',
-          title: '需要手动操作',
-          message: '自动"再买一单"失败',
-          detail: '该订单可能因商品下架、SKU变更等原因无法自动再买一单。\n\n即将打开您的购买记录详情页，请您手动操作下单。\n加入购物车后，窗口会自动关闭并继续后续流程。',
-          buttons: ['知道了'],
-          noLink: true,
-        })
-      }
-
-      return new Promise<AddToCartResult>((resolve) => {
-        if (!mainWindow) {
-          resolve({ success: false, error: '主窗口未就绪' })
-          return
-        }
-
-        const manualWindow = new BrowserWindow({
-          width: 900,
-          height: 750,
-          title: '手动加入购物车',
-          icon: APP_ICON,
-          parent: mainWindow,
-          modal: true,
-          autoHideMenuBar: true,
-          webPreferences: {
-            nodeIntegration: false,
-            contextIsolation: true,
-            backgroundThrottling: false,
-          },
-        })
-        setUserAgent(manualWindow)
-        manualWindow.loadURL(orderDetailUrl)
-
-        let resolved = false
-        const timeout = setTimeout(() => {
-          if (!resolved) {
-            resolved = true
-            if (!manualWindow.isDestroyed()) manualWindow.close()
-            this.emitStatus('手动操作超时')
-            resolve({ success: false, error: '手动操作超时' })
-          }
-        }, TIMEOUTS.OPERATION)
-
-        const checkDone = setInterval(async () => {
-          if (resolved) return
-          if (this.isDestroyed()) {
-            clearInterval(checkDone)
-            if (!resolved) {
-              resolved = true
-              clearTimeout(timeout)
-              resolve({ success: false, error: '任务已取消' })
-            }
-            return
-          }
-          try {
-            const pageUrl = manualWindow.webContents.getURL()
-            if (isCartPage(pageUrl)) {
-              resolved = true
-              clearTimeout(timeout)
-              clearInterval(checkDone)
-              await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth)
-              if (!manualWindow.isDestroyed()) manualWindow.close()
-              this.emitStatus('已加入购物车')
-              resolve({ success: true, directToPay: false })
-            } else if (isCheckoutOrPayPage(pageUrl)) {
-              resolved = true
-              clearTimeout(timeout)
-              clearInterval(checkDone)
-              await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth)
-              if (!manualWindow.isDestroyed()) manualWindow.close()
-              this.emitStatus('已进入结算页面')
-              resolve({ success: true, directToPay: true })
-            }
-          } catch { /* ignore */ }
-        }, 2000)
-
-        manualWindow.on('closed', async () => {
-          if (!resolved) {
-            resolved = true
-            clearTimeout(timeout)
-            clearInterval(checkDone)
-            await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth)
-            this.emitStatus('用户关闭了手动操作窗口')
-            resolve({ success: false, error: '用户关闭了窗口' })
-          }
-        })
-      })
-    } catch (e: unknown) {
-      this.emitStatus(`手动操作失败: ${e}`)
-      return { success: false, error: String(e) }
-    }
   }
 
   private async clickRebuyButton(): Promise<boolean> {
@@ -3042,7 +3065,6 @@ export class CartService {
 
     try {
       const frames = page.frames()
-      console.log(`[Taobao] clickRebuyButton: searching ${frames.length} frames, targets: ${targets.join(',')}`)
 
       for (const frame of frames) {
         try {
@@ -3075,11 +3097,6 @@ export class CartService {
             return { nearMatches, bodyLen: document.body?.innerText?.length || 0 }
           }, { targets: [...KEYWORDS.REBUY_BUTTONS], selectors })
 
-          console.log(`[Taobao] Frame ${frame.url().substring(0, 80)} nearMatches (${diag.nearMatches.length}):`)
-          for (const m of diag.nearMatches) {
-            console.log(`  ${m.tag} "${m.text}" cls="${m.cls}" rect=${m.rect}`)
-          }
-
           if (diag.nearMatches.length > 0) {
             const clicked = await frame.evaluate((arg: { targets: string[]; selectors: string[] }) => {
               let result = _hs.findAndClick(arg.selectors, arg.targets)
@@ -3111,15 +3128,12 @@ export class CartService {
               return { clicked: false }
             }, { targets: [...KEYWORDS.REBUY_BUTTONS], selectors })
 
-            console.log(`[Taobao] clickRebuyButton click result:`, JSON.stringify(clicked))
             if (clicked.clicked) return true
           }
         } catch (e: unknown) {
           console.log(`[Taobao] clickRebuyButton frame error: ${e}`)
         }
       }
-
-      console.log(`[Taobao] clickRebuyButton: text search failed, trying CSS selectors...`)
 
       const cssSelectors = TAOBAO_SELECTORS.ORDER_DETAIL.REBUY_SELECTORS
       for (const frame of frames) {
@@ -3141,14 +3155,12 @@ export class CartService {
             return { clicked: false }
           }, cssSelectors as unknown as string[])
 
-          console.log(`[Taobao] clickRebuyButton CSS result:`, JSON.stringify(cssResult))
           if (cssResult.clicked) return true
         } catch (e: unknown) {
           console.log(`[Taobao] clickRebuyButton CSS frame error: ${e}`)
         }
       }
 
-      console.log(`[Taobao] clickRebuyButton: no button found with any method`)
       return false
     } catch (e: unknown) {
       console.log(`[Taobao] clickRebuyButton error: ${e}`)
@@ -3157,3 +3169,4 @@ export class CartService {
     return false
   }
 }
+ 

@@ -14,6 +14,11 @@ export class OrderService {
   private auth: TaobaoAuth
   private db: Database
   private emitStatus: (status: string) => void
+  private syncCancelled = false
+
+  cancelSync() {
+    this.syncCancelled = true
+  }
 
   constructor(
     windowManager: WindowManager,
@@ -30,6 +35,7 @@ export class OrderService {
   }
 
   async fetchOrderHistory(_page = 1, timeRange?: { beginTime?: string; endTime?: string }): Promise<Order[]> {
+    this.syncCancelled = false
     this.emitStatus('正在同步历史订单...')
 
     await this.cookieManager.syncCookiesToElectron(null, this.auth)
@@ -37,7 +43,7 @@ export class OrderService {
     const hiddenWindow = new BrowserWindow({
       width: 1280,
       height: 800,
-      show: true,
+      show: false,
       icon: APP_ICON,
       webPreferences: {
         contextIsolation: true,
@@ -47,7 +53,6 @@ export class OrderService {
       },
     })
     setUserAgent(hiddenWindow)
-    hiddenWindow.minimize()
 
     const beginTime = timeRange?.beginTime || ''
     const endTime = timeRange?.endTime || ''
@@ -88,6 +93,10 @@ export class OrderService {
       let totalOrders = 0
 
       while (pageNum <= maxPages) {
+        if (this.syncCancelled) {
+          this.emitStatus('同步已取消')
+          break
+        }
         this.emitStatus(`正在获取第 ${pageNum} 页订单${totalOrders > 0 ? `（共 ${totalOrders} 条）` : ''}...`)
 
         const result = await hiddenWindow.webContents.executeJavaScript(
@@ -104,7 +113,6 @@ export class OrderService {
         if (!result.orders || result.orders.length === 0) break
 
         if (result.totalOrders > 0) totalOrders = result.totalOrders
-        console.log(`[Sync] Page ${pageNum}: got ${result.orders.length} items from ${result.mainOrderCount} orders, hasNext=${result.hasNext}, totalOrders=${result.totalOrders}`)
 
         for (let i = 0; i < result.orders.length; i++) {
           const item = result.orders[i]
@@ -117,15 +125,15 @@ export class OrderService {
             platform: 'taobao',
             orderId: item.orderId || `tb_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
             productName: item.productName,
-            productUrl: item.productUrl,
+            productUrl: item.productUrl || '',
             price: item.price,
-            imageUrl: item.imageUrl,
+            imageUrl: item.imageUrl || '',
             purchasedAt: item.purchasedAt || new Date().toISOString(),
-            shopName: item.shopName || '',
-            sku: item.sku || '',
+            shopName: (item as Record<string, unknown>).shopName as string || '',
+            sku: (item as Record<string, unknown>).sku as string || '',
             rawData: JSON.stringify(item),
           })
-          allOrders.push({ id: orderId, platform: 'taobao', ...item, rawData: JSON.stringify(item) })
+          allOrders.push({ id: orderId, platform: 'taobao', productName: item.productName, productUrl: item.productUrl, price: item.price, imageUrl: item.imageUrl, orderId: item.orderId, purchasedAt: item.purchasedAt, shopName: (item as Record<string, unknown>).shopName as string || '', sku: (item as Record<string, unknown>).sku as string || '', rawData: JSON.stringify(item) } as Order)
         }
 
         if (!result.hasNext) break

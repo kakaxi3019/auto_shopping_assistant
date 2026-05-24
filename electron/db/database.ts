@@ -2,11 +2,11 @@ import initSqlJs, { type Database as SqlJsDatabase } from 'sql.js'
 import { join } from 'path'
 import { app, safeStorage } from 'electron'
 import { existsSync, readFileSync, writeFileSync } from 'fs'
-import { MIGRATIONS, MIGRATION_V2, MIGRATION_V3, MIGRATION_V4, MIGRATION_V5, MIGRATION_V6, MIGRATION_V7, MIGRATION_V8, MIGRATION_V9, MIGRATION_V10, MIGRATION_V11, MIGRATION_V12 } from './migrations'
+import { MIGRATIONS, MIGRATION_V2, MIGRATION_V3, MIGRATION_V4, MIGRATION_V5, MIGRATION_V6, MIGRATION_V7, MIGRATION_V8, MIGRATION_V9, MIGRATION_V10, MIGRATION_V11, MIGRATION_V12, MIGRATION_V13 } from './migrations'
 import type { ShoppingTask, PendingConfirmation } from '../../shared/types/task.types'
 import type { Order } from '../../shared/types/platform.types'
 
-const MIGRATION_VERSION = 12
+const MIGRATION_VERSION = 13
 
 const SENSITIVE_KEYS = new Set(['openai_api_key', 'anthropic_api_key'])
 
@@ -14,7 +14,7 @@ function toCamelCase(obj: Record<string, unknown>): Record<string, unknown> {
   const result: Record<string, unknown> = {}
   for (const [key, value] of Object.entries(obj)) {
     const camelKey = key.replace(/_([a-z])/g, (_, c) => c.toUpperCase())
-    result[camelKey] = value
+    result[camelKey] = typeof value === 'bigint' ? Number(value) : value
   }
   return result
 }
@@ -61,17 +61,9 @@ export class Database {
       }
     }
 
-    console.log('[DB] isDev:', isDev)
-    console.log('[DB] WASM path:', wasmPath)
-    console.log('[DB] WASM exists:', existsSync(wasmPath))
-    console.log('[DB] DB path:', this.dbPath)
-    console.log('[DB] DB exists:', existsSync(this.dbPath))
-
     const SQL = await initSqlJs({
       locateFile: () => wasmPath,
     })
-
-    console.log(`[DB] SQL.js loaded in ${Date.now() - startTime}ms`)
 
     if (existsSync(this.dbPath)) {
       const buffer = readFileSync(this.dbPath)
@@ -185,6 +177,12 @@ export class Database {
       }
     }
 
+    if (currentVersion < 13) {
+      for (const sql of MIGRATION_V13) {
+        this.db.run(sql)
+      }
+    }
+
     this.db.run('INSERT INTO schema_migrations (version) VALUES (?)', [MIGRATION_VERSION])
     this.saveImmediate()
   }
@@ -220,9 +218,18 @@ export class Database {
     await this.ready
   }
 
-  getOrders(platform: string, limit = 100, offset = 0): Order[] {
-    return this.withStmt('SELECT * FROM orders WHERE platform = ? ORDER BY purchased_at DESC LIMIT ? OFFSET ?', (stmt) => {
-      stmt.bind([platform, limit, offset])
+  getOrders(platform: string, limit = 100, offset = 0, unavailableFilter?: 'all' | 'excluded' | 'active'): Order[] {
+    let sql = 'SELECT * FROM orders WHERE platform = ?'
+    const params: unknown[] = [platform]
+    if (unavailableFilter === 'excluded') {
+      sql += ' AND unavailable = 1'
+    } else if (unavailableFilter === 'active') {
+      sql += ' AND unavailable = 0'
+    }
+    sql += ' ORDER BY purchased_at DESC LIMIT ? OFFSET ?'
+    params.push(limit, offset)
+    return this.withStmt(sql, (stmt) => {
+      stmt.bind(params)
       const results: Order[] = []
       while (stmt.step()) {
         results.push(toCamelCase(stmt.getAsObject()) as unknown as Order)
@@ -252,10 +259,15 @@ export class Database {
     })
   }
 
-  searchOrders(keyword: string, platform?: string): Order[] {
+  searchOrders(keyword: string, platform?: string, excludeUnavailable = false, unavailableFilter?: 'all' | 'excluded' | 'active'): Order[] {
     const escaped = keyword.replace(/[%_\\]/g, '\\$&')
-    let sql = "SELECT * FROM orders WHERE product_name LIKE ? ESCAPE '\\' AND unavailable = 0"
+    let sql = "SELECT * FROM orders WHERE product_name LIKE ? ESCAPE '\\'"
     const params: unknown[] = [`%${escaped}%`]
+    if (excludeUnavailable || unavailableFilter === 'active') {
+      sql += ' AND unavailable = 0'
+    } else if (unavailableFilter === 'excluded') {
+      sql += ' AND unavailable = 1'
+    }
     if (platform) {
       sql += ' AND platform = ?'
       params.push(platform)
@@ -271,7 +283,19 @@ export class Database {
     })
   }
 
-  searchOrdersFuzzy(keyword: string, platform?: string): { orders: Order[]; usedKeyword: string } {
+  hasExcludedOrders(keyword: string): boolean {
+    const escaped = keyword.replace(/[%_\\]/g, '\\$&')
+    const sql = "SELECT COUNT(*) as cnt FROM orders WHERE product_name LIKE ? ESCAPE '\\' AND unavailable = 1"
+    return this.withStmt(sql, (stmt) => {
+      stmt.bind([`%${escaped}%`])
+      if (stmt.step()) {
+        return ((stmt.getAsObject() as any).cnt as number) > 0
+      }
+      return false
+    })
+  }
+
+  searchOrdersFuzzy(keyword: string, platform?: string, excludeUnavailable = false): { orders: Order[]; usedKeyword: string } {
     const MIN_FUZZY_LENGTH = 2
     const MAX_SUBSTRINGS = 10
     const MAX_FUZZY_RESULTS = 20
@@ -294,7 +318,7 @@ export class Database {
       return added
     }
 
-    const exactResults = this.searchOrders(keyword, platform)
+    const exactResults = this.searchOrders(keyword, platform, excludeUnavailable)
     if (exactResults.length > 0) {
       addUnique(exactResults)
       usedKeyword = keyword
@@ -310,7 +334,7 @@ export class Database {
         const subResults: { sub: string; orders: Order[] }[] = []
         for (let start = 0; start <= effectiveKeyword.length - len; start++) {
           const sub = effectiveKeyword.substring(start, start + len)
-          const orders = this.searchOrders(sub, platform)
+          const orders = this.searchOrders(sub, platform, excludeUnavailable)
           if (orders.length > 0) {
             subResults.push({ sub, orders })
           }
@@ -339,9 +363,16 @@ export class Database {
     return { orders: allOrders, usedKeyword }
   }
 
-  getOrderCount(platform: string): number {
-    return this.withStmt('SELECT COUNT(*) as count FROM orders WHERE platform = ?', (stmt) => {
-      stmt.bind([platform])
+  getOrderCount(platform: string, unavailableFilter?: 'all' | 'excluded' | 'active'): number {
+    let sql = 'SELECT COUNT(*) as count FROM orders WHERE platform = ?'
+    const params: unknown[] = [platform]
+    if (unavailableFilter === 'excluded') {
+      sql += ' AND unavailable = 1'
+    } else if (unavailableFilter === 'active') {
+      sql += ' AND unavailable = 0'
+    }
+    return this.withStmt(sql, (stmt) => {
+      stmt.bind(params)
       if (stmt.step()) {
         return stmt.getAsObject().count as number
       }
@@ -357,6 +388,7 @@ export class Database {
       }
       return 0
     })
+    this.db.run('DELETE FROM unavailable_orders WHERE order_id IN (SELECT id FROM orders WHERE platform = ?)', [platform])
     this.db.run('UPDATE tasks SET order_id = NULL WHERE order_id IN (SELECT id FROM orders WHERE platform = ?)', [platform])
     this.db.run('UPDATE pending_confirmations SET order_id = NULL WHERE order_id IN (SELECT id FROM orders WHERE platform = ?)', [platform])
     this.db.run('DELETE FROM orders WHERE platform = ?', [platform])
@@ -364,7 +396,7 @@ export class Database {
     return count
   }
 
-  upsertOrder(order: Omit<Order, 'id'>): number {
+  upsertOrder(order: Omit<Order, 'id' | 'unavailable'>): number {
     this.db.run(`
       INSERT INTO orders (platform, order_id, product_name, product_url, price, image_url, purchased_at, shop_name, sku, raw_data)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -378,19 +410,64 @@ export class Database {
     `, [order.platform, order.orderId, order.productName, order.productUrl, order.price, order.imageUrl, order.purchasedAt, order.shopName, order.sku, order.rawData])
     this.scheduleSave()
     const row = this.db.exec('SELECT id FROM orders WHERE platform = ? AND order_id = ?', [order.platform, order.orderId])
-    return row[0]?.values[0]?.[0] as number
+    return Number(row[0]?.values[0]?.[0])
   }
 
   markOrderUnavailable(id: number) {
+    this.db.run('INSERT OR IGNORE INTO unavailable_orders (order_id) VALUES (?)', [id])
     this.db.run('UPDATE orders SET unavailable = 1 WHERE id = ?', [id])
     this.scheduleSave()
   }
 
+  getUnavailableOrderIds(ids: number[]): number[] {
+    if (ids.length === 0) return []
+    const placeholders = ids.map(() => '?').join(',')
+    return this.withStmt(`SELECT order_id FROM unavailable_orders WHERE order_id IN (${placeholders})`, (stmt) => {
+      stmt.bind(ids)
+      const results: number[] = []
+      while (stmt.step()) {
+        const row = stmt.getAsObject()
+        results.push(Number(row.order_id))
+      }
+      return results
+    })
+  }
+
+  setAllOrdersUnavailable(platform: string, unavailable: boolean): number {
+    const orderIds = this.withStmt('SELECT id FROM orders WHERE platform = ?', (stmt) => {
+      stmt.bind([platform])
+      const results: number[] = []
+      while (stmt.step()) {
+        results.push(Number(stmt.getAsObject().id))
+      }
+      return results
+    })
+    if (unavailable) {
+      for (const id of orderIds) {
+        this.db.run('INSERT OR IGNORE INTO unavailable_orders (order_id) VALUES (?)', [id])
+      }
+    } else {
+      for (const id of orderIds) {
+        this.db.run('DELETE FROM unavailable_orders WHERE order_id = ?', [id])
+      }
+    }
+    const result = this.db.run('UPDATE orders SET unavailable = ? WHERE platform = ?', [unavailable ? 1 : 0, platform])
+    this.scheduleSave()
+    return result.changes ?? 0
+  }
+
   toggleOrderUnavailable(id: number): boolean {
-    const order = this.getOrderById(id)
-    if (!order) return false
-    const newStatus = (order as any).unavailable ? 0 : 1
-    this.db.run('UPDATE orders SET unavailable = ? WHERE id = ?', [newStatus, id])
+    const isUnavailable = this.withStmt('SELECT 1 FROM unavailable_orders WHERE order_id = ?', (stmt) => {
+      stmt.bind([id])
+      return stmt.step()
+    })
+    if (isUnavailable) {
+      this.db.run('DELETE FROM unavailable_orders WHERE order_id = ?', [id])
+      this.db.run('UPDATE orders SET unavailable = 0 WHERE id = ?', [id])
+    } else {
+      this.db.run('INSERT OR IGNORE INTO unavailable_orders (order_id) VALUES (?)', [id])
+      this.db.run('UPDATE orders SET unavailable = 1 WHERE id = ?', [id])
+    }
     this.scheduleSave()
     return true
   }

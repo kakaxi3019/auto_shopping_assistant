@@ -24,31 +24,4 @@ export const ANTI_DETECT_JS = `
   if (!window.chrome.csi) { window.chrome.csi = function(){}; }
   if (!window.chrome.loadTimes) { window.chrome.loadTimes = function(){ return { commitLoadTime: Date.now()/1000, connectionInfo: 'h2', finishDocumentLoadTime: 0, finishLoadTime: 0, firstPaintAfterLoadTime: 0, firstPaintTime: 0, navigationType: 'Other', npnNegotiatedProtocol: 'h2', requestTime: Date.now()/1000 - 0.5, startLoadTime: Date.now()/1000 - 0.5, wasAlternateProtocolAvailable: false, wasFetchedViaSpdy: true, wasNpnNegotiated: true }; }; }
 
-  var origGetContext = HTMLCanvasElement.prototype.getContext;
-  HTMLCanvasElement.prototype.getContext = function(type) {
-    var result = origGetContext.apply(this, arguments);
-    if (type === '2d' && result) {
-      var origGetImageData = result.getImageData;
-      result.getImageData = function() {
-        var imageData = origGetImageData.apply(this, arguments);
-        for (var i = 0; i < imageData.data.length; i += 4) {
-          imageData.data[i] += Math.random() > 0.5 ? 1 : -1;
-        }
-        return imageData;
-      };
-      var origToDataURL = result.canvas.toDataURL;
-      result.canvas.toDataURL = function() {
-        var ctx2 = origGetContext.call(this, '2d');
-        if (ctx2) {
-          var imgData = origGetImageData.call(ctx2, 0, 0, this.width, this.height);
-          for (var i = 0; i < imgData.data.length; i += 4) {
-            imgData.data[i] += Math.random() > 0.5 ? 1 : -1;
-          }
-          ctx2.putImageData(imgData, 0, 0);
-        }
-        return origToDataURL.apply(this, arguments);
-      };
-    }
-    return result;
-  };
-`
+`;

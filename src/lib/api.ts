@@ -17,14 +17,17 @@ declare global {
       getAccountStatus: (platform: string) => Promise<unknown>
       logout: (platform: string) => Promise<unknown>
       syncOrders: (platform: string, timeRange?: { beginTime?: string; endTime?: string }) => Promise<unknown>
-      getOrders: (platform: string, limit?: number, offset?: number) => Promise<unknown>
+      cancelSync: (platform: string) => Promise<unknown>
+      getOrders: (platform: string, limit?: number, offset?: number, unavailableFilter?: 'all' | 'excluded' | 'active') => Promise<unknown>
       getAllOrders: (limit?: number, offset?: number) => Promise<unknown>
-      searchOrders: (keyword: string) => Promise<unknown>
-      getOrderCount: (platform: string) => Promise<unknown>
+      searchOrders: (keyword: string, unavailableFilter?: 'all' | 'excluded' | 'active') => Promise<unknown>
+      getOrderCount: (platform: string, unavailableFilter?: 'all' | 'excluded' | 'active') => Promise<unknown>
       clearOrders: (platform: string) => Promise<unknown>
       deleteOrder: (id: number) => Promise<unknown>
       deleteOrders: (ids: number[]) => Promise<unknown>
       toggleOrderUnavailable: (id: number) => Promise<unknown>
+      getUnavailableOrderIds: (ids: number[]) => Promise<unknown>
+      setAllOrdersUnavailable: (platform: string, unavailable: boolean) => Promise<unknown>
       getSetting: (key: string) => Promise<unknown>
       setSetting: (key: string, value: string) => Promise<unknown>
       verifyLlm: () => Promise<unknown>
@@ -48,6 +51,7 @@ declare global {
       onSyncStatusUpdate: (callback: (data: unknown) => void) => () => void
       onTaskNotificationClick: (callback: (data: { taskId: number }) => void) => () => void
       openInteractionWindow: (url: string, platform?: string) => Promise<unknown>
+      openSearchInBrowser: (keyword: string, platform?: string) => Promise<unknown>
       confirmAction: (platform?: string) => Promise<unknown>
       rejectAction: (platform?: string) => Promise<unknown>
       reopenConfirmationWindow: (platform?: string) => Promise<unknown>

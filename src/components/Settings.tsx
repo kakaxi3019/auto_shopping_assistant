@@ -37,6 +37,7 @@ export default function Settings() {
   const [paymentMode, setPaymentMode] = useState('cart_only')
   const [paymentSaved, setPaymentSaved] = useState(false)
   const [priceProtectionThreshold, setPriceProtectionThreshold] = useState('15')
+  const [doNotDisturb, setDoNotDisturb] = useState(false)
 
   const current = providerSettings[provider]
 
@@ -69,6 +70,9 @@ export default function Settings() {
     if (limit) setAutoPayLimit(limit)
     if (mode && typeof mode === 'string') setPaymentMode(mode)
     if (threshold) setPriceProtectionThreshold(String(Math.round(parseFloat(threshold) * 100)))
+
+    const dnd = await api.getSetting('do_not_disturb')
+    if (dnd === 'true') setDoNotDisturb(true)
   }
 
   const updateCurrent = (field: keyof ProviderSettings, value: string) => {
@@ -162,6 +166,7 @@ export default function Settings() {
     await api.setSetting('pay_free_limit', String(limit))
     await api.setSetting('payment_mode', paymentMode)
     await api.setSetting('price_protection_threshold', String(thresholdDecimal))
+    await api.setSetting('do_not_disturb', doNotDisturb ? 'true' : 'false')
     setPaymentSaved(true)
     setTimeout(() => setPaymentSaved(false), 2000)
   }
@@ -464,6 +469,38 @@ export default function Settings() {
             <p className="text-sm text-gray-400 mt-1.5">
               自动支付模式下，当前价格较上次购买价上涨超过此比例时自动拦截，转交人工确认
             </p>
+          </div>
+
+          <div className="border-t border-gray-100 pt-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="text-sm">🔕</span>
+                  <label className="text-sm font-medium text-gray-700">
+                    免打扰模式
+                  </label>
+                </div>
+                <p className="text-sm text-gray-400 mt-1">
+                  开启后，任务完成或失败时不弹出系统通知
+                </p>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={doNotDisturb}
+                onClick={() => setDoNotDisturb(!doNotDisturb)}
+                className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 ${
+                  doNotDisturb ? 'bg-blue-600' : 'bg-gray-200'
+                }`}
+              >
+                <span
+                  aria-hidden="true"
+                  className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+                    doNotDisturb ? 'translate-x-5' : 'translate-x-0'
+                  }`}
+                />
+              </button>
+            </div>
           </div>
 
           <button

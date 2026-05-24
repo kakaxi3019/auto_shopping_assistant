@@ -89,6 +89,7 @@ export default function ConfirmationPanel() {
   const [expandedId, setExpandedId] = useState<number | null>(null)
   const [pendingCount, setPendingCount] = useState(0)
   const [excludingOrderId, setExcludingOrderId] = useState<number | null>(null)
+  const [excludedOrderIds, setExcludedOrderIds] = useState<Set<number>>(new Set())
   const [confirmingPurchase, setConfirmingPurchase] = useState<number | null>(null)
 
   const loadItems = useCallback(async () => {
@@ -112,6 +113,17 @@ export default function ConfirmationPanel() {
     loadCount()
   }, [loadItems, loadCount])
 
+  useEffect(() => {
+    const orderIds = items.filter(i => i.orderId).map(i => i.orderId!)
+    if (orderIds.length === 0) {
+      setExcludedOrderIds(new Set())
+      return
+    }
+    api.getUnavailableOrderIds(orderIds).then((ids: unknown) => {
+      setExcludedOrderIds(new Set(ids as number[]))
+    })
+  }, [items])
+
   const handleResolve = async (id: number) => {
     await api.resolvePendingConfirmation(id)
     await loadItems()
@@ -125,11 +137,39 @@ export default function ConfirmationPanel() {
   }
 
   const handleExcludeOrder = async (orderId: number) => {
+    if (!orderId) return
     setExcludingOrderId(orderId)
+    setExcludedOrderIds(prev => new Set(prev).add(orderId))
     try {
       await api.markOrderUnavailable(orderId)
       await loadItems()
       await loadCount()
+    } catch (e) {
+      console.error('[ConfirmationPanel] markOrderUnavailable failed:', e)
+      setExcludedOrderIds(prev => {
+        const next = new Set(prev)
+        next.delete(orderId)
+        return next
+      })
+    } finally {
+      setExcludingOrderId(null)
+    }
+  }
+
+  const handleRestoreOrder = async (orderId: number) => {
+    if (!orderId) return
+    setExcludingOrderId(orderId)
+    setExcludedOrderIds(prev => {
+      const next = new Set(prev)
+      next.delete(orderId)
+      return next
+    })
+    try {
+      await api.toggleOrderUnavailable(orderId)
+      await loadItems()
+      await loadCount()
+    } catch {
+      setExcludedOrderIds(prev => new Set(prev).add(orderId))
     } finally {
       setExcludingOrderId(null)
     }
@@ -260,16 +300,32 @@ export default function ConfirmationPanel() {
                               该商品匹配到的历史订单已无法购买，排除匹配后，下次购买同类商品时不会再匹配到这个订单。
                             </p>
                           </div>
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation()
-                              handleExcludeOrder(item.orderId!)
-                            }}
-                            disabled={excludingOrderId === item.orderId}
-                            className="flex-shrink-0 px-3 py-1.5 text-sm font-medium text-orange-700 bg-orange-100 rounded-md hover:bg-orange-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
-                          >
-                            {excludingOrderId === item.orderId ? '处理中...' : '不再匹配此订单'}
-                          </button>
+                          {excludedOrderIds.has(item.orderId!) ? (
+                            <span className="flex-shrink-0 px-3 py-1.5 text-sm font-medium text-gray-400 bg-gray-50 rounded-md inline-flex items-center gap-1.5 whitespace-nowrap">
+                              ✓ 已排除
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  handleRestoreOrder(item.orderId!)
+                                }}
+                                disabled={excludingOrderId === item.orderId}
+                                className="text-xs text-blue-500 hover:text-blue-700 underline underline-offset-1 disabled:opacity-50"
+                              >
+                                撤销
+                              </button>
+                            </span>
+                          ) : (
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                handleExcludeOrder(item.orderId!)
+                              }}
+                              disabled={excludingOrderId === item.orderId}
+                              className="flex-shrink-0 px-3 py-1.5 text-sm font-medium text-orange-700 bg-orange-100 rounded-md hover:bg-orange-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
+                            >
+                              {excludingOrderId === item.orderId ? '处理中...' : '不再匹配此订单'}
+                            </button>
+                          )}
                         </div>
                       </div>
                     )}

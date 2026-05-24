@@ -36,6 +36,7 @@ export interface ItemResult {
   currentPrice?: number
   lastPrice?: number
   orderId?: number
+  unavailable?: boolean
 }
 
 export interface PendingConfirmation {

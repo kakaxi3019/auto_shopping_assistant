@@ -229,6 +229,26 @@ export default function ShoppingAssistantPanel({
   const activeTask = activeTaskId ? tasks.find(t => t.id === activeTaskId) : null
   const mode: PanelMode = preview ? 'preview' : 'progress'
 
+  useEffect(() => {
+    if (!activeTask?.itemResults) {
+      setExcludedOrderIds(new Set())
+      return
+    }
+    try {
+      const results: ItemResult[] = JSON.parse(activeTask.itemResults)
+      const orderIds = results.filter(r => r.orderId).map(r => r.orderId!)
+      if (orderIds.length === 0) {
+        setExcludedOrderIds(new Set())
+        return
+      }
+      api.getUnavailableOrderIds(orderIds).then((ids: unknown) => {
+        setExcludedOrderIds(new Set(ids as number[]))
+      })
+    } catch {
+      setExcludedOrderIds(new Set())
+    }
+  }, [activeTask?.itemResults])
+
   const hasPendingConfirmation = (activeTask?.status === 'running' || activeTask?.status === 'partial') &&
     Array.isArray(activeTask?.progressLog) &&
     activeTask.progressLog.some(msg => typeof msg === 'string' && msg.includes('|REOPEN:')) === true
@@ -364,24 +384,34 @@ export default function ShoppingAssistantPanel({
   }
 
   const handleExcludeOrder = async (confirmationId: number, orderId: number) => {
+    if (!orderId) return
     setExcludingOrderId(orderId)
+    setExcludedOrderIds(prev => new Set(prev).add(orderId))
     try {
       await api.markOrderUnavailable(orderId)
-      setExcludedOrderIds(prev => new Set(prev).add(orderId))
+    } catch {
+      setExcludedOrderIds(prev => {
+        const next = new Set(prev)
+        next.delete(orderId)
+        return next
+      })
     } finally {
       setExcludingOrderId(null)
     }
   }
 
   const handleRestoreOrder = async (orderId: number) => {
+    if (!orderId) return
     setExcludingOrderId(orderId)
+    setExcludedOrderIds(prev => {
+      const next = new Set(prev)
+      next.delete(orderId)
+      return next
+    })
     try {
       await api.toggleOrderUnavailable(orderId)
-      setExcludedOrderIds(prev => {
-        const next = new Set(prev)
-        next.delete(orderId)
-        return next
-      })
+    } catch {
+      setExcludedOrderIds(prev => new Set(prev).add(orderId))
     } finally {
       setExcludingOrderId(null)
     }
@@ -516,7 +546,7 @@ export default function ShoppingAssistantPanel({
               ? ambiguityLevel === 'high' && hasCandidates
                 ? 'border-amber-200 bg-amber-50/30'
                 : 'border-green-200 bg-green-50/40'
-              : 'border-red-200 bg-red-50/40'
+              : 'border-gray-200 bg-gray-50/40'
           }`}
         >
           <div className="flex items-start gap-3">
@@ -530,8 +560,8 @@ export default function ShoppingAssistantPanel({
             )}
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2">
-                <span className={`text-sm ${item.matched ? 'text-green-600' : 'text-red-500'}`}>
-                  {item.matched ? '✓' : '✗'}
+                <span className={`text-sm ${item.matched ? 'text-green-600' : 'text-gray-400'}`}>
+                  {item.matched ? '✓' : '○'}
                 </span>
                 {isEditing ? (
                   <div className="flex items-center gap-1">
@@ -636,7 +666,18 @@ export default function ShoppingAssistantPanel({
               ) : (
                 <div className="mt-1">
                   <p className="text-sm font-medium text-gray-900">{item.name}</p>
-                  <p className="text-xs text-red-500 mt-0.5">未找到匹配的历史订单</p>
+                  <p className="text-xs text-gray-500 mt-0.5">该商品不在历史订单中，无法自动匹配复购</p>
+                  <button
+                    onClick={async () => {
+                      try {
+                        const { api } = await import('../lib/api')
+                        await api.openSearchInBrowser(item.name, preview?.platform)
+                      } catch { /* ignore */ }
+                    }}
+                    className="mt-1.5 px-2.5 py-1 text-xs font-medium text-blue-600 bg-blue-50 rounded-md hover:bg-blue-100 transition-colors inline-flex items-center gap-1"
+                  >
+                    🔍 去平台搜索购买
+                  </button>
                 </div>
               )}
             </div>
@@ -650,8 +691,6 @@ export default function ShoppingAssistantPanel({
                 </>
               ) : (
                 <>
-                  <button onClick={() => { setEditQuantity(item.quantity); setEditingIndex(index) }}
-                    className="px-2 py-1 text-xs font-medium text-blue-600 bg-blue-50 rounded-md hover:bg-blue-100 transition-colors">修改</button>
                   <button onClick={() => onRemoveItem(index)}
                     className="px-2 py-1 text-xs font-medium text-red-500 bg-red-50 rounded-md hover:bg-red-100 transition-colors">删除</button>
                 </>
@@ -711,8 +750,8 @@ export default function ShoppingAssistantPanel({
         {unmatchedItems.length > 0 && (
           <div>
             <div className="flex items-center gap-2 mb-2">
-              <span className="text-sm font-medium text-amber-600">⚠️ 需你确认/未匹配</span>
-              <span className="text-xs text-gray-400">({unmatchedItems.length}项)</span>
+              <span className="text-sm font-medium text-gray-500">🔍 未匹配历史订单</span>
+              <span className="text-xs text-gray-400">({unmatchedItems.length}项，可去平台手动搜索购买)</span>
             </div>
             <div className="space-y-2">
               {preview.items.map((item, index) => !item.matched ? renderItem(item, index) : null)}
@@ -747,13 +786,15 @@ export default function ShoppingAssistantPanel({
           </div>
           <button onClick={handleConfirm} disabled={confirming || matchedCount === 0}
             className={`px-5 py-2 text-sm font-medium rounded-lg transition-colors ${
-              dryRun
-                ? 'text-amber-700 bg-amber-100 hover:bg-amber-200'
-                : paymentMode === 'cart_only'
-                  ? 'text-green-700 bg-green-100 hover:bg-green-200'
-                  : 'text-white bg-blue-600 hover:bg-blue-700'
+              matchedCount === 0
+                ? 'text-gray-400 bg-gray-100 cursor-not-allowed'
+                : dryRun
+                  ? 'text-amber-700 bg-amber-100 hover:bg-amber-200'
+                  : paymentMode === 'cart_only'
+                    ? 'text-green-700 bg-green-100 hover:bg-green-200'
+                    : 'text-white bg-blue-600 hover:bg-blue-700'
             }`}>
-            {confirming ? '执行中...' : dryRun ? `模拟购买${unmatchedCount > 0 ? `（${matchedCount}项）` : ''}` : paymentMode === 'cart_only' ? `加入购物车${unmatchedCount > 0 ? `（${matchedCount}项）` : ''}` : `确认购买${unmatchedCount > 0 ? `（${matchedCount}项）` : ''}`}
+            {confirming ? '执行中...' : matchedCount === 0 ? '无可购买商品' : dryRun ? `模拟购买${unmatchedCount > 0 ? `（${matchedCount}项）` : ''}` : paymentMode === 'cart_only' ? `加入购物车${unmatchedCount > 0 ? `（${matchedCount}项）` : ''}` : `确认购买${unmatchedCount > 0 ? `（${matchedCount}项）` : ''}`}
           </button>
         </div>
       </div>

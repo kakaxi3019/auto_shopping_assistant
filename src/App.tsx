@@ -1,4 +1,4 @@
-import { useState, useEffect, lazy, Suspense, useCallback } from 'react'
+import { useState, useEffect, useRef, lazy, Suspense, useCallback } from 'react'
 import Layout from './components/Layout'
 import Dashboard from './components/Dashboard'
 import ShoppingInput from './components/ShoppingInput'
@@ -20,6 +20,8 @@ export default function App() {
   const [page, setPage] = useState<Page>('shopping')
   const [backendReady, setBackendReady] = useState(false)
   const [scrollToFilter, setScrollToFilter] = useState<string | number | null>(null)
+  const mainRef = useRef<HTMLDivElement>(null)
+  const [scrolledDown, setScrolledDown] = useState(false)
   const { tasks, loading, refresh, createTask, cancelTask, retryTaskItem,
     deleteTask, deleteTasks, clearHistory,
     preview, previewLoading, previewTask, confirmTask, cancelPreview,
@@ -121,7 +123,7 @@ export default function App() {
   return (
     <ErrorBoundary>
       <ToastProvider>
-        <Layout currentPage={page} onNavigate={setPage}>
+        <Layout currentPage={page} onNavigate={setPage} mainRef={mainRef} onScrollStateChange={(scrolled) => setScrolledDown(scrolled && page === 'shopping')}>
           {!backendReady && (
             <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg text-sm text-blue-700 flex items-center gap-2" role="status" aria-live="polite">
               <div className="w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" aria-hidden="true" />
@@ -147,6 +149,20 @@ export default function App() {
             onCancelTask={cancelTask}
           />
         )}
+        {scrolledDown && (() => {
+          const hasAssistantButton = !panelOpen && activeTaskId && tasks.some(t => t.id === activeTaskId && (t.status === 'running' || t.status === 'partial'))
+          return (
+            <button
+              onClick={() => mainRef.current?.scrollTo({ top: 0, behavior: 'smooth' })}
+              className={`fixed bottom-6 z-40 flex items-center justify-center w-11 h-11 bg-white text-gray-600 rounded-full shadow-lg border border-gray-200 hover:bg-gray-50 hover:text-gray-900 transition-all hover:scale-105 active:scale-95 ${hasAssistantButton ? 'left-64' : 'right-6'}`}
+              aria-label="回到输入框"
+            >
+              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M5 15l7-7 7 7" />
+              </svg>
+            </button>
+          )
+        })()}
         {!panelOpen && activeTaskId && tasks.some(t => t.id === activeTaskId && (t.status === 'running' || t.status === 'partial')) && (
           <button
             onClick={() => openTaskPanel(activeTaskId)}

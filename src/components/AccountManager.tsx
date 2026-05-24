@@ -250,13 +250,23 @@ export default function AccountManager() {
               ))}
             </div>
 
-            <button
-              onClick={handleSyncOrders}
-              disabled={syncing || !loggedIn}
-              className="w-full px-4 py-2.5 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors"
-            >
-              {syncing ? '同步中...' : '同步历史订单'}
-            </button>
+            <div className="flex gap-2">
+              <button
+                onClick={handleSyncOrders}
+                disabled={syncing || !loggedIn}
+                className="flex-1 px-4 py-2.5 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors"
+              >
+                {syncing ? '同步中...' : '同步历史订单'}
+              </button>
+              {syncing && (
+                <button
+                  onClick={() => api.cancelSync('taobao')}
+                  className="px-4 py-2.5 bg-gray-200 text-gray-700 text-sm font-medium rounded-lg hover:bg-gray-300 transition-colors"
+                >
+                  取消
+                </button>
+              )}
+            </div>
 
             {syncing && syncStatus && (
               <div className="mt-3 bg-blue-50 rounded-lg p-3">

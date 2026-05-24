@@ -221,7 +221,7 @@ export default function PreviewPanel({ preview, onConfirm, onCancel, onUpdateIte
             ? ambiguityLevel === 'high' && hasCandidates
               ? 'border-amber-200 bg-amber-50/30'
               : 'border-green-200 bg-green-50/40'
-            : 'border-red-200 bg-red-50/40'
+            : 'border-gray-200 bg-gray-50/40'
         }`}
       >
         <div className="flex items-start gap-3">
@@ -237,8 +237,8 @@ export default function PreviewPanel({ preview, onConfirm, onCancel, onUpdateIte
           )}
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2">
-              <span className={`text-sm ${item.matched ? 'text-green-600' : 'text-red-500'}`}>
-                {item.matched ? '✓' : '✗'}
+              <span className={`text-sm ${item.matched ? 'text-green-600' : 'text-gray-400'}`}>
+                {item.matched ? '✓' : '○'}
               </span>
               {isEditing ? (
                 <div className="flex items-center gap-1">
@@ -389,7 +389,18 @@ export default function PreviewPanel({ preview, onConfirm, onCancel, onUpdateIte
             ) : (
               <div className="mt-1">
                 <p className="text-sm font-medium text-gray-900">{item.name}</p>
-                <p className="text-xs text-red-500 mt-0.5">未找到匹配的历史订单</p>
+                <p className="text-xs text-gray-500 mt-0.5">该商品不在历史订单中，无法自动匹配复购</p>
+                <button
+                  onClick={async () => {
+                    try {
+                      const { api } = await import('../lib/api')
+                      await api.openSearchInBrowser(item.name, preview?.platform)
+                    } catch { /* ignore */ }
+                  }}
+                  className="mt-1.5 px-2.5 py-1 text-xs font-medium text-blue-600 bg-blue-50 rounded-md hover:bg-blue-100 transition-colors inline-flex items-center gap-1"
+                >
+                  🔍 去平台搜索购买
+                </button>
               </div>
             )}
           </div>

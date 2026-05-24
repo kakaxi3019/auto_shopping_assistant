@@ -72,13 +72,11 @@ export class WindowManager {
       webPreferences: {
         nodeIntegration: false,
         contextIsolation: true,
+        sandbox: false,
         backgroundThrottling: false,
       },
     })
     setUserAgent(this.shopWindow)
-    if (this.mainWindow) {
-      this.shopWindow.setParentWindow(this.mainWindow)
-    }
     return this.shopWindow
   }
 
@@ -92,6 +90,7 @@ export class WindowManager {
       webPreferences: {
         nodeIntegration: false,
         contextIsolation: true,
+        sandbox: false,
         backgroundThrottling: false,
       },
     })
@@ -119,9 +118,6 @@ export class WindowManager {
       },
     })
     setUserAgent(win)
-    if (this.mainWindow) {
-      win.setParentWindow(this.mainWindow)
-    }
     win.minimize()
     win.loadURL(url)
     return this.trackWindow(win)

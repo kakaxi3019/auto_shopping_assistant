@@ -55,11 +55,64 @@ export function setUserAgent(win: BrowserWindow) {
   win.webContents.setMaxListeners(20)
   win.webContents.setUserAgent(CHROME_UA)
   injectHumanSim(win)
+  attachAntiDetectStealth(win).catch(e => console.error(`[Taobao] Stealth attach err: ${e}`))
+}
+
+export async function attachAntiDetectStealth(win: BrowserWindow) {
+  if (win.isDestroyed()) return
+  try {
+    const wc = win.webContents
+    if (!wc.debugger.isAttached()) {
+      wc.debugger.attach('1.1')
+    }
+    await wc.debugger.sendCommand('Page.enable')
+    
+    // 注入最高级同步隐身（不含 Canvas 噪点代理，从而不干扰滑块正常渲染，且完美保护跨域子 iframe）
+    const stealthJs = `
+      (function() {
+        try {
+          // 1. WebDriver 抹除
+          delete Object.getPrototypeOf(navigator).__proto__.webdriver;
+          Object.defineProperty(navigator, 'webdriver', { get: () => undefined, configurable: true });
+        } catch(e) {}
+
+        try {
+          // 2. Chrome/Runtime/App 对象模拟
+          if (!window.chrome) { window.chrome = {}; }
+          if (!window.chrome.runtime) { window.chrome.runtime = { connect: function(){}, sendMessage: function(){}, onMessage: { addListener: function(){} } }; }
+          if (!window.chrome.app) { window.chrome.app = { isInstalled: false, InstallState: { DISABLED: 'disabled', INSTALLED: 'installed', NOT_INSTALLED: 'not_installed' }, RunningState: { CANNOT_RUN: 'cannot_run', READY_TO_RUN: 'ready_to_run', RUNNING: 'running' }, getDetails: function(){}, getIsInstalled: function(){ return false; } }; }
+          if (!window.chrome.csi) { window.chrome.csi = function(){}; }
+          if (!window.chrome.loadTimes) { window.chrome.loadTimes = function(){ return { commitLoadTime: Date.now()/1000, connectionInfo: 'h2', finishDocumentLoadTime: 0, finishLoadTime: 0, firstPaintAfterLoadTime: 0, firstPaintTime: 0, navigationType: 'Other', npnNegotiatedProtocol: 'h2', requestTime: Date.now()/1000 - 0.5, startLoadTime: Date.now()/1000 - 0.5, wasAlternateProtocolAvailable: false, wasFetchedViaSpdy: true, wasNpnNegotiated: true }; }; }
+        } catch(e) {}
+
+        try {
+          // 3. 语言与硬件指纹
+          Object.defineProperty(navigator, 'languages', { get: () => ['zh-CN', 'zh', 'en-US', 'en'], configurable: true });
+          Object.defineProperty(navigator, 'platform', { get: () => 'Win32', configurable: true });
+          Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => 8, configurable: true });
+          Object.defineProperty(navigator, 'maxTouchPoints', { get: () => 0, configurable: true });
+        } catch(e) {}
+
+        try {
+          // 4. Permissions Query 隐藏
+          var origQuery = window.navigator.permissions.query.bind(window.navigator.permissions);
+          Object.defineProperty(window.navigator.permissions, 'query', {
+            value: function(params) { return params.name === 'notifications' ? Promise.resolve({ state: Notification.permission }) : origQuery(params); },
+            configurable: true,
+          });
+        } catch(e) {}
+      })();
+    `
+    await wc.debugger.sendCommand('Page.addScriptToEvaluateOnNewDocument', { source: stealthJs })
+  } catch (e) {
+    console.error(`[Taobao] Failed to attach CDP Stealth to win.id=${win.id}: ${e}`)
+  }
 }
 
 export function injectHumanSim(win: BrowserWindow) {
   const inject = () => {
     if (win.isDestroyed()) return
+    if ((win as any).__captchaMode) return
     const url = win.webContents.getURL()
     const isCaptchaPage = url.includes('nocaptcha') || url.includes('captcha') || url.includes('slider') || url.includes('baxia') || url.includes('passport.taobao.com/iv')
     if (!isCaptchaPage) {
@@ -72,6 +125,7 @@ export function injectHumanSim(win: BrowserWindow) {
     (win as any).__humanSimInjected = true
     const onDidStartNavigation = () => {
       if (win.isDestroyed()) return
+      if ((win as any).__captchaMode) return
       const url = win.webContents.getURL()
       const isCaptchaPage = url.includes('nocaptcha') || url.includes('captcha') || url.includes('slider') || url.includes('baxia') || url.includes('passport.taobao.com/iv')
       if (!isCaptchaPage) {
@@ -181,17 +235,16 @@ export function injectOverlayBanner(win: BrowserWindow, message: string) {
       var nav = document.getElementById('site-nav') || document.body.firstChild;
       var hint = document.createElement('div');
       hint.setAttribute('data-hint', '1');
-      hint.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:2147483647;padding:10px 20px;background:rgba(37,99,235,0.9);color:#fff;font-size:14px;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;text-align:center;backdrop-filter:blur(4px);box-shadow:0 2px 8px rgba(0,0,0,0.15);line-height:1.5;';
+      hint.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:2147483647;padding:10px 20px;background:rgba(37,99,235,0.9);color:#fff;font-size:14px;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;text-align:center;backdrop-filter:blur(4px);box-shadow:0 2px 8px rgba(0,0,0,0.15);line-height:1.5;pointer-events:none;';
       hint.textContent = ${JSON.stringify(message)};
       var closeBtn = document.createElement('span');
       closeBtn.textContent = '✕';
-      closeBtn.style.cssText = 'position:absolute;right:12px;top:50%;transform:translateY(-50%);cursor:pointer;font-size:16px;opacity:0.7;';
+      closeBtn.style.cssText = 'position:absolute;right:12px;top:50%;transform:translateY(-50%);cursor:pointer;font-size:16px;opacity:0.7;pointer-events:auto;';
       closeBtn.onmouseover = function() { closeBtn.style.opacity = '1'; };
       closeBtn.onmouseout = function() { closeBtn.style.opacity = '0.7'; };
       closeBtn.onclick = function() { hint.remove(); };
       hint.appendChild(closeBtn);
       document.documentElement.appendChild(hint);
-      document.body.style.paddingTop = (hint.offsetHeight + 8) + 'px';
     })();
   `;
   win.webContents.executeJavaScript(js).catch(() => {});
@@ -227,6 +280,30 @@ export function injectCenterToast(win: BrowserWindow, message: string) {
     })();
   `;
   win.webContents.executeJavaScript(js).catch(() => {});
+}
+
+export function cleanupForCaptcha(win: BrowserWindow) {
+  ;(win as any).__captchaMode = true
+  const js = `
+    (function() {
+      var hints = document.querySelectorAll('[data-hint]');
+      for (var i = 0; i < hints.length; i++) hints[i].remove();
+      var toast = document.getElementById('__auto_shop_toast__');
+      if (toast) toast.remove();
+      document.body.style.paddingTop = '';
+      try { delete window._hs; } catch(e) {}
+      try {
+        if (window.navigator) {
+          Object.defineProperty(navigator, 'webdriver', { get: () => undefined, configurable: true });
+        }
+      } catch(e) {}
+    })();
+  `;
+  win.webContents.executeJavaScript(js).catch(() => {});
+}
+
+export function resetCaptchaMode(win: BrowserWindow) {
+  ;(win as any).__captchaMode = false
 }
 
 export function getOrderApiJs() {

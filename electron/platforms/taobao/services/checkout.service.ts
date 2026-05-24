@@ -54,7 +54,6 @@ export class CheckoutService {
     try {
       const shopWindow = this.windowManager.getShopWindow()
       if (shopWindow && !shopWindow.isDestroyed()) {
-        console.log(`[Taobao] checkout: using existing shopWindow, quantity=${quantity}`)
         return await this.checkoutViaElectron(directToPay, quantity)
       }
 
@@ -62,14 +61,11 @@ export class CheckoutService {
       if (!this.getPage()) return { success: false, error: '浏览器未初始化' }
 
       const currentUrl = this.getPage()!.url()
-      console.log(`[Taobao] checkout: currentUrl=${currentUrl}, directToPay=${directToPay}`)
-
       if (isLoginPage(currentUrl)) {
         return { success: false, error: '登录已过期，请重新登录' }
       }
 
       if (directToPay || isBuyPage(currentUrl)) {
-        console.log(`[Taobao] Already on checkout/pay page, submitting order directly`)
         return await this.submitOrder()
       }
 
@@ -88,8 +84,6 @@ export class CheckoutService {
         TAOBAO_SELECTORS.CART.CHECKOUT_SELECTORS as unknown as string[],
         ['结算', '去结算', '去购物车结算', '去支付']
       )
-
-      console.log(`[Taobao] Checkout button click result:`, JSON.stringify(checkoutClicked))
 
       if (!checkoutClicked.clicked) {
         return { success: false, error: '未找到结算按钮' }
@@ -117,16 +111,14 @@ export class CheckoutService {
 
     const wc = shopWindow.webContents
     const currentUrl = wc.getURL()
-    console.log(`[Taobao] checkoutViaElectron: currentUrl=${currentUrl}, directToPay=${directToPay}, quantity=${quantity}`)
-
     if (isLoginPage(currentUrl)) {
       await this.closeShopWindow()
       return { success: false, error: '登录已过期，请重新登录' }
     }
 
     if (directToPay || isBuyPage(currentUrl)) {
-      this.emitStatus('已到达确认订单页面')
-      return { success: true }
+      this.emitStatus('正在等待确认订单页面加载...')
+      return await this.waitForCheckoutPage(quantity)
     }
 
     if (!isCartPage(currentUrl)) {
@@ -146,8 +138,6 @@ export class CheckoutService {
       TAOBAO_SELECTORS.CART.CHECKOUT_SELECTORS as unknown as string[],
       ['结算', '去结算', '去购物车结算', '去支付']
     )
-
-    console.log(`[Taobao] Electron checkout click result:`, JSON.stringify(checkoutResult))
 
     if (!checkoutResult.clicked) {
       await this.closeShopWindow()
@@ -182,11 +172,6 @@ export class CheckoutService {
             return { url: location.href, buttons: buttons, bodyLen: (document.body?.innerText || '').length };
           })()
         `)
-        console.log(`[Taobao] waitForCheckoutPage attempt ${attempt + 1}: url=${diag.url}, bodyLen=${diag.bodyLen}, buttons=${diag.buttons.length}`)
-        for (const b of diag.buttons) {
-          console.log(`  ${b.tag} "${b.text}" cls="${b.cls}"`)
-        }
-
         const hasPayButton = diag.buttons.some((b: { text: string }) => {
           const t = b.text.replace(/\s+/g, '')
           return t.includes('免密支付') || t.includes('立即支付') || t.includes('提交订单') || t.includes('去支付') || t.includes('立即付款')
@@ -201,7 +186,6 @@ export class CheckoutService {
           return { success: true, currentPrice }
         }
       } catch (e: unknown) {
-        console.log(`[Taobao] waitForCheckoutPage error: ${e}`)
       }
     }
 
@@ -248,12 +232,10 @@ export class CheckoutService {
           return { found: false };
         })()
       `)
-      console.log(`[Taobao] setQuantity result:`, JSON.stringify(result))
       if (result?.found) {
         await humanDelay(1000)
       }
     } catch (e: unknown) {
-      console.log(`[Taobao] setQuantity error: ${e}`)
     }
   }
 
@@ -273,18 +255,10 @@ export class CheckoutService {
       })
       return { url: location.href, buttons }
     })
-    console.log(`[Taobao] Order page: ${orderDiag.url}`)
-    console.log(`[Taobao] Order buttons (${orderDiag.buttons.length}):`)
-    for (const b of orderDiag.buttons) {
-      console.log(`  ${b.tag} "${b.text}" cls="${b.cls}" id="${b.id}"`)
-    }
-
     const orderClicked = await this.clickButtonByTextOrSelector(
       TAOBAO_SELECTORS.CHECKOUT.SUBMIT_ORDER_SELECTORS as unknown as string[],
       ['提交订单', '确认订单', '提交', '去支付', '立即支付', '立即付款', '免密支付']
     )
-
-    console.log(`[Taobao] Submit order click result:`, JSON.stringify(orderClicked))
 
     if (orderClicked.clicked) {
       await humanDelay(2000)
@@ -300,7 +274,6 @@ export class CheckoutService {
     if (!page) return { clicked: false }
 
     if (isLoginPage(page.url())) {
-      console.log(`[Taobao] clickButtonByTextOrSelector: on login page, skipping`)
       return { clicked: false }
     }
 
@@ -353,11 +326,9 @@ export class CheckoutService {
               return { clicked: true, selector: locateResult.selector, text: locateResult.text }
             }
           } catch (e: unknown) {
-            console.log(`[Taobao] Playwright click failed for selector "${locateResult.selector}": ${e}`)
           }
         }
       } catch (e: unknown) {
-        console.log(`[Taobao] clickButtonByTextOrSelector frame error: ${e}`)
       }
     }
 
@@ -406,12 +377,9 @@ export class CheckoutService {
         })()
       `)
       if (priceStr) {
-        const price = parseFloat(priceStr)
-        console.log(`[Taobao] extractCheckoutPrice: ${price}`)
-        return price
+        return parseFloat(priceStr)
       }
     } catch (e: unknown) {
-      console.log(`[Taobao] extractCheckoutPrice error: ${e}`)
     }
     return undefined
   }

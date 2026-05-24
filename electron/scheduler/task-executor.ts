@@ -7,6 +7,8 @@ import { join } from 'path'
 import { app } from 'electron'
 
 const PREVIEW_LOG_FILE = join(app.getPath('userData'), 'preview-debug.log')
+const MIN_CONFIDENCE_THRESHOLD = 50
+const KEYWORD_MATCH_THRESHOLD = 35
 
 function previewLog(msg: string) {
   const ts = new Date().toISOString()
@@ -106,7 +108,6 @@ export class TaskExecutor {
   ): Promise<void> {
     const isCartOnly = paymentMode === 'cart_only'
     const url = platform.getProductUrl(order)
-    console.log(`[TaskExecutor] addToCart: name=${item.name}, orderId=${order.orderId}, url=${url}`)
 
     onProgress(`正在为 "${item.name}" 执行再买一单（订单 ${order.orderId}）...`)
     try {
@@ -118,10 +119,9 @@ export class TaskExecutor {
         result.matchedProduct = order.productName
         result.status = 'success'
       } else {
-        await this.handleCheckoutAndPay(taskId, item, order, platform, cartResult.directToPay, url, result, onProgress, dryRun, paymentMode)
+        await this.handleCheckoutAndPay(taskId, item, order, platform, cartResult.directToPay ?? false, url, result, onProgress, dryRun, paymentMode)
       }
     } catch (e) {
-      console.log(`[TaskExecutor] purchase failed for order ${order.orderId}: ${e}`)
       const errMsg = String(e)
       if (errMsg.includes('Object has been destroyed') || errMsg.includes('destroyed')) {
         result.error = '操作窗口已关闭'
@@ -160,7 +160,7 @@ export class TaskExecutor {
             result.matchedProduct = order.productName
             result.status = 'success'
           } else {
-            await this.handleCheckoutAndPay(taskId, item, order, platform, purchaseResult.directToPay, searchUrl, result, onProgress, dryRun, paymentMode)
+            await this.handleCheckoutAndPay(taskId, item, order, platform, purchaseResult.directToPay ?? false, searchUrl, result, onProgress, dryRun, paymentMode)
           }
         } else {
           result.error = '商品页面无法购买'
@@ -250,8 +250,6 @@ export class TaskExecutor {
   }
 
   private findCandidateOrders(item: ParsedShoppingItem, platformName: string, result: ItemResult, onProgress: (msg: string) => void, instruction?: string): Order[] {
-    console.log(`[TaskExecutor] findCandidateOrders: name="${item.name}", orderRef=${item.orderRef}, platform=${platformName}, itemPlatform=${item.platform}, instruction="${instruction}"`)
-
     const searchPlatform = item.platform || platformName
 
     if (item.orderRef) {
@@ -261,6 +259,31 @@ export class TaskExecutor {
         if ((order as any).unavailable) {
           onProgress(`LLM 匹配的订单 #${item.orderRef} 已被排除匹配，尝试其他方式...`)
         } else if (!item.platform || order.platform === searchPlatform) {
+          const topKeywordScore = this.computeMatchScore(order, item.name)
+          if (topKeywordScore < KEYWORD_MATCH_THRESHOLD && item.matchedOrders && item.matchedOrders.length > 1) {
+            onProgress(`LLM 首选匹配 (${order.productName}) 与"${item.name}"关键词不匹配，尝试其他 LLM 候选...`)
+            let bestAltOrder: Order | null = null
+            let bestAltScore = 0
+            for (const match of item.matchedOrders) {
+              if (match.orderRef === item.orderRef) continue
+              if (match.confidence < MIN_CONFIDENCE_THRESHOLD) continue
+              const altOrder = this.db.getOrderById(match.orderRef)
+              if (!altOrder || (altOrder as any).unavailable) continue
+              if (item.platform && altOrder.platform !== searchPlatform) continue
+              const altScore = this.computeMatchScore(altOrder, item.name)
+              if (altScore > bestAltScore) {
+                bestAltScore = altScore
+                bestAltOrder = altOrder
+              }
+            }
+            if (bestAltOrder && bestAltScore >= KEYWORD_MATCH_THRESHOLD) {
+              result.matchedProduct = bestAltOrder.productName
+              result.matchMethod = 'llm_direct'
+              result.orderId = bestAltOrder.id
+              onProgress(`LLM 候选匹配: ${bestAltOrder.productName}（关键词匹配更优）`)
+              return [bestAltOrder]
+            }
+          }
           result.matchedProduct = order.productName
           result.matchMethod = 'llm_direct'
           result.orderId = order.id
@@ -271,70 +294,65 @@ export class TaskExecutor {
       onProgress(`LLM 匹配的订单 #${item.orderRef} 不存在或平台不匹配，尝试其他方式...`)
     }
 
+    const hasExcluded = this.db.hasExcludedOrders(item.name)
+    if (hasExcluded) {
+      onProgress(`"${item.name}" 有已排除的历史订单，跳过搜索匹配`)
+      return []
+    }
+
     onProgress(`正在查找 "${item.name}" 的历史订单...`)
-    const exactOrders = this.db.searchOrders(item.name, searchPlatform)
-    console.log(`[TaskExecutor] searchOrders("${item.name}", "${searchPlatform}"): ${exactOrders.length} results`)
+    const exactOrders = this.db.searchOrders(item.name, searchPlatform, true)
     if (exactOrders.length > 0) {
       result.matchMethod = 'exact'
       result.matchedProduct = exactOrders[0].productName
       result.orderId = exactOrders[0].id
+      result.unavailable = !!exactOrders[0].unavailable
       onProgress(`精确匹配: ${exactOrders.length} 条订单`)
       return exactOrders
     }
 
-    const { orders, usedKeyword } = this.db.searchOrdersFuzzy(item.name, searchPlatform)
-    console.log(`[TaskExecutor] searchOrdersFuzzy("${item.name}", "${searchPlatform}"): ${orders.length} results, usedKeyword="${usedKeyword}"`)
+    const { orders, usedKeyword } = this.db.searchOrdersFuzzy(item.name, searchPlatform, true)
     if (orders.length > 0) {
       result.matchMethod = 'fuzzy'
       result.matchedProduct = orders[0].productName
       result.orderId = orders[0].id
+      result.unavailable = !!orders[0].unavailable
       onProgress(`模糊匹配(关键词"${usedKeyword}"): ${orders.length} 条订单`)
       return orders
     }
 
-    console.log(`[TaskExecutor] No matching orders found for "${item.name}" on platform "${searchPlatform}"`)
     return []
   }
 
   private searchBestMatchOrder(item: ParsedShoppingItem, platformName: string, _instruction?: string): { order: Order | null; matchMethod: 'llm_direct' | 'exact' | 'fuzzy' | null } {
     const searchPlatform = item.platform || platformName
-    previewLog(`[Preview] searchBestMatchOrder: name="${item.name}", orderRef=${item.orderRef}, searchPlatform="${searchPlatform}"`)
 
     if (item.orderRef) {
       const order = this.db.getOrderById(item.orderRef)
-      previewLog(`[Preview]   llm_direct: orderRef=${item.orderRef}, found=${!!order}, platformMatch=${order ? order.platform === searchPlatform : 'N/A'}`)
       if (order && (order as any).unavailable) {
-        previewLog(`[Preview]   llm_direct: orderRef=${item.orderRef} is excluded, skipping`)
       } else if (order && (!item.platform || order.platform === searchPlatform)) {
         return { order, matchMethod: 'llm_direct' }
       }
     }
 
-    let exactOrders = this.db.searchOrders(item.name, searchPlatform)
-    previewLog(`[Preview]   exact search: searchOrders("${item.name}", "${searchPlatform}") = ${exactOrders.length} results`)
+    let exactOrders = this.db.searchOrders(item.name, searchPlatform, true)
     if (exactOrders.length === 0 && searchPlatform) {
-      exactOrders = this.db.searchOrders(item.name)
-      previewLog(`[Preview]   exact search (no platform): searchOrders("${item.name}") = ${exactOrders.length} results`)
+      exactOrders = this.db.searchOrders(item.name, undefined, true)
     }
     if (exactOrders.length > 0) {
-      previewLog(`[Preview]   exact match: id=${exactOrders[0].id}, name="${exactOrders[0].productName}"`)
       return { order: exactOrders[0], matchMethod: 'exact' }
     }
 
     if (item.name.length >= 2) {
-      let fuzzyResult = this.db.searchOrdersFuzzy(item.name, searchPlatform)
-      previewLog(`[Preview]   fuzzy search: searchOrdersFuzzy("${item.name}", "${searchPlatform}") = ${fuzzyResult.orders.length} results, usedKeyword="${fuzzyResult.usedKeyword}"`)
+      let fuzzyResult = this.db.searchOrdersFuzzy(item.name, searchPlatform, true)
       if (fuzzyResult.orders.length === 0 && searchPlatform) {
-        fuzzyResult = this.db.searchOrdersFuzzy(item.name)
-        previewLog(`[Preview]   fuzzy search (no platform): searchOrdersFuzzy("${item.name}") = ${fuzzyResult.orders.length} results, usedKeyword="${fuzzyResult.usedKeyword}"`)
+        fuzzyResult = this.db.searchOrdersFuzzy(item.name, undefined, true)
       }
       if (fuzzyResult.orders.length > 0) {
-        previewLog(`[Preview]   fuzzy match: id=${fuzzyResult.orders[0].id}, name="${fuzzyResult.orders[0].productName}"`)
         return { order: fuzzyResult.orders[0], matchMethod: 'fuzzy' }
       }
     }
 
-    previewLog(`[Preview]   no match found`)
     return { order: null, matchMethod: null }
   }
 
@@ -342,7 +360,44 @@ export class TaskExecutor {
     const name = order.productName.toLowerCase()
     const kw = keyword.toLowerCase()
     if (name === kw) return 100
-    if (name.includes(kw)) return 80 + (kw.length / name.length) * 20
+
+    if (name.includes(kw)) {
+      // Check if the keyword is an independent term or part of a compound word
+      // e.g. "篮球" in "篮球鞋" is compound (本体不是篮球), but "篮球" in "安踏静音篮球" is independent
+      const idx = name.indexOf(kw)
+      const afterKw = name.substring(idx + kw.length)
+
+      // Chinese compound word detection: if there are non-space, non-punctuation chars
+      // immediately after the keyword, it's likely a compound word (e.g. 篮球鞋, 篮球裤, 篮球护踝)
+      const compoundSuffixMatch = afterKw.match(/^[\u4e00-\u9fff]+/)
+      if (compoundSuffixMatch) {
+        const suffix = compoundSuffixMatch[0]
+        // Common product-type suffixes that indicate a different product category
+        const productTypeSuffixes = ['鞋', '裤', '裙', '衫', '帽', '袜', '套', '壳', '膜', '包', '架', '桌', '椅', '柜', '箱', '垫', '罩', '巾', '布', '带', '绳', '夹', '扣', '钉', '灯', '糖', '粉', '酱', '油', '醋']
+        const protectionSuffixes = ['护踝', '护膝', '护腕', '护肘', '护具', '护齿', '护指', '头盔', '防护', '扭伤', '损伤', '运动']
+        const modifierSuffixes = ['长裤', '短裤', '长袖', '短袖', '休闲']
+        const isSuffixProductType = productTypeSuffixes.some(s => suffix.startsWith(s))
+        const isSuffixProtection = protectionSuffixes.some(s => suffix.startsWith(s))
+        const isSuffixModifier = modifierSuffixes.some(s => suffix.startsWith(s))
+
+        if (isSuffixProductType || isSuffixProtection || isSuffixModifier) {
+          // "篮球鞋", "篮球护踝", "篮球扭伤防护" — keyword is a modifier, not the product identity
+          return 35
+        }
+        // Any other Chinese compound word — still likely a different product
+        // Only give high score if suffix is a quantity/spec word like "篮球7号"
+        const specSuffixes = ['号', '寸', '码', '型', '款', '色', '装', '个', '只', '双', '件', '瓶', '包', '盒', '组', '套装']
+        const isSpecSuffix = specSuffixes.some(s => suffix.startsWith(s))
+        if (isSpecSuffix) {
+          return 80 + (kw.length / name.length) * 20
+        }
+        // Unknown compound — moderate penalty
+        return 50
+      }
+
+      return 80 + (kw.length / name.length) * 20
+    }
+
     const spaceWords = kw.split(/\s+/).filter(w => w.length > 0)
     const matchedSpaceWords = spaceWords.filter(w => name.includes(w))
     if (matchedSpaceWords.length > 0 && spaceWords.length > 1) {
@@ -384,10 +439,6 @@ export class TaskExecutor {
   previewCandidateOrders(item: ParsedShoppingItem, platformName: string, instruction?: string): PreviewItem {
     const MAX_CANDIDATES = 10
 
-    previewLog(`[Preview] === previewCandidateOrders START ===`)
-    previewLog(`[Preview] item: name="${item.name}", orderRef=${item.orderRef}, platform=${item.platform}, sku=${item.sku}`)
-    previewLog(`[Preview] matchedOrders: ${item.matchedOrders ? JSON.stringify(item.matchedOrders) : 'none'}`)
-
     const preview: PreviewItem = {
       name: item.name,
       quantity: item.quantity,
@@ -398,13 +449,21 @@ export class TaskExecutor {
 
     if (item.matchedOrders && item.matchedOrders.length > 0) {
       const candidates: CandidateOrder[] = []
+      let excludedCount = 0
+      let filteredByConfidenceCount = 0
       for (const match of item.matchedOrders.slice(0, MAX_CANDIDATES)) {
-        const order = this.db.getOrderById(match.orderRef)
-        if (!order) {
-          previewLog(`[Preview]   orderRef=${match.orderRef} not found in DB`)
+        if (match.confidence < MIN_CONFIDENCE_THRESHOLD) {
+          filteredByConfidenceCount++
           continue
         }
-        previewLog(`[Preview]   [${candidates.length}] id=${order.id}, name="${order.productName}", price=${order.price}, confidence=${match.confidence}, purchasedAt="${order.purchasedAt}"`)
+        const order = this.db.getOrderById(match.orderRef)
+        if (!order) {
+          continue
+        }
+        if ((order as any).unavailable) {
+          excludedCount++
+          continue
+        }
         candidates.push({
           id: order.id,
           productName: order.productName,
@@ -418,6 +477,28 @@ export class TaskExecutor {
       }
 
       if (candidates.length > 0) {
+        const keywordScores = candidates.map(c => {
+          const score = this.computeMatchScore({ productName: c.productName } as Order, item.name)
+          return score
+        })
+
+        const hasHighKeywordMatch = keywordScores.some(s => s >= KEYWORD_MATCH_THRESHOLD)
+        const firstLowKeyword = keywordScores[0] < KEYWORD_MATCH_THRESHOLD
+        if (hasHighKeywordMatch && firstLowKeyword) {
+          const indexed = candidates.map((c, i) => ({ candidate: c, keywordScore: keywordScores[i], llmScore: c.matchScore ?? 0 }))
+          indexed.sort((a, b) => {
+            const aHigh = a.keywordScore >= KEYWORD_MATCH_THRESHOLD
+            const bHigh = b.keywordScore >= KEYWORD_MATCH_THRESHOLD
+            if (aHigh && !bHigh) return -1
+            if (!aHigh && bHigh) return 1
+            return b.llmScore - a.llmScore
+          })
+          candidates.length = 0
+          for (const { candidate } of indexed) {
+            candidates.push(candidate)
+          }
+        }
+
         const best = candidates[0]
         preview.matched = true
         preview.matchedProduct = best.productName
@@ -428,55 +509,83 @@ export class TaskExecutor {
         preview.platform = best.platform
 
         preview.candidates = candidates
-        preview.totalMatchCount = item.matchedOrders.length
+        preview.totalMatchCount = candidates.length
         preview.ambiguityLevel = this.computeAmbiguityLevel(candidates)
-        previewLog(`[Preview] candidates count=${candidates.length}, totalMatchCount=${item.matchedOrders.length}, ambiguityLevel=${preview.ambiguityLevel}`)
+      } else if (excludedCount > 0) {
+      } else if (filteredByConfidenceCount > 0) {
+      } else {
+        const { order, matchMethod } = this.searchBestMatchOrder(item, platformName, instruction)
+        if (order && matchMethod) {
+          preview.matched = true
+          preview.matchedProduct = order.productName
+          preview.matchMethod = matchMethod
+          preview.lastPrice = order.price
+          preview.imageUrl = order.imageUrl
+          preview.orderRef = order.id
+          preview.platform = order.platform
+        }
+
+        const candidateOrders = this.findCandidateOrdersForPreview(item, platformName)
+        if (candidateOrders.length > 0) {
+          const fallbackCandidates: CandidateOrder[] = candidateOrders.slice(0, MAX_CANDIDATES).map(o => ({
+            id: o.id,
+            productName: o.productName,
+            price: o.price,
+            imageUrl: o.imageUrl,
+            platform: o.platform,
+            purchasedAt: o.purchasedAt,
+            shopName: o.shopName,
+            matchScore: undefined,
+          }))
+          preview.candidates = fallbackCandidates
+          preview.totalMatchCount = candidateOrders.length
+          preview.ambiguityLevel = this.computeAmbiguityLevel(fallbackCandidates)
+        }
       }
     } else {
-      previewLog(`[Preview] No matchedOrders from LLM, falling back to SQL search`)
-      const { order, matchMethod } = this.searchBestMatchOrder(item, platformName, instruction)
-      previewLog(`[Preview] searchBestMatchOrder result: matchMethod=${matchMethod}, order=${order ? `id=${order.id}, name="${order.productName}"` : 'null'}`)
-      if (order && matchMethod) {
-        preview.matched = true
-        preview.matchedProduct = order.productName
-        preview.matchMethod = matchMethod
-        preview.lastPrice = order.price
-        preview.imageUrl = order.imageUrl
-        preview.orderRef = order.id
-        preview.platform = order.platform
-      }
-
-      const candidateOrders = this.findCandidateOrdersForPreview(item, platformName)
-      previewLog(`[Preview] findCandidateOrdersForPreview returned ${candidateOrders.length} orders`)
-      if (candidateOrders.length > 0) {
-        const candidates: CandidateOrder[] = candidateOrders.slice(0, MAX_CANDIDATES).map(o => ({
-          id: o.id,
-          productName: o.productName,
-          price: o.price,
-          imageUrl: o.imageUrl,
-          platform: o.platform,
-          purchasedAt: o.purchasedAt,
-          shopName: o.shopName,
-          matchScore: undefined,
-        }))
-        preview.candidates = candidates
-        preview.totalMatchCount = candidateOrders.length
-        if (!preview.matched && candidates.length > 0) {
-          const best = candidates[0]
+      const hasExcluded = this.db.hasExcludedOrders(item.name)
+      if (hasExcluded) {
+      } else {
+        const { order, matchMethod } = this.searchBestMatchOrder(item, platformName, instruction)
+        if (order && matchMethod) {
           preview.matched = true
-          preview.matchedProduct = best.productName
-          preview.matchMethod = 'exact'
-          preview.lastPrice = best.price
-          preview.imageUrl = best.imageUrl
-          preview.orderRef = best.id
-          preview.platform = best.platform
+          preview.matchedProduct = order.productName
+          preview.matchMethod = matchMethod
+          preview.lastPrice = order.price
+          preview.imageUrl = order.imageUrl
+          preview.orderRef = order.id
+          preview.platform = order.platform
         }
-        preview.ambiguityLevel = this.computeAmbiguityLevel(candidates)
-        previewLog(`[Preview] fallback candidates count=${candidates.length}, ambiguityLevel=${preview.ambiguityLevel}`)
+
+        const candidateOrders = this.findCandidateOrdersForPreview(item, platformName)
+        if (candidateOrders.length > 0) {
+          const candidates: CandidateOrder[] = candidateOrders.slice(0, MAX_CANDIDATES).map(o => ({
+            id: o.id,
+            productName: o.productName,
+            price: o.price,
+            imageUrl: o.imageUrl,
+            platform: o.platform,
+            purchasedAt: o.purchasedAt,
+            shopName: o.shopName,
+            matchScore: undefined,
+          }))
+          preview.candidates = candidates
+          preview.totalMatchCount = candidateOrders.length
+          if (!preview.matched && candidates.length > 0) {
+            const best = candidates[0]
+            preview.matched = true
+            preview.matchedProduct = best.productName
+            preview.matchMethod = 'exact'
+            preview.lastPrice = best.price
+            preview.imageUrl = best.imageUrl
+            preview.orderRef = best.id
+            preview.platform = best.platform
+          }
+          preview.ambiguityLevel = this.computeAmbiguityLevel(candidates)
+        }
       }
     }
 
-    previewLog(`[Preview] === previewCandidateOrders END ===`)
     return preview
   }
 
@@ -485,13 +594,11 @@ export class TaskExecutor {
     const seen = new Set<string>()
     const allOrders: Order[] = []
     const MAX_PREVIEW_ORDERS = 20
-    const MIN_CANDIDATE_SCORE = 40
+    const MIN_CANDIDATE_SCORE = 50
 
     const addOrders = (orders: Order[], label: string, minScore?: number) => {
-      const filtered = minScore
-        ? orders.filter(o => this.computeMatchScore(o, item.name) >= minScore)
-        : orders
-      previewLog(`[Preview]   addOrders("${label}"): got ${orders.length} orders, ${filtered.length} passed score filter (min=${minScore || 0}), current total=${allOrders.length}`)
+      const scoreThreshold = minScore ?? MIN_CANDIDATE_SCORE
+      const filtered = orders.filter(o => this.computeMatchScore(o, item.name) >= scoreThreshold)
       for (const o of filtered) {
         const key = `${o.platform}:${o.orderId}`
         if (!seen.has(key)) {
@@ -502,30 +609,24 @@ export class TaskExecutor {
     }
 
     const doSearch = (keyword: string, platform?: string): Order[] => {
-      let results = this.db.searchOrders(keyword, platform)
+      let results = this.db.searchOrders(keyword, platform, true)
       if (results.length === 0 && platform) {
-        results = this.db.searchOrders(keyword)
+        results = this.db.searchOrders(keyword, undefined, true)
       }
       return results
     }
 
-    previewLog(`[Preview] findCandidateOrdersForPreview: name="${item.name}", searchPlatform="${searchPlatform}"`)
-
     let exactOrders = doSearch(item.name, searchPlatform)
-    previewLog(`[Preview]   exact search "${item.name}": ${exactOrders.length} results`)
     addOrders(exactOrders, 'exact')
 
     if (item.name.length >= 2) {
-      let fuzzyResult = this.db.searchOrdersFuzzy(item.name, searchPlatform)
-      previewLog(`[Preview]   searchOrdersFuzzy("${item.name}", "${searchPlatform}"): ${fuzzyResult.orders.length} results, usedKeyword="${fuzzyResult.usedKeyword}"`)
+      let fuzzyResult = this.db.searchOrdersFuzzy(item.name, searchPlatform, true)
       if (fuzzyResult.orders.length === 0 && searchPlatform) {
-        fuzzyResult = this.db.searchOrdersFuzzy(item.name)
-        previewLog(`[Preview]   searchOrdersFuzzy("${item.name}", no platform): ${fuzzyResult.orders.length} results, usedKeyword="${fuzzyResult.usedKeyword}"`)
+        fuzzyResult = this.db.searchOrdersFuzzy(item.name, undefined, true)
       }
       addOrders(fuzzyResult.orders, `fuzzy:${fuzzyResult.usedKeyword}`, MIN_CANDIDATE_SCORE)
     }
 
-    previewLog(`[Preview] findCandidateOrdersForPreview total: ${allOrders.length} unique orders`)
     return allOrders
   }
 

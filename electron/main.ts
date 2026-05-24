@@ -49,11 +49,11 @@ function createWindow() {
   })
 
   mainWindow.webContents.on('crashed', (_event, killed) => {
-    console.error(`[DIAG] mainWindow webContents CRASHED! killed=${killed}`)
+    console.error(`[Error] mainWindow webContents CRASHED! killed=${killed}`)
   })
 
   mainWindow.webContents.on('render-process-gone', (_event, details) => {
-    console.error(`[DIAG] mainWindow render-process-gone! reason=${details.reason} exitCode=${details.exitCode}`)
+    console.error(`[Error] mainWindow render-process-gone! reason=${details.reason} exitCode=${details.exitCode}`)
   })
 
   mainWindow.webContents.on('will-navigate', (event, url) => {
@@ -65,19 +65,14 @@ function createWindow() {
       } catch { isAllowed = false }
     }
     if (!isAllowed) {
-      console.error(`[DIAG] mainWindow will-navigate BLOCKED: ${url}`)
       event.preventDefault()
-    } else {
-      console.log(`[DIAG] mainWindow will-navigate allowed: ${url}`)
     }
   })
 
-  mainWindow.webContents.on('did-navigate', (_event, url) => {
-    console.log(`[DIAG] mainWindow did-navigate: ${url}`)
+  mainWindow.webContents.on('did-navigate', (_event, _url) => {
   })
 
-  mainWindow.webContents.on('did-navigate-in-page', (_event, url) => {
-    console.log(`[DIAG] mainWindow did-navigate-in-page: ${url}`)
+  mainWindow.webContents.on('did-navigate-in-page', (_event, _url) => {
   })
 
   if (process.env.VITE_DEV_SERVER_URL) {

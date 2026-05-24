@@ -2,7 +2,7 @@ import type { SearchResult } from '../../../../shared/types/platform.types'
 import { CookieManager } from '../infrastructure/cookie-manager'
 import { WindowManager } from '../infrastructure/window-manager'
 import { TaobaoAuth } from '../taobao.auth'
-import { setUserAgent, debugLog } from '../utils/page-helper'
+import { setUserAgent } from '../utils/page-helper'
 
 export class SearchService {
   private windowManager: WindowManager
@@ -212,24 +212,7 @@ export class SearchService {
         })()
       `) as { items: SearchResult[]; debug: any }
 
-      if (results.debug) {
-        debugLog(`[Search] URL: ${results.debug.url}, elementCount: ${results.debug.elementCount}, linkCount: ${results.debug.linkCount}`)
-        debugLog(`[Search] items found: ${results.items?.length || 0}`)
-        if (results.debug.divInfo) {
-          debugLog(`[Search] divInfo: ${JSON.stringify(results.debug.divInfo)}`)
-        }
-        if (results.debug.childInfo) {
-          debugLog(`[Search] childInfo: ${JSON.stringify(results.debug.childInfo)}`)
-        }
-        if (results.debug.bodyPreview) {
-          debugLog(`[Search] bodyPreview: ${results.debug.bodyPreview.substring(0, 300)}`)
-        }
-        if (results.items && results.items.length > 0) {
-          results.items.forEach((item: SearchResult, idx: number) => {
-            debugLog(`[Search] item[${idx}]: title="${item.title}", price=${item.price}, shop="${item.shopName}"`)
-          })
-        }
-      }
+
 
       return (results.items || []).filter(r => r.title && r.price > 0)
     } catch (e) {

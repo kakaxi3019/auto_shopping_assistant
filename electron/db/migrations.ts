@@ -111,3 +111,10 @@ export const MIGRATION_V11 = [
 export const MIGRATION_V12 = [
   `ALTER TABLE settings ADD COLUMN encrypted INTEGER NOT NULL DEFAULT 0`,
 ]
+
+export const MIGRATION_V13 = [
+  `CREATE TABLE IF NOT EXISTS unavailable_orders (
+    order_id INTEGER PRIMARY KEY
+  )`,
+  `INSERT OR IGNORE INTO unavailable_orders (order_id) SELECT id FROM orders WHERE unavailable = 1`,
+]

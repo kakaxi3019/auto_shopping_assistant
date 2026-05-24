@@ -161,19 +161,10 @@ export class TaskScheduler {
   async previewTask(instruction: string, platformName = 'taobao'): Promise<TaskPreview> {
     try { writeFileSync(SCHEDULER_LOG_FILE, '', 'utf-8') } catch {}
     const parsedItems = await this.parser.parse(instruction)
-    schedulerLog(`[Scheduler] previewTask: instruction="${instruction}", platform="${platformName}"`)
-    schedulerLog(`[Scheduler]   parsedItems count=${parsedItems.length}`)
-    parsedItems.forEach((item, i) => {
-      schedulerLog(`[Scheduler]   [${i}] name="${item.name}", quantity=${item.quantity}, orderRef=${item.orderRef}, platform=${item.platform}, sku=${item.sku}, matchedOrders=${item.matchedOrders ? JSON.stringify(item.matchedOrders) : 'none'}`)
-    })
 
     const items = parsedItems.map(item =>
       this.executor.previewCandidateOrders(item, platformName, instruction)
     )
-
-    items.forEach((item, i) => {
-      schedulerLog(`[Scheduler]   preview[${i}]: matched=${item.matched}, matchedProduct="${item.matchedProduct}", matchMethod=${item.matchMethod}, candidates=${item.candidates?.length || 0}, ambiguityLevel=${item.ambiguityLevel}`)
-    })
 
     return {
       instruction,
@@ -203,7 +194,6 @@ export class TaskScheduler {
 
   private async executeTask(taskId: number, parsedItems: ParsedShoppingItem[], platformName: string, instruction?: string, dryRun?: boolean, paymentMode?: PaymentMode) {
     this.lastProgressPerTask.delete(taskId)
-    schedulerLog(`[Scheduler] executeTask START: taskId=${taskId}, items=${parsedItems.length}, platform=${platformName}, dryRun=${dryRun}, paymentMode=${paymentMode}`)
     const taskFn = async () => {
       const platform = this.registry.get(platformName)
       if (!platform) {
@@ -214,7 +204,6 @@ export class TaskScheduler {
 
       this.db.updateTaskStatus(taskId, 'running')
       this.emitUpdate(taskId, 'running')
-      schedulerLog(`[Scheduler] executeTask taskId=${taskId}: platform ready, starting execution...`)
 
       const unsubscribe = platform.onStatusChange((status) => {
         this.emitUpdate(taskId, 'running', undefined, status)
@@ -224,8 +213,6 @@ export class TaskScheduler {
         const execResult = await this.executor.execute(taskId, parsedItems, platform, (msg) => {
           this.emitUpdate(taskId, 'running', undefined, msg)
         }, instruction, dryRun, paymentMode)
-
-        schedulerLog(`[Scheduler] executeTask taskId=${taskId}: execution completed, success=${execResult.success}, error=${execResult.error}`)
 
         const hasPending = execResult.itemResults.some(r => r.status === 'pending')
         const hasPendingPayment = execResult.itemResults.some(r => r.status === 'success' && r.pendingPayment)
@@ -243,7 +230,6 @@ export class TaskScheduler {
         this.db.updateTaskItemResults(taskId, JSON.stringify(execResult.itemResults))
       } catch (e) {
         const errorMsg = e instanceof Error ? e.message : String(e)
-        schedulerLog(`[Scheduler] executeTask taskId=${taskId}: execution ERROR: ${errorMsg}`)
         this.db.updateTaskStatus(taskId, 'failed', errorMsg)
         this.emitUpdate(taskId, 'failed', errorMsg, undefined, undefined, instruction)
       } finally {

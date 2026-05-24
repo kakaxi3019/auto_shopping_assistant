@@ -101,7 +101,6 @@ export class VerificationService {
     }
 
     const verifyUrl = verifyPage.url()
-    console.log(`[Taobao] Opening identity verification in Electron window: ${verifyUrl}`)
 
     return new Promise<AddToCartResult | null>((resolve) => {
       if (!mainWindow) {
@@ -120,6 +119,7 @@ export class VerificationService {
         webPreferences: {
           nodeIntegration: false,
           contextIsolation: true,
+          sandbox: false,
           backgroundThrottling: false,
         },
       })

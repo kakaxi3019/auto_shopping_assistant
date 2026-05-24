@@ -1,4 +1,3 @@
-import { BrowserWindow } from 'electron'
 import type { BrowserContext, Page } from 'playwright'
 import type { PayResult } from '../../../shared/types/platform.types'
 import type { Database } from '../../../db/database'
@@ -7,41 +6,11 @@ import type { CookieManager } from '../infrastructure/cookie-manager'
 import type { InteractionService } from './interaction.service'
 import type { VerificationService } from './verification.service'
 import type { TaobaoAuth } from '../taobao.auth'
-import { setUserAgent, debugLog, humanDelay, humanClickAt, humanClickElement, execJS, injectOverlayBanner, injectCenterToast, rand, clickInShopWindow } from '../utils/page-helper'
+import { setUserAgent, humanDelay, humanClickAt, humanClickElement, execJS, injectOverlayBanner, injectCenterToast, rand, clickInShopWindow } from '../utils/page-helper'
 import { APP_ICON, TIMEOUTS, WINDOW_SIZES, KEYWORDS } from '../utils/constants'
 import { isCheckoutOrPayPage, isLoginPage, isIdentityVerifyPage, isBuyPage, isCartPage, isProductDetailPage } from '../utils/url-helper'
 import { TAOBAO_SELECTORS } from '../taobao.selectors'
 
-function diagWindowState(label: string, mainWindow: BrowserWindow | null, shopWindow: BrowserWindow | null) {
-  const parts: string[] = [`[DIAG] ${label}`]
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    const mwBounds = mainWindow.getBounds()
-    parts.push(`mainWin: visible=${mainWindow.isVisible()} focused=${mainWindow.isFocused()} bounds=${JSON.stringify(mwBounds)}`)
-    try {
-      const mwUrl = mainWindow.webContents.getURL()
-      const mwLoading = mainWindow.webContents.isLoading()
-      const mwCrashed = mainWindow.webContents.isCrashed()
-      parts.push(`mainWin-webContents: url=${mwUrl.substring(0, 80)} loading=${mwLoading} crashed=${mwCrashed}`)
-    } catch (e: unknown) {
-      parts.push(`mainWin-webContents: ERROR ${e instanceof Error ? e.message : String(e)}`)
-    }
-  } else {
-    parts.push(`mainWin: ${mainWindow ? 'DESTROYED' : 'NULL'}`)
-  }
-  if (shopWindow && !shopWindow.isDestroyed()) {
-    const swBounds = shopWindow.getBounds()
-    parts.push(`shopWin: visible=${shopWindow.isVisible()} focused=${shopWindow.isFocused()} bounds=${JSON.stringify(swBounds)}`)
-    try {
-      const swUrl = shopWindow.webContents.getURL()
-      parts.push(`shopWin-webContents: url=${swUrl.substring(0, 80)}`)
-    } catch (e: unknown) {
-      parts.push(`shopWin-webContents: ERROR ${e instanceof Error ? e.message : String(e)}`)
-    }
-  } else {
-    parts.push(`shopWin: ${shopWindow ? 'DESTROYED' : 'NULL'}`)
-  }
-  debugLog(parts.join(' | '))
-}
 
 export class PaymentService {
   private windowManager: WindowManager
@@ -106,14 +75,11 @@ export class PaymentService {
       shopWindow.setSize(WINDOW_SIZES.CONFIRMATION.width, WINDOW_SIZES.CONFIRMATION.height)
       shopWindow.setTitle(`金额超过免密支付上限 - 需要手动确认付款`)
       const mainWindow = this.windowManager.getMainWindow()
-      diagWindowState('[PaySvc] exceedsLimit BEFORE setParentWindow', mainWindow, shopWindow)
       if (mainWindow) shopWindow.setParentWindow(mainWindow)
-      diagWindowState('[PaySvc] exceedsLimit AFTER setParentWindow', mainWindow, shopWindow)
       const bannerMsg = `⚠️ 自动支付已暂停：订单金额 ¥${totalAmount!.toFixed(2)} 超过免密支付上限 ¥${payFreeLimit.toFixed(2)}，为保障资金安全需要您手动确认。请在下方完成付款后点击"已完成"`
       injectOverlayBanner(shopWindow, bannerMsg)
       injectCenterToast(shopWindow, "请完成付款后点击已完成")
       shopWindow.show()
-      diagWindowState('[PaySvc] exceedsLimit AFTER shopWindow.show()', mainWindow, shopWindow)
       const confirmed = await this.interactionService.waitForUserConfirmation(
         shopWindow,
         `订单金额 ¥${totalAmount!.toFixed(2)} 超过免密支付上限 ¥${payFreeLimit.toFixed(2)}，为保障资金安全需要您手动确认付款。请在弹出的窗口中完成支付，然后点击"已完成"`,
@@ -142,7 +108,6 @@ export class PaymentService {
         TAOBAO_SELECTORS.CHECKOUT.SUBMIT_ORDER_SELECTORS as unknown as string[],
         ['免密支付', '立即支付', '确认支付', '提交订单', '确认订单', '去支付', '立即付款']
       )
-      console.log(`[Taobao] Electron auto pay result:`, JSON.stringify(payResult))
       if (payResult.clicked) {
         await humanDelay(3000)
 
@@ -163,14 +128,11 @@ export class PaymentService {
             currentShopWindow.setSize(WINDOW_SIZES.CONFIRMATION.width, WINDOW_SIZES.CONFIRMATION.height)
             currentShopWindow.setTitle('淘宝安全验证 - 需要手动操作')
             const mainWindow = this.windowManager.getMainWindow()
-            diagWindowState('[PaySvc] identityVerify BEFORE setParentWindow', mainWindow, currentShopWindow)
             if (mainWindow) currentShopWindow.setParentWindow(mainWindow)
-            diagWindowState('[PaySvc] identityVerify AFTER setParentWindow', mainWindow, currentShopWindow)
             const verifyBanner = '🔐 自动支付已暂停：淘宝检测到异常操作，要求进行安全验证。请拖动滑块完成验证，然后点击"已完成"'
             injectOverlayBanner(currentShopWindow, verifyBanner)
             injectCenterToast(currentShopWindow, "请拖动滑块完成验证")
             currentShopWindow.show()
-            diagWindowState('[PaySvc] identityVerify AFTER shopWindow.show()', mainWindow, currentShopWindow)
 
             const verified = await this.interactionService.waitForUserConfirmation(
               currentShopWindow,
@@ -220,18 +182,14 @@ export class PaymentService {
           `)
 
           if (hasCaptcha && hasCaptcha.found) {
-            console.log(`[Taobao] Captcha detected after pay click:`, JSON.stringify(hasCaptcha))
             currentShopWindow.setSize(WINDOW_SIZES.CONFIRMATION.width, WINDOW_SIZES.CONFIRMATION.height)
             currentShopWindow.setTitle('淘宝安全验证 - 需要手动操作')
             const mainWindow = this.windowManager.getMainWindow()
-            diagWindowState('[PaySvc] captcha BEFORE setParentWindow', mainWindow, currentShopWindow)
             if (mainWindow) currentShopWindow.setParentWindow(mainWindow)
-            diagWindowState('[PaySvc] captcha AFTER setParentWindow', mainWindow, currentShopWindow)
             const captchaBanner = '🔐 自动支付已暂停：淘宝检测到异常操作，要求进行验证码验证。请完成验证后点击"已完成"，系统将继续自动完成后续流程'
             injectOverlayBanner(currentShopWindow, captchaBanner)
             injectCenterToast(currentShopWindow, "请完成验证码验证")
             currentShopWindow.show()
-            diagWindowState('[PaySvc] captcha AFTER shopWindow.show()', mainWindow, currentShopWindow)
 
             const verified = await this.interactionService.waitForUserConfirmation(
               currentShopWindow,
@@ -274,13 +232,10 @@ export class PaymentService {
                   win.setSize(WINDOW_SIZES.CONFIRMATION.width, WINDOW_SIZES.CONFIRMATION.height)
                   win.setTitle('需要输入支付密码 - 需要手动操作')
                   const mainWindow = this.windowManager.getMainWindow()
-                  diagWindowState('[PaySvc] auto_pay cashier BEFORE setParentWindow', mainWindow, win)
                   if (mainWindow) win.setParentWindow(mainWindow)
-                  diagWindowState('[PaySvc] auto_pay cashier AFTER setParentWindow', mainWindow, win)
                   injectOverlayBanner(win, '💳 自动支付已暂停：订单金额超过免密支付限额，支付宝需要您输入支付密码。请在下方输入密码完成支付，系统将自动检测支付结果')
                   injectCenterToast(win, "请输入支付密码完成支付")
                   win.show()
-                  diagWindowState('[PaySvc] auto_pay cashier AFTER shopWindow.show()', mainWindow, win)
                 }
                 continue
               }
@@ -306,13 +261,10 @@ export class PaymentService {
                   win.setSize(WINDOW_SIZES.CONFIRMATION.width, WINDOW_SIZES.CONFIRMATION.height)
                   win.setTitle('需要输入支付密码 - 需要手动操作')
                   const mainWindow = this.windowManager.getMainWindow()
-                  diagWindowState('[PaySvc] auto_pay textMatch BEFORE setParentWindow', mainWindow, win)
                   if (mainWindow) win.setParentWindow(mainWindow)
-                  diagWindowState('[PaySvc] auto_pay textMatch AFTER setParentWindow', mainWindow, win)
                   injectOverlayBanner(win, '💳 自动支付已暂停：订单金额超过免密支付限额，支付宝需要您输入支付密码。请在下方输入密码完成支付，系统将自动检测支付结果')
                   injectCenterToast(win, "请输入支付密码完成支付")
                   win.show()
-                  diagWindowState('[PaySvc] auto_pay textMatch AFTER shopWindow.show()', mainWindow, win)
                 }
               } catch { /* ignore */ }
             }
@@ -321,9 +273,7 @@ export class PaymentService {
               finalWin.setSize(WINDOW_SIZES.CONFIRMATION.width, WINDOW_SIZES.CONFIRMATION.height)
               finalWin.setTitle('支付结果确认 - 需要手动确认')
               const mainWindow = this.windowManager.getMainWindow()
-              diagWindowState('[PaySvc] auto_pay timeout BEFORE setParentWindow', mainWindow, finalWin)
               if (mainWindow) finalWin.setParentWindow(mainWindow)
-              diagWindowState('[PaySvc] auto_pay timeout AFTER setParentWindow', mainWindow, finalWin)
               injectOverlayBanner(finalWin, '📋 自动支付超时：系统等待支付结果超过60秒未能自动检测到。请在下方确认是否已完成支付，然后点击"已完成"')
               injectCenterToast(finalWin, "请确认是否已完成支付")
               finalWin.show()
@@ -348,9 +298,7 @@ export class PaymentService {
           currentShopWindow.setSize(WINDOW_SIZES.CONFIRMATION.width, WINDOW_SIZES.CONFIRMATION.height)
           currentShopWindow.setTitle('请完成支付 - 需要手动操作')
           const mainWindow = this.windowManager.getMainWindow()
-          diagWindowState('[PaySvc] manual_pay BEFORE setParentWindow', mainWindow, currentShopWindow)
           if (mainWindow) currentShopWindow.setParentWindow(mainWindow)
-          diagWindowState('[PaySvc] manual_pay AFTER setParentWindow', mainWindow, currentShopWindow)
           injectOverlayBanner(currentShopWindow, '📋 订单已提交成功，当前支付模式为手动支付，请在下方完成支付后点击"已完成"')
           injectCenterToast(currentShopWindow, "请完成支付后点击已完成")
           currentShopWindow.show()
@@ -391,14 +339,11 @@ export class PaymentService {
     shopWindow.setTitle(title || '金额超过免密支付上限 - 需要手动确认付款')
     const mainWindow = this.windowManager.getMainWindow()
     if (mainWindow) {
-      diagWindowState('[PaySvc] showPaymentWindow BEFORE setParentWindow', mainWindow, shopWindow)
       shopWindow.setParentWindow(mainWindow)
-      diagWindowState('[PaySvc] showPaymentWindow AFTER setParentWindow', mainWindow, shopWindow)
     }
     injectOverlayBanner(shopWindow, title || '💰 自动支付已暂停：金额超过免密支付上限，为保障资金安全需要您手动确认。请在下方完成付款后关闭窗口')
     injectCenterToast(shopWindow, "请完成付款后关闭窗口")
     shopWindow.show()
-    diagWindowState('[PaySvc] showPaymentWindow AFTER shopWindow.show()', mainWindow, shopWindow)
 
     let paymentDetected = false
 

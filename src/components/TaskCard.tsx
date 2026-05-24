@@ -200,6 +200,26 @@ export default function TaskCard({ task, onCancel, onRetryItem, onReExecute, onD
   const cardRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
+    if (!task.itemResults) {
+      setExcludedOrderIds(new Set())
+      return
+    }
+    try {
+      const results: ItemResult[] = JSON.parse(task.itemResults)
+      const orderIds = results.filter(r => r.orderId).map(r => r.orderId!)
+      if (orderIds.length === 0) {
+        setExcludedOrderIds(new Set())
+        return
+      }
+      api.getUnavailableOrderIds(orderIds).then((ids: unknown) => {
+        setExcludedOrderIds(new Set(ids as number[]))
+      })
+    } catch {
+      setExcludedOrderIds(new Set())
+    }
+  }, [task.itemResults])
+
+  useEffect(() => {
     if (logRef.current) {
       logRef.current.scrollTop = logRef.current.scrollHeight
     }
@@ -360,24 +380,34 @@ export default function TaskCard({ task, onCancel, onRetryItem, onReExecute, onD
   }
 
   const handleExcludeOrder = async (confirmationId: number, orderId: number) => {
+    if (!orderId) return
     setExcludingOrderId(orderId)
+    setExcludedOrderIds(prev => new Set(prev).add(orderId))
     try {
       await api.markOrderUnavailable(orderId)
-      setExcludedOrderIds(prev => new Set(prev).add(orderId))
+    } catch {
+      setExcludedOrderIds(prev => {
+        const next = new Set(prev)
+        next.delete(orderId)
+        return next
+      })
     } finally {
       setExcludingOrderId(null)
     }
   }
 
   const handleRestoreOrder = async (orderId: number) => {
+    if (!orderId) return
     setExcludingOrderId(orderId)
+    setExcludedOrderIds(prev => {
+      const next = new Set(prev)
+      next.delete(orderId)
+      return next
+    })
     try {
       await api.toggleOrderUnavailable(orderId)
-      setExcludedOrderIds(prev => {
-        const next = new Set(prev)
-        next.delete(orderId)
-        return next
-      })
+    } catch {
+      setExcludedOrderIds(prev => new Set(prev).add(orderId))
     } finally {
       setExcludingOrderId(null)
     }

@@ -1,4 +1,4 @@
-import { ipcMain, BrowserWindow } from 'electron'
+import { ipcMain, BrowserWindow, shell } from 'electron'
 import type { ParsedShoppingItem, PaymentMode } from '../../shared/types/platform.types'
 import type { Database } from '../db/database'
 import type { TaskScheduler } from '../scheduler/task-scheduler'
@@ -73,9 +73,7 @@ export function registerIpcHandlers(db: Database, scheduler: TaskScheduler) {
 
   ipcMain.handle('task:confirm', async (_event, instruction: string, items: ParsedShoppingItem[], platform?: string, dryRun?: boolean, paymentMode?: PaymentMode) => {
     try {
-      console.log(`[IPC] task:confirm called, items=${items.length}, platform=${platform}, dryRun=${dryRun}, paymentMode=${paymentMode}`)
       const taskId = await scheduler.confirmTask(instruction, items, platform || 'taobao', dryRun, paymentMode)
-      console.log(`[IPC] task:confirm result: taskId=${taskId}`)
       return { taskId }
     } catch (e) {
       console.error(`[IPC] task:confirm error:`, e)
@@ -175,6 +173,31 @@ export function registerIpcHandlers(db: Database, scheduler: TaskScheduler) {
     }
   })
 
+  const PLATFORM_SEARCH_URLS: Record<string, (keyword: string) => string> = {
+    taobao: (kw) => `https://s.taobao.com/search?q=${encodeURIComponent(kw)}`,
+    jd: (kw) => `https://search.jd.com/Search?keyword=${encodeURIComponent(kw)}`,
+    pdd: (kw) => `https://mobile.yangkeduo.com/search_result.html?search_key=${encodeURIComponent(kw)}`,
+  }
+
+  ipcMain.handle('platform:open-search-in-browser', async (_event, keyword: string, platformName?: string) => {
+    try {
+      const platform = platformName || 'taobao'
+      const urlBuilder = PLATFORM_SEARCH_URLS[platform]
+      if (!urlBuilder) {
+        return { success: false, error: `不支持的平台: ${platform}` }
+      }
+      const url = urlBuilder(keyword)
+      const platformAdapter = scheduler.getPlatform(platform) as any
+      if (platformAdapter && typeof platformAdapter.openInteractionWindow === 'function') {
+        return await platformAdapter.openInteractionWindow(url, `🔍 自动购物助手：请在搜索结果中找到"${keyword}"并手动购买`)
+      }
+      await shell.openExternal(url)
+      return { success: true, url }
+    } catch (e) {
+      return { success: false, error: String(e) }
+    }
+  })
+
   // Account
   ipcMain.handle('account:login', async (_event, platform: string) => {
     try {
@@ -239,20 +262,34 @@ export function registerIpcHandlers(db: Database, scheduler: TaskScheduler) {
     }
   })
 
-  ipcMain.handle('orders:search', async (_event, keyword: string) => {
-    return db.searchOrders(keyword)
+  ipcMain.handle('orders:cancel-sync', async (_event, platform: string) => {
+    try {
+      const adapter = scheduler.getRegistry().get(platform)
+      if (!adapter) return { success: false, error: '平台不存在' }
+      if (typeof (adapter as any).cancelSync === 'function') {
+        (adapter as any).cancelSync()
+        return { success: true }
+      }
+      return { success: false, error: '该平台不支持取消同步' }
+    } catch (e) {
+      return { success: false, error: e instanceof Error ? e.message : String(e) }
+    }
   })
 
-  ipcMain.handle('orders:list', async (_event, platform: string, limit?: number, offset?: number) => {
-    return db.getOrders(platform, limit, offset)
+  ipcMain.handle('orders:search', async (_event, keyword: string, unavailableFilter?: 'all' | 'excluded' | 'active') => {
+    return db.searchOrders(keyword, undefined, false, unavailableFilter)
+  })
+
+  ipcMain.handle('orders:list', async (_event, platform: string, limit?: number, offset?: number, unavailableFilter?: 'all' | 'excluded' | 'active') => {
+    return db.getOrders(platform, limit, offset, unavailableFilter)
   })
 
   ipcMain.handle('orders:list-all', async (_event, limit?: number, offset?: number) => {
     return db.getAllOrders(limit, offset)
   })
 
-  ipcMain.handle('orders:count', async (_event, platform: string) => {
-    return db.getOrderCount(platform)
+  ipcMain.handle('orders:count', async (_event, platform: string, unavailableFilter?: 'all' | 'excluded' | 'active') => {
+    return db.getOrderCount(platform, unavailableFilter)
   })
 
   ipcMain.handle('orders:clear', async (_event, platform: string) => {
@@ -270,6 +307,14 @@ export function registerIpcHandlers(db: Database, scheduler: TaskScheduler) {
 
   ipcMain.handle('orders:toggle-unavailable', async (_event, id: number) => {
     return db.toggleOrderUnavailable(id)
+  })
+
+  ipcMain.handle('orders:get-unavailable-ids', async (_event, ids: number[]) => {
+    return db.getUnavailableOrderIds(ids)
+  })
+
+  ipcMain.handle('orders:set-all-unavailable', async (_event, platform: string, unavailable: boolean) => {
+    return db.setAllOrdersUnavailable(platform, unavailable)
   })
 
   // Settings

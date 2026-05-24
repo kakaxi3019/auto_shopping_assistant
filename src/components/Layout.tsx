@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react'
+import { useRef, useCallback, useEffect, useState, type ReactNode } from 'react'
 
 type Page = 'shopping' | 'scheduled' | 'orders' | 'account' | 'settings'
 
@@ -6,6 +6,8 @@ interface LayoutProps {
   children: ReactNode
   currentPage: Page
   onNavigate: (page: Page) => void
+  mainRef?: React.RefObject<HTMLDivElement | null>
+  onScrollStateChange?: (scrolled: boolean) => void
 }
 
 const navItems: { key: Page; label: string; icon: string }[] = [
@@ -16,7 +18,23 @@ const navItems: { key: Page; label: string; icon: string }[] = [
   { key: 'settings', label: '设置', icon: '⚙️' },
 ]
 
-export default function Layout({ children, currentPage, onNavigate }: LayoutProps) {
+export default function Layout({ children, currentPage, onNavigate, mainRef, onScrollStateChange }: LayoutProps) {
+  const internalRef = useRef<HTMLDivElement>(null)
+  const ref = mainRef || internalRef
+
+  const handleScroll = useCallback(() => {
+    const el = ref.current
+    if (!el || !onScrollStateChange) return
+    onScrollStateChange(el.scrollTop > 200)
+  }, [ref, onScrollStateChange])
+
+  useEffect(() => {
+    const el = ref.current
+    if (!el || !onScrollStateChange) return
+    el.addEventListener('scroll', handleScroll, { passive: true })
+    return () => el.removeEventListener('scroll', handleScroll)
+  }, [ref, handleScroll, onScrollStateChange])
+
   return (
     <div className="flex h-screen bg-gray-50">
       <aside className="w-56 bg-white border-r border-gray-100 flex flex-col">
@@ -46,7 +64,7 @@ export default function Layout({ children, currentPage, onNavigate }: LayoutProp
         </div>
       </aside>
 
-      <main className="flex-1 overflow-auto p-6">{children}</main>
+      <main ref={ref} className="flex-1 overflow-auto p-6">{children}</main>
     </div>
   )
 }

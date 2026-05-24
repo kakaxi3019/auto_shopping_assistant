@@ -61,6 +61,9 @@ export default function OrderList({ onNavigateToTasks }: { onNavigateToTasks?: (
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
   const [deleting, setDeleting] = useState(false)
   const [togglingId, setTogglingId] = useState<number | null>(null)
+  const [excludeFilter, setExcludeFilter] = useState<'all' | 'excluded' | 'active'>('all')
+  const [filterCounts, setFilterCounts] = useState<{ all: number; active: number; excluded: number }>({ all: 0, active: 0, excluded: 0 })
+  const [batchAllToggling, setBatchAllToggling] = useState(false)
 
   const handleRebuy = useCallback(async (order: Order) => {
     setRebuying(order.id)
@@ -108,23 +111,31 @@ export default function OrderList({ onNavigateToTasks }: { onNavigateToTasks?: (
     setLoading(true)
     try {
       if (activeSearch) {
-        const results = await api.searchOrders(activeSearch)
+        const filter = excludeFilter === 'all' ? undefined : excludeFilter
+        const results = await api.searchOrders(activeSearch, filter)
         setOrders((results as Order[]).filter(o => o.platform === selectedPlatform))
         setTotal((results as Order[]).filter(o => o.platform === selectedPlatform).length)
         setPage(1)
       } else {
         const offset = (page - 1) * PAGE_SIZE
-        const results = await api.getOrders(selectedPlatform, PAGE_SIZE, offset)
-        const count = await api.getOrderCount(selectedPlatform)
+        const filter = excludeFilter === 'all' ? undefined : excludeFilter
+        const results = await api.getOrders(selectedPlatform, PAGE_SIZE, offset, filter)
+        const count = await api.getOrderCount(selectedPlatform, filter)
         setOrders(results as Order[])
         setTotal(count)
       }
+      const [allCount, activeCount, excludedCount] = await Promise.all([
+        api.getOrderCount(selectedPlatform),
+        api.getOrderCount(selectedPlatform, 'active'),
+        api.getOrderCount(selectedPlatform, 'excluded'),
+      ])
+      setFilterCounts({ all: allCount as number, active: activeCount as number, excluded: excludedCount as number })
     } catch {
       setOrders([])
     } finally {
       setLoading(false)
     }
-  }, [selectedPlatform, page, activeSearch])
+  }, [selectedPlatform, page, activeSearch, excludeFilter])
 
   useEffect(() => {
     if (selectedPlatform) loadOrders()
@@ -143,6 +154,7 @@ export default function OrderList({ onNavigateToTasks }: { onNavigateToTasks?: (
     setActiveSearch('')
     setManageMode(false)
     setSelectedIds(new Set())
+    setExcludeFilter('all')
   }
 
   const handleBack = () => {
@@ -152,6 +164,7 @@ export default function OrderList({ onNavigateToTasks }: { onNavigateToTasks?: (
     setActiveSearch('')
     setManageMode(false)
     setSelectedIds(new Set())
+    setExcludeFilter('all')
     loadCounts()
   }
 
@@ -242,6 +255,44 @@ export default function OrderList({ onNavigateToTasks }: { onNavigateToTasks?: (
       alert('操作失败')
     } finally {
       setTogglingId(null)
+    }
+  }
+
+  const [batchToggling, setBatchToggling] = useState(false)
+
+  const handleBatchToggleUnavailable = async (exclude: boolean) => {
+    if (selectedIds.size === 0) return
+    setBatchToggling(true)
+    try {
+      const selectedOrders = orders.filter(o => selectedIds.has(o.id))
+      const targetOrders = exclude
+        ? selectedOrders.filter(o => !o.unavailable)
+        : selectedOrders.filter(o => !!o.unavailable)
+      for (const order of targetOrders) {
+        await api.toggleOrderUnavailable(order.id)
+      }
+      if (targetOrders.length > 0) loadOrders()
+      setSelectedIds(new Set())
+    } catch {
+      alert('操作失败')
+    } finally {
+      setBatchToggling(false)
+    }
+  }
+
+  const handleSetAllUnavailable = async (exclude: boolean) => {
+    if (!selectedPlatform) return
+    const label = exclude ? '排除所有商品匹配' : '恢复所有商品匹配'
+    if (!confirm(`确定要${label}吗？此操作将影响该平台下的所有订单。`)) return
+    setBatchAllToggling(true)
+    try {
+      await api.setAllOrdersUnavailable(selectedPlatform, exclude)
+      loadOrders()
+      loadCounts()
+    } catch {
+      alert('操作失败')
+    } finally {
+      setBatchAllToggling(false)
     }
   }
 
@@ -343,13 +394,33 @@ export default function OrderList({ onNavigateToTasks }: { onNavigateToTasks?: (
             已选 {selectedIds.size} 项
           </span>
           {selectedIds.size > 0 && (
-            <button
-              onClick={handleDeleteSelected}
-              disabled={deleting}
-              className="ml-auto px-3 py-1.5 text-sm bg-red-500 text-white rounded-lg hover:bg-red-600 transition-colors disabled:opacity-50"
-            >
-              {deleting ? '删除中...' : `删除选中 (${selectedIds.size})`}
-            </button>
+            <>
+              {orders.filter(o => selectedIds.has(o.id) && !o.unavailable).length > 0 && (
+                <button
+                  onClick={() => handleBatchToggleUnavailable(true)}
+                  disabled={batchToggling}
+                  className="px-3 py-1.5 text-sm bg-orange-500 text-white rounded-lg hover:bg-orange-600 transition-colors disabled:opacity-50"
+                >
+                  {batchToggling ? '处理中...' : '排除匹配'}
+                </button>
+              )}
+              {orders.filter(o => selectedIds.has(o.id) && !!o.unavailable).length > 0 && (
+                <button
+                  onClick={() => handleBatchToggleUnavailable(false)}
+                  disabled={batchToggling}
+                  className="px-3 py-1.5 text-sm bg-green-500 text-white rounded-lg hover:bg-green-600 transition-colors disabled:opacity-50"
+                >
+                  {batchToggling ? '处理中...' : '恢复匹配'}
+                </button>
+              )}
+              <button
+                onClick={handleDeleteSelected}
+                disabled={deleting}
+                className="px-3 py-1.5 text-sm bg-red-500 text-white rounded-lg hover:bg-red-600 transition-colors disabled:opacity-50"
+              >
+                {deleting ? '删除中...' : `删除 (${selectedIds.size})`}
+              </button>
+            </>
           )}
         </div>
       )}
@@ -380,6 +451,45 @@ export default function OrderList({ onNavigateToTasks }: { onNavigateToTasks?: (
         >
           搜索
         </button>
+
+        <div className="ml-2 flex items-center gap-1 bg-gray-100 rounded-lg p-0.5">
+          {([
+            { key: 'all' as const, label: '全部', count: filterCounts.all },
+            { key: 'active' as const, label: '未排除', count: filterCounts.active },
+            { key: 'excluded' as const, label: '已排除', count: filterCounts.excluded },
+          ]).map((opt) => (
+            <button
+              key={opt.key}
+              onClick={() => { setExcludeFilter(opt.key); setPage(1) }}
+              className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
+                excludeFilter === opt.key
+                  ? 'bg-white text-gray-800 shadow-sm'
+                  : 'text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              {opt.label} {opt.count}
+            </button>
+          ))}
+        </div>
+
+        {excludeFilter === 'active' && filterCounts.active > 0 && (
+          <button
+            onClick={() => handleSetAllUnavailable(true)}
+            disabled={batchAllToggling}
+            className="ml-2 px-3 py-1.5 text-xs font-medium text-orange-600 bg-orange-50 rounded-lg hover:bg-orange-100 transition-colors disabled:opacity-50"
+          >
+            {batchAllToggling ? '处理中...' : '全部排除'}
+          </button>
+        )}
+        {excludeFilter === 'excluded' && filterCounts.excluded > 0 && (
+          <button
+            onClick={() => handleSetAllUnavailable(false)}
+            disabled={batchAllToggling}
+            className="ml-2 px-3 py-1.5 text-xs font-medium text-green-600 bg-green-50 rounded-lg hover:bg-green-100 transition-colors disabled:opacity-50"
+          >
+            {batchAllToggling ? '处理中...' : '全部恢复'}
+          </button>
+        )}
       </div>
 
       {activeSearch && (
@@ -413,7 +523,8 @@ export default function OrderList({ onNavigateToTasks }: { onNavigateToTasks?: (
       ) : (
         <>
           <div className="grid grid-cols-1 gap-3">
-            {orders.map((order) => (
+            {orders
+              .map((order) => (
               <div
                 key={order.id}
                 className={`bg-white rounded-xl border shadow-sm p-4 hover:shadow-md transition-shadow ${

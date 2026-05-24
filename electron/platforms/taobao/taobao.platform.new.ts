@@ -12,7 +12,7 @@ import { SearchService } from './services/search.service'
 import { CartService } from './services/cart.service'
 import { CheckoutService } from './services/checkout.service'
 import { PaymentService } from './services/payment.service'
-import { setUserAgent, debugLog, injectOverlayBanner, injectCenterToast } from './utils/page-helper'
+import { setUserAgent, injectOverlayBanner, injectCenterToast } from './utils/page-helper'
 import { APP_ICON } from './utils/constants'
 import { isLoginPage, isIdentityVerifyPage, isCheckoutOrPayPage } from './utils/url-helper'
 import { TAOBAO_SELECTORS } from './taobao.selectors'
@@ -48,8 +48,8 @@ export class TaobaoPlatform implements PlatformAdapter {
     this.cookieManager = new CookieManager()
 
     this.interactionService = new InteractionService(
-      this.windowManager,
       this.cookieManager,
+      this.windowManager,
       this.auth,
       (s: string) => this.emitStatus(s)
     )
@@ -212,7 +212,6 @@ export class TaobaoPlatform implements PlatformAdapter {
               }
             })
             await context.addCookies(playwrightCookies)
-            console.log(`[Taobao] Synced ${playwrightCookies.length} cookies from login to Playwright context`)
           } catch (e) {
             console.log(`[Taobao] Failed to sync cookies to Playwright after login: ${e}`)
           }
@@ -269,6 +268,10 @@ export class TaobaoPlatform implements PlatformAdapter {
   async fetchOrderHistory(page?: number, timeRange?: { beginTime?: string; endTime?: string }): Promise<Order[]> {
     await this.cookieManager.syncCookiesToElectron(this.browserManager.getContext(), this.auth)
     return this.orderService.fetchOrderHistory(page, timeRange)
+  }
+
+  cancelSync() {
+    this.orderService.cancelSync()
   }
 
   async searchOrders(keyword: string): Promise<Order[]> {
@@ -338,37 +341,28 @@ export class TaobaoPlatform implements PlatformAdapter {
   }
 
   async cleanup(): Promise<void> {
-    this.destroy()
+    this.windowManager.cleanup()
   }
 
   async resolveConfirmation(confirmed: boolean): Promise<void> {
-    await this.interactionService.resolveConfirmation(confirmed, async () => {
+    if (confirmed) {
       await this.cookieManager.syncCookiesFromElectron(this.browserManager.getContext(), this.auth)
-    })
+    }
+    await this.interactionService.resolveConfirmation(confirmed)
   }
 
   async reopenConfirmationWindow(): Promise<void> {
     await this.interactionService.reopenConfirmationWindow()
   }
 
-  async openInteractionWindow(url: string): Promise<{ success: boolean; error?: string }> {
+  async openInteractionWindow(url: string, bannerMessage?: string): Promise<{ success: boolean; error?: string }> {
     try {
-      debugLog(`[Taobao] openInteractionWindow called, url: ${url}`)
-
-      debugLog(`[Taobao] openInteractionWindow: syncing cookies...`)
       await this.cookieManager.syncCookiesToElectron(this.browserManager.getContext(), this.auth)
-
-      const cookies = await session.defaultSession.cookies.get({})
-      const taobaoCookies = cookies.filter(c => c.domain.includes('taobao') || c.domain.includes('tmall'))
-      debugLog(`[Taobao] openInteractionWindow: session has ${cookies.length} total cookies, ${taobaoCookies.length} taobao/tmall cookies`)
 
       const win = this.windowManager.createInteractionWindow(url)
 
-      debugLog(`[Taobao] openInteractionWindow: BrowserWindow created, UA set`)
-
       win.webContents.setWindowOpenHandler(({ url: openUrl }) => {
-        console.log('[Taobao] Interaction window open: ' + openUrl)
-        return { action: 'allow', overrideBrowserWindowOptions: { show: false } }
+        return { action: 'allow', overrideBrowserWindowOptions: { show: false, webPreferences: { backgroundThrottling: false } } }
       })
 
       win.webContents.on('did-create-window', (newWindow) => {
@@ -389,25 +383,18 @@ export class TaobaoPlatform implements PlatformAdapter {
         })
       })
 
-      win.webContents.on('did-start-loading', () => {
-        debugLog(`[Taobao] openInteractionWindow: did-start-loading`)
-      })
-
       win.webContents.on('did-finish-load', () => {
-        debugLog(`[Taobao] openInteractionWindow: did-finish-load, url: ${win.webContents.getURL()}`)
       })
 
       win.webContents.on('did-fail-load', (_event, errorCode, errorDesc, validatedURL) => {
-        debugLog(`[Taobao] openInteractionWindow: did-fail-load, code: ${errorCode}, desc: ${errorDesc}, url: ${validatedURL}`)
+        console.error(`[Taobao] openInteractionWindow: did-fail-load, code: ${errorCode}, desc: ${errorDesc}, url: ${validatedURL}`)
       })
 
-      debugLog(`[Taobao] openInteractionWindow: loading URL: ${url}`)
-      injectOverlayBanner(win, "🛒 自动购物助手：需要选择商品规格，请在下方选择后点击对应按钮")
-      injectCenterToast(win, "请在下方选择商品规格")
-      debugLog(`[Taobao] openInteractionWindow: window shown`)
+      injectOverlayBanner(win, bannerMessage || "🛒 自动购物助手：需要选择商品规格，请在下方选择后点击对应按钮")
+      injectCenterToast(win, bannerMessage ? bannerMessage.replace(/^[^\s]+\s/, '') : "请在下方选择商品规格")
       return { success: true }
     } catch (e) {
-      debugLog(`[Taobao] openInteractionWindow error: ${e}`)
+      console.error(`[Taobao] openInteractionWindow error: ${e}`)
       return { success: false, error: String(e) }
     }
   }

@@ -27,14 +27,17 @@ const api = {
 
   // Orders
   syncOrders: (platform: string, timeRange?: { beginTime?: string; endTime?: string }) => ipcRenderer.invoke('orders:sync', platform, timeRange),
-  getOrders: (platform: string, limit?: number, offset?: number) => ipcRenderer.invoke('orders:list', platform, limit, offset),
+  cancelSync: (platform: string) => ipcRenderer.invoke('orders:cancel-sync', platform),
+  getOrders: (platform: string, limit?: number, offset?: number, unavailableFilter?: 'all' | 'excluded' | 'active') => ipcRenderer.invoke('orders:list', platform, limit, offset, unavailableFilter),
   getAllOrders: (limit?: number, offset?: number) => ipcRenderer.invoke('orders:list-all', limit, offset),
-  searchOrders: (keyword: string) => ipcRenderer.invoke('orders:search', keyword),
-  getOrderCount: (platform: string) => ipcRenderer.invoke('orders:count', platform),
+  searchOrders: (keyword: string, unavailableFilter?: 'all' | 'excluded' | 'active') => ipcRenderer.invoke('orders:search', keyword, unavailableFilter),
+  getOrderCount: (platform: string, unavailableFilter?: 'all' | 'excluded' | 'active') => ipcRenderer.invoke('orders:count', platform, unavailableFilter),
   clearOrders: (platform: string) => ipcRenderer.invoke('orders:clear', platform),
   deleteOrder: (id: number) => ipcRenderer.invoke('orders:delete', id),
   deleteOrders: (ids: number[]) => ipcRenderer.invoke('orders:delete-batch', ids),
   toggleOrderUnavailable: (id: number) => ipcRenderer.invoke('orders:toggle-unavailable', id),
+  getUnavailableOrderIds: (ids: number[]) => ipcRenderer.invoke('orders:get-unavailable-ids', ids),
+  setAllOrdersUnavailable: (platform: string, unavailable: boolean) => ipcRenderer.invoke('orders:set-all-unavailable', platform, unavailable),
 
   // Settings
   getSetting: (key: string) => ipcRenderer.invoke('settings:get', key),
@@ -82,6 +85,7 @@ const api = {
     return () => ipcRenderer.removeListener('task:notification-click', handler)
   },
   openInteractionWindow: (url: string, platform?: string) => ipcRenderer.invoke('window:open-interaction', url, platform),
+  openSearchInBrowser: (keyword: string, platform?: string) => ipcRenderer.invoke('platform:open-search-in-browser', keyword, platform),
 }
 
 contextBridge.exposeInMainWorld('api', api)

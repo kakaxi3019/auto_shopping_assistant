@@ -24,7 +24,7 @@ export class BrowserManager {
     }
 
     if (!this.browser) {
-      emitStatus('正在启动自动化引擎...')
+      emitStatus('正在提交订单...')
       const executablePath = getChromiumPath()
       this.browser = await chromium.launch({
         headless: true,
@@ -35,6 +35,7 @@ export class BrowserManager {
           '--no-sandbox',
           '--disable-infobars',
           '--window-size=1280,800',
+          '--headless=new',
         ],
       })
 
@@ -68,7 +69,7 @@ export class BrowserManager {
 
       this.page = await this.context.newPage()
       this.startHeartbeat()
-      emitStatus('自动化引擎已就绪')
+      emitStatus('正在确认支付...')
     }
 
     return this.context!
@@ -112,19 +113,16 @@ export class BrowserManager {
         })
         await heartbeatPage.waitForTimeout(2000)
         await heartbeatPage.close()
-        console.log('[Taobao] Heartbeat: session keep-alive ping completed')
       } catch (e) {
         console.log(`[Taobao] Heartbeat: keep-alive ping failed: ${e}`)
       }
     }, BrowserManager.HEARTBEAT_INTERVAL)
-    console.log('[Taobao] Heartbeat: session keep-alive started (5 min interval)')
   }
 
   private stopHeartbeat() {
     if (this.heartbeatTimer) {
       clearInterval(this.heartbeatTimer)
       this.heartbeatTimer = null
-      console.log('[Taobao] Heartbeat: session keep-alive stopped')
     }
   }
 

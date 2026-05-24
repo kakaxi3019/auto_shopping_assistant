@@ -166,11 +166,9 @@ export class CookieManager {
         }
         auth.saveElectronCookies(taobaoExisting as any)
         sourceCookies = [...sourceCookies, ...sessionOnlyCookies]
-        console.log(`[Taobao] syncCookiesToElectron: supplemented ${sessionOnlyCookies.length} cookies from Electron session`)
       }
 
       if (sourceCookies.length === 0) {
-        console.log(`[Taobao] syncCookiesToElectron: no source cookies to sync`)
         return
       }
 
@@ -212,11 +210,8 @@ export class CookieManager {
       }
 
       if (cookiesToSet.length === 0) {
-        console.log(`[Taobao] syncCookiesToElectron: all cookies up to date, nothing to sync`)
         return
       }
-
-      console.log(`[Taobao] Syncing ${cookiesToSet.length} cookies to Electron session (out of ${sourceCookies.length} source, ${taobaoExisting.length} existing)`)
 
       let synced = 0
       for (const cookie of cookiesToSet) {
@@ -250,7 +245,6 @@ export class CookieManager {
           console.log(`[Taobao] Failed to sync cookie ${cookie.name}: ${e}`)
         }
       }
-      console.log(`[Taobao] Synced ${synced} cookies to Electron session`)
 
       this.lastCookieToElectronSyncTime = Date.now()
 
@@ -305,7 +299,6 @@ export class CookieManager {
       }
 
       this.lastCookieSyncTime = Date.now()
-      console.log(`[Taobao] Synced ${taobaoCookies.length} cookies from Electron session`)
     } catch (e) {
       console.log(`[Taobao] syncCookiesFromElectron error: ${e}`)
     } finally {
