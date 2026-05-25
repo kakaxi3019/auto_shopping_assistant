@@ -266,12 +266,25 @@ export default function ScheduledTasks() {
 
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1.5">执行时间</label>
-            <input
-              type="datetime-local"
-              value={scheduledTime}
-              onChange={(e) => setScheduledTime(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
+            {repeatType === 'once' ? (
+              <input
+                type="datetime-local"
+                value={scheduledTime}
+                onChange={(e) => setScheduledTime(e.target.value)}
+                className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            ) : (
+              <input
+                type="time"
+                value={scheduledTime ? scheduledTime.split('T')[1]?.substring(0, 5) || '09:00' : '09:00'}
+                onChange={(e) => {
+                  const today = new Date()
+                  const dateStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
+                  setScheduledTime(`${dateStr}T${e.target.value}`)
+                }}
+                className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            )}
           </div>
 
           {repeatType === 'weekly' && (

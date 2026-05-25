@@ -21,6 +21,10 @@ interface TaskCardProps {
     parsedItems: string
     platform?: string
     paymentMode?: string
+    source?: string
+    repeatType?: string
+    dayOfWeek?: number | null
+    dayOfMonth?: number | null
     createdAt: string
     startedAt: string | null
     completedAt: string | null
@@ -631,6 +635,25 @@ export default function TaskCard({ task, onCancel, onRetryItem, onReExecute, onD
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2">
               <p className={`text-base font-medium truncate ${isPending ? 'text-gray-500' : 'text-gray-900'}`}>{task.instruction}</p>
+              {task.source === 'scheduled' && (() => {
+                const REPEAT_LABELS: Record<string, string> = { once: '单次', daily: '每天', weekly: '每周', monthly: '每月' }
+                const WEEKDAY_LABELS = ['周日', '周一', '周二', '周三', '周四', '周五', '周六']
+                let label = '定时'
+                if (task.repeatType) {
+                  if (task.repeatType === 'weekly' && task.dayOfWeek != null) {
+                    label = `每周${WEEKDAY_LABELS[task.dayOfWeek] || ''}`
+                  } else if (task.repeatType === 'monthly' && task.dayOfMonth != null) {
+                    label = `每月${task.dayOfMonth}号`
+                  } else {
+                    label = REPEAT_LABELS[task.repeatType] || '定时'
+                  }
+                }
+                return (
+                  <span className="flex-shrink-0 inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-xs font-medium bg-purple-50 text-purple-600 border border-purple-100">
+                    ⏰ {label}
+                  </span>
+                )
+              })()}
               {canExpand && (
                 <svg
                   className={`w-4 h-4 text-gray-400 transition-transform flex-shrink-0 ${expanded ? 'rotate-180' : ''}`}

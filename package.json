@@ -40,7 +40,7 @@
     "productName": "自动购物助手",
     "directories": {
       "buildResources": "build",
-      "output": "release-dist"
+      "output": "D:\\workspace\\release-output"
     },
     "files": [
       "dist/**/*",

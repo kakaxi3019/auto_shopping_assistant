@@ -2,11 +2,11 @@ import initSqlJs, { type Database as SqlJsDatabase } from 'sql.js'
 import { join } from 'path'
 import { app, safeStorage } from 'electron'
 import { existsSync, readFileSync, writeFileSync } from 'fs'
-import { MIGRATIONS, MIGRATION_V2, MIGRATION_V3, MIGRATION_V4, MIGRATION_V5, MIGRATION_V6, MIGRATION_V7, MIGRATION_V8, MIGRATION_V9, MIGRATION_V10, MIGRATION_V11, MIGRATION_V12, MIGRATION_V13 } from './migrations'
+import { MIGRATIONS, MIGRATION_V2, MIGRATION_V3, MIGRATION_V4, MIGRATION_V5, MIGRATION_V6, MIGRATION_V7, MIGRATION_V8, MIGRATION_V9, MIGRATION_V10, MIGRATION_V11, MIGRATION_V12, MIGRATION_V13, MIGRATION_V14, MIGRATION_V15 } from './migrations'
 import type { ShoppingTask, PendingConfirmation } from '../../shared/types/task.types'
 import type { Order } from '../../shared/types/platform.types'
 
-const MIGRATION_VERSION = 13
+const MIGRATION_VERSION = 15
 
 const SENSITIVE_KEYS = new Set(['openai_api_key', 'anthropic_api_key'])
 
@@ -179,6 +179,18 @@ export class Database {
 
     if (currentVersion < 13) {
       for (const sql of MIGRATION_V13) {
+        this.db.run(sql)
+      }
+    }
+
+    if (currentVersion < 14) {
+      for (const sql of MIGRATION_V14) {
+        this.db.run(sql)
+      }
+    }
+
+    if (currentVersion < 15) {
+      for (const sql of MIGRATION_V15) {
         this.db.run(sql)
       }
     }
@@ -503,8 +515,8 @@ export class Database {
     return row[0]?.values[0]?.[0] as number
   }
 
-  createTask(instruction: string, parsedItems: string, platform = 'taobao', paymentMode = 'cart_only'): number {
-    this.db.run('INSERT INTO tasks (instruction, parsed_items, platform, payment_mode, created_at) VALUES (?, ?, ?, ?, datetime(\'now\', \'localtime\'))', [instruction, parsedItems, platform, paymentMode])
+  createTask(instruction: string, parsedItems: string, platform = 'taobao', paymentMode = 'cart_only', source = 'manual', repeatType?: string, dayOfWeek?: number | null, dayOfMonth?: number | null): number {
+    this.db.run('INSERT INTO tasks (instruction, parsed_items, platform, payment_mode, source, repeat_type, day_of_week, day_of_month, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime(\'now\', \'localtime\'))', [instruction, parsedItems, platform, paymentMode, source, repeatType || null, dayOfWeek ?? null, dayOfMonth ?? null])
     this.scheduleSave()
     const row = this.db.exec('SELECT last_insert_rowid() as id')
     return row[0]?.values[0]?.[0] as number

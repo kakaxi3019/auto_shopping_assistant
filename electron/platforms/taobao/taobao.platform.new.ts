@@ -192,14 +192,7 @@ export class TaobaoPlatform implements PlatformAdapter {
         if (context && taobaoCookies.length > 0) {
           try {
             const playwrightCookies = taobaoCookies.map((c) => {
-              let sameSite: 'Strict' | 'Lax' | 'None' = 'Lax'
-              if (c.sameSite === 'no_restriction' || c.sameSite === 'None') {
-                sameSite = c.secure ? 'None' : 'Lax'
-              } else if (c.sameSite === 'strict' || c.sameSite === 'Strict') {
-                sameSite = 'Strict'
-              } else if (c.secure) {
-                sameSite = 'None'
-              }
+              const sameSite = this.cookieManager.toPlaywrightSameSite(c.sameSite, c.secure)
               return {
                 name: c.name,
                 value: c.value,

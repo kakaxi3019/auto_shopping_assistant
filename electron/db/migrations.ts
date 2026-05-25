@@ -118,3 +118,13 @@ export const MIGRATION_V13 = [
   )`,
   `INSERT OR IGNORE INTO unavailable_orders (order_id) SELECT id FROM orders WHERE unavailable = 1`,
 ]
+
+export const MIGRATION_V14 = [
+  `ALTER TABLE tasks ADD COLUMN source TEXT NOT NULL DEFAULT 'manual'`,
+]
+
+export const MIGRATION_V15 = [
+  `ALTER TABLE tasks ADD COLUMN repeat_type TEXT`,
+  `ALTER TABLE tasks ADD COLUMN day_of_week INTEGER`,
+  `ALTER TABLE tasks ADD COLUMN day_of_month INTEGER`,
+]

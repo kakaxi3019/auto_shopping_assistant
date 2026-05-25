@@ -9,6 +9,35 @@ export class CookieManager {
   private pendingSyncTimer: ReturnType<typeof setTimeout> | null = null
   private pendingSyncResolves: (() => void)[] = []
 
+  toPlaywrightSameSite(sameSite: string | undefined, secure: boolean | undefined): 'Strict' | 'Lax' | 'None' {
+    const isSecure = secure ?? false
+    if (sameSite === 'no_restriction' || sameSite === 'None') {
+      return isSecure ? 'None' : 'Lax'
+    }
+    if (sameSite === 'strict' || sameSite === 'Strict') {
+      return 'Strict'
+    }
+    if (isSecure) {
+      return 'None'
+    }
+    return 'Lax'
+  }
+
+  private toElectronSameSite(sameSite: 'Strict' | 'Lax' | 'None'): 'strict' | 'no_restriction' | 'lax' {
+    return sameSite === 'Strict' ? 'strict' : sameSite === 'None' ? 'no_restriction' : 'lax'
+  }
+
+  private toElectronApiSameSite(sameSite: string | undefined, secure: boolean): 'unspecified' | 'no_restriction' | 'lax' | 'strict' {
+    if (sameSite && ['unspecified', 'no_restriction', 'lax', 'strict'].includes(sameSite)) {
+      const result = sameSite as 'unspecified' | 'no_restriction' | 'lax' | 'strict'
+      if (result === 'no_restriction' && !secure) {
+        return 'lax'
+      }
+      return result
+    }
+    return secure ? 'no_restriction' : 'lax'
+  }
+
   resetToElectronSyncTimer() {
     this.lastCookieToElectronSyncTime = 0
   }
@@ -52,7 +81,7 @@ export class CookieManager {
               path: c.path,
               secure: c.secure,
               httpOnly: c.httpOnly,
-              sameSite: c.sameSite === 'Strict' ? 'strict' : c.sameSite === 'None' ? 'no_restriction' : 'lax',
+              sameSite: this.toElectronSameSite(c.sameSite as 'Strict' | 'Lax' | 'None'),
               expires: c.expires && c.expires > 0 ? c.expires : undefined,
             }))
         } catch (e) {
@@ -101,16 +130,7 @@ export class CookieManager {
         if (!sourceEntry) {
           const ecExpired = ec.expirationDate && ec.expirationDate > 0 && ec.expirationDate <= nowSec
           if (!ecExpired) {
-            let sameSite: string | undefined
-            if (ec.sameSite === 'no_restriction' || ec.sameSite === 'None') {
-              sameSite = ec.secure ? 'None' : 'Lax'
-            } else if (ec.sameSite === 'strict' || ec.sameSite === 'Strict') {
-              sameSite = 'Strict'
-            } else if (ec.secure) {
-              sameSite = 'None'
-            } else {
-              sameSite = 'Lax'
-            }
+            const pwSameSite = this.toPlaywrightSameSite(ec.sameSite, ec.secure)
             sessionOnlyCookies.push({
               name: ec.name,
               value: ec.value,
@@ -118,7 +138,7 @@ export class CookieManager {
               path: ec.path,
               secure: ec.secure,
               httpOnly: ec.httpOnly,
-              sameSite: sameSite === 'Strict' ? 'strict' : sameSite === 'None' ? 'no_restriction' : 'lax',
+              sameSite: this.toElectronSameSite(pwSameSite),
               expires: ec.expirationDate && ec.expirationDate > 0 ? ec.expirationDate : undefined,
             })
           }
@@ -126,16 +146,7 @@ export class CookieManager {
           const sourceExpired = sourceEntry.expires && sourceEntry.expires > 0 && sourceEntry.expires <= nowSec
           const ecExpired = ec.expirationDate && ec.expirationDate > 0 && ec.expirationDate <= nowSec
           if (sourceExpired && !ecExpired) {
-            let sameSite: string | undefined
-            if (ec.sameSite === 'no_restriction' || ec.sameSite === 'None') {
-              sameSite = ec.secure ? 'None' : 'Lax'
-            } else if (ec.sameSite === 'strict' || ec.sameSite === 'Strict') {
-              sameSite = 'Strict'
-            } else if (ec.secure) {
-              sameSite = 'None'
-            } else {
-              sameSite = 'Lax'
-            }
+            const pwSameSite = this.toPlaywrightSameSite(ec.sameSite, ec.secure)
             sessionOnlyCookies.push({
               name: ec.name,
               value: ec.value,
@@ -143,7 +154,7 @@ export class CookieManager {
               path: ec.path,
               secure: ec.secure,
               httpOnly: ec.httpOnly,
-              sameSite: sameSite === 'Strict' ? 'strict' : sameSite === 'None' ? 'no_restriction' : 'lax',
+              sameSite: this.toElectronSameSite(pwSameSite),
               expires: ec.expirationDate && ec.expirationDate > 0 ? ec.expirationDate : undefined,
             })
           }
@@ -159,7 +170,7 @@ export class CookieManager {
             path: c.path,
             secure: c.secure,
             httpOnly: c.httpOnly,
-            sameSite: (c.sameSite === 'strict' ? 'Strict' : c.sameSite === 'no_restriction' ? 'None' : 'Lax') as 'Strict' | 'Lax' | 'None',
+            sameSite: this.toPlaywrightSameSite(c.sameSite, c.secure),
             ...(c.expires && c.expires > 0 ? { expires: c.expires } : {}),
           }))
           await context.addCookies(pwCookies)
@@ -216,18 +227,7 @@ export class CookieManager {
       let synced = 0
       for (const cookie of cookiesToSet) {
         try {
-          const rawSameSite = (cookie as any).sameSite as string | undefined
-          let sameSite: 'unspecified' | 'no_restriction' | 'lax' | 'strict'
-          if (rawSameSite && ['unspecified', 'no_restriction', 'lax', 'strict'].includes(rawSameSite)) {
-            sameSite = rawSameSite as any
-          } else if (cookie.secure) {
-            sameSite = 'no_restriction'
-          } else {
-            sameSite = 'lax'
-          }
-          if (sameSite === 'no_restriction' && !cookie.secure) {
-            sameSite = 'lax'
-          }
+          const sameSite = this.toElectronApiSameSite((cookie as any).sameSite as string | undefined, cookie.secure)
 
           await session.defaultSession.cookies.set({
             url: `https://${cookie.domain.replace(/^\./, '')}${cookie.path}`,
@@ -270,14 +270,7 @@ export class CookieManager {
 
       if (context) {
         const playwrightCookies = taobaoCookies.map((c) => {
-          let sameSite: 'Strict' | 'Lax' | 'None' = 'Lax'
-          if (c.sameSite === 'no_restriction' || c.sameSite === 'None') {
-            sameSite = c.secure ? 'None' : 'Lax'
-          } else if (c.sameSite === 'strict' || c.sameSite === 'Strict') {
-            sameSite = 'Strict'
-          } else if (c.secure) {
-            sameSite = 'None'
-          }
+          const sameSite = this.toPlaywrightSameSite(c.sameSite, c.secure)
           return {
             name: c.name,
             value: c.value,

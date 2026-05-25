@@ -173,8 +173,8 @@ export class TaskScheduler {
     }
   }
 
-  async confirmTask(instruction: string, items: ParsedShoppingItem[], platformName = 'taobao', dryRun?: boolean, paymentMode?: PaymentMode): Promise<number> {
-    const taskId = this.db.createTask(instruction, JSON.stringify(items), platformName, paymentMode || 'cart_only')
+  async confirmTask(instruction: string, items: ParsedShoppingItem[], platformName = 'taobao', dryRun?: boolean, paymentMode?: PaymentMode, source: 'manual' | 'scheduled' = 'manual', repeatType?: string, dayOfWeek?: number | null, dayOfMonth?: number | null): Promise<number> {
+    const taskId = this.db.createTask(instruction, JSON.stringify(items), platformName, paymentMode || 'cart_only', source, repeatType, dayOfWeek, dayOfMonth)
     this.executeTask(taskId, items, platformName, instruction, dryRun, paymentMode)
     return taskId
   }

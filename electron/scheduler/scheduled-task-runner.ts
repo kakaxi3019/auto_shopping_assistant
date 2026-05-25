@@ -44,6 +44,8 @@ export class ScheduledTaskRunner {
     const id = task.id as number
     const instruction = task.instruction as string
     const repeatType = task.repeatType as string
+    const dayOfWeek = task.dayOfWeek as number | null
+    const dayOfMonth = task.dayOfMonth as number | null
     const taskPaymentMode = (task.paymentMode as string) || ''
     const platformName = (task.platform as string) || 'taobao'
 
@@ -58,7 +60,7 @@ export class ScheduledTaskRunner {
       } else {
         paymentMode = (this.db.getSetting('payment_mode') as PaymentMode) || 'cart_only'
       }
-      await this.scheduler.confirmTask(instruction, preview.items, platformName, undefined, paymentMode)
+      await this.scheduler.confirmTask(instruction, preview.items, platformName, undefined, paymentMode, 'scheduled', repeatType, dayOfWeek, dayOfMonth)
     } catch (e) {
       console.error(`[ScheduledTaskRunner] Task #${id} execution failed:`, e)
     }
