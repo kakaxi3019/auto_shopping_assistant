@@ -612,9 +612,14 @@ export default function ShoppingAssistantPanel({
       const currentCandidate = candidates.find(c => c.id === currentRef) || candidates[0]
       let currentScore = currentCandidate?.matchScore || 0
       if (currentCandidate && currentCandidate.matchScore === undefined) {
-        if (item.matchMethod === 'exact') currentScore = 95
-        else if (item.matchMethod === 'llm_direct') currentScore = 90
-        else if (item.matchMethod === 'fuzzy') currentScore = 75
+        const isDefaultSelection = candidates[0] && candidates[0].id === currentCandidate.id
+        if (isDefaultSelection) {
+          if (item.matchMethod === 'exact') currentScore = 95
+          else if (item.matchMethod === 'llm_direct') currentScore = 90
+          else if (item.matchMethod === 'fuzzy') currentScore = 75
+        } else {
+          currentScore = 60
+        }
       }
       const isHighConfidence = item.matched && currentScore >= 90
       const isMediumConfidence = item.matched && currentScore >= 70 && currentScore < 90
@@ -725,9 +730,14 @@ export default function ShoppingAssistantPanel({
                           let candidateScore = candidate.matchScore || 0
                           if (candidate.matchScore === undefined) {
                             if (isSelected) {
-                              if (item.matchMethod === 'exact') candidateScore = 95
-                              else if (item.matchMethod === 'llm_direct') candidateScore = 90
-                              else if (item.matchMethod === 'fuzzy') candidateScore = 75
+                              const isDefaultSelection = candidates[0] && candidates[0].id === candidate.id
+                              if (isDefaultSelection) {
+                                if (item.matchMethod === 'exact') candidateScore = 95
+                                else if (item.matchMethod === 'llm_direct') candidateScore = 90
+                                else if (item.matchMethod === 'fuzzy') candidateScore = 75
+                              } else {
+                                candidateScore = 60
+                              }
                             } else {
                               candidateScore = 60
                             }
