@@ -282,11 +282,11 @@ export class SearchService {
         if (resolved || searchWindow.isDestroyed()) return
         const currentUrl = searchWindow.webContents.getURL()
         if (isLoginPage(currentUrl)) {
-          injectOverlayBanner(searchWindow, '⚠️ 搜索页面需要登录，请在弹出的窗口中完成登录后继续操作')
+          injectOverlayBanner(searchWindow, '⚠️ 自动购物助手：搜索页面需要登录，请在弹出的窗口中完成登录后继续操作')
           injectCenterToast(searchWindow, '请先完成登录')
         } else {
-          injectOverlayBanner(searchWindow, '🛒 自动购物助手：请在搜索结果中找到对应商品并点击进入商品详情页')
-          injectCenterToast(searchWindow, '请找到对应商品并点击进入')
+          injectOverlayBanner(searchWindow, '🛒 自动购物助手：由于该商品直接“再买一单”失败，已为您打开搜索页。请在下方结果中点击正确的商品进入详情页，系统会自动检测并重新接管后续流程。')
+          injectCenterToast(searchWindow, '请点击对应商品进入，系统将自动接管')
         }
       })
 
