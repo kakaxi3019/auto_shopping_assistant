@@ -1,4 +1,4 @@
-﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿import { BrowserWindow } from 'electron'
+﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿import { BrowserWindow } from 'electron'
 import type { Page, BrowserContext } from 'playwright'
 import type { Database } from '../../../db/database'
 import type { AddToCartResult, Order } from '../../../../shared/types/platform.types'
@@ -500,6 +500,7 @@ export class CartService {
       this.windowManager.setShopWindow(newShopWindow)
       setUserAgent(newShopWindow)
 
+      let processingPurchaseDidFinishLoad = false
       return new Promise<AddToCartResult>((resolve) => {
         let resolved = false
         const lt = new ListenerTracker()
@@ -622,15 +623,50 @@ export class CartService {
 
         lt.on(currentShopWindow.webContents, 'did-finish-load', async () => {
           if (resolved) return
-
-          const sw = this.windowManager.getShopWindow()
-          const currentUrl = sw!.webContents.getURL()
-          await handleNavigation(currentUrl)
-          if (resolved) return
-
-          await humanDelay(2000)
-
+          if (processingPurchaseDidFinishLoad) {
+            debugLog('[Taobao-Cart] Ignore concurrent did-finish-load event in purchaseFromUrl')
+            return
+          }
+          processingPurchaseDidFinishLoad = true
           try {
+            const sw = this.windowManager.getShopWindow()
+            const currentUrl = sw!.webContents.getURL()
+            await handleNavigation(currentUrl)
+            if (resolved) return
+
+            const hasCaptcha = await this.verificationService.detectCaptcha(sw!)
+            if (hasCaptcha) {
+              cleanupForCaptcha(sw!)
+              sw?.setSize(WINDOW_SIZES.CONFIRMATION.width, WINDOW_SIZES.CONFIRMATION.height)
+              sw?.setTitle('淘宝安全验证')
+              sw?.setAlwaysOnTop(true)
+              if (sw?.isMinimized()) {
+                sw.restore()
+              }
+              injectOverlayBanner(sw!, '🔐 自动购物助手：淘宝要求安全验证，请在下方拖动滑块完成验证')
+              injectCenterToast(sw!, '请拖动滑块完成验证')
+              sw?.show()
+              sw?.focus()
+              this.emitStatus('需要进行滑块验证，请在弹出的窗口中完成验证...')
+              const verified = await this.interactionService.waitForUserConfirmation(
+                sw!,
+                '淘宝要求安全验证（滑块验证），请在弹出的窗口中拖动滑块完成验证，然后点击"已完成"',
+                '淘宝安全验证',
+                '🔐 请拖动滑块完成验证',
+                'verification',
+              )
+              if (!verified) {
+                this.windowManager.closeShopWindow(async () => { await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth) })
+                doResolve({ success: false, error: '安全验证未完成' })
+                return
+              }
+              resetCaptchaMode(sw!)
+              return
+            }
+
+            await humanDelay(2000)
+
+            try {
             const pageStatus = await execJS(sw!, `
               (function() {
                 var bodyText = (document.body?.innerText || '');
@@ -778,6 +814,9 @@ export class CartService {
             }
           } catch (e: unknown) {
             console.log('[Taobao] purchaseFromUrl page check error: ' + e)
+          }
+          } finally {
+            processingPurchaseDidFinishLoad = false
           }
         })
 
