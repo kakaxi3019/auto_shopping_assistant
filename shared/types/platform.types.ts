@@ -115,4 +115,7 @@ export interface PlatformAdapter {
   reopenConfirmationWindow?(): Promise<void>
   setMainWindow?(win: any): void
   destroy?(): void
+  startScreencast?(onFrame: (base64Jpeg: string) => void): Promise<void>
+  stopScreencast?(): Promise<void>
+  isScreencasting?(): boolean
 }

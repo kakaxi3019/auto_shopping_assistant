@@ -19,7 +19,11 @@ export async function tryAutoLoginThenShow(
   const currentUrl = win.webContents.getURL()
   if (!isLoginPage(currentUrl)) {
     emitStatus('Cookie 已同步，页面已自动跳转')
-    win.show()
+    if (windowManager.cabinMode) {
+      windowManager.showInCabin(win)
+    } else {
+      win.show()
+    }
     return
   }
 
@@ -30,7 +34,11 @@ export async function tryAutoLoginThenShow(
 
     if (!isLoginPage(win.webContents.getURL())) {
       emitStatus('Cookie 已同步，页面已自动跳转')
-      win.show()
+      if (windowManager.cabinMode) {
+        windowManager.showInCabin(win)
+      } else {
+        win.show()
+      }
       return
     }
   } catch { /* ignore */ }
@@ -42,7 +50,11 @@ export async function tryAutoLoginThenShow(
   if (mw) win.setParentWindow(mw)
   injectOverlayBanner(win, "🔑 自动购物助手：登录已过期，请在下方重新登录后继续")
   injectCenterToast(win, "请重新登录")
-  win.show()
+  if (windowManager.cabinMode) {
+    windowManager.showInCabin(win)
+  } else {
+    win.show()
+  }
 }
 
 export interface ShowConfirmationOptions {
@@ -66,5 +78,9 @@ export function showConfirmationWindow(
   if (mw) win.setParentWindow(mw)
   injectOverlayBanner(win, bannerMessage)
   injectCenterToast(win, toastMessage || bannerMessage.replace(/^[🛒🔐💳🔑⚠️📋💰]\s*自动购物助手[：:]\s*/, ''))
-  win.show()
+  if (windowManager.cabinMode) {
+    windowManager.showInCabin(win)
+  } else {
+    win.show()
+  }
 }

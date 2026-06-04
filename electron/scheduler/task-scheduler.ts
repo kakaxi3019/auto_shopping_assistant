@@ -28,6 +28,11 @@ export class TaskScheduler {
   private mainWindow: BrowserWindow | null = null
   private taskQueue: Array<{ taskId: number; fn: () => Promise<void> }> = []
   private isExecuting = false
+  private cancelledTaskIds = new Set<number>()
+
+  isTaskCancelled(taskId: number): boolean {
+    return this.cancelledTaskIds.has(taskId)
+  }
 
   constructor(db: Database) {
     this.db = db
@@ -209,10 +214,16 @@ export class TaskScheduler {
         this.emitUpdate(taskId, 'running', undefined, status)
       })
 
+      const isCancelled = () => this.cancelledTaskIds.has(taskId)
+
       try {
         const execResult = await this.executor.execute(taskId, parsedItems, platform, (msg) => {
           this.emitUpdate(taskId, 'running', undefined, msg)
-        }, instruction, dryRun, paymentMode)
+        }, instruction, dryRun, paymentMode, isCancelled)
+
+        if (isCancelled()) {
+          return
+        }
 
         const hasPending = execResult.itemResults.some(r => r.status === 'pending')
         const hasPendingPayment = execResult.itemResults.some(r => r.status === 'success' && r.pendingPayment)
@@ -229,11 +240,15 @@ export class TaskScheduler {
         this.emitUpdate(taskId, status, error, undefined, undefined, instruction)
         this.db.updateTaskItemResults(taskId, JSON.stringify(execResult.itemResults))
       } catch (e) {
+        if (isCancelled()) {
+          return
+        }
         const errorMsg = e instanceof Error ? e.message : String(e)
         this.db.updateTaskStatus(taskId, 'failed', errorMsg)
         this.emitUpdate(taskId, 'failed', errorMsg, undefined, undefined, instruction)
       } finally {
         unsubscribe()
+        this.cancelledTaskIds.delete(taskId)
       }
     }
 
@@ -265,6 +280,8 @@ export class TaskScheduler {
   }
 
   cancelTask(taskId: number) {
+    this.cancelledTaskIds.add(taskId)
+
     this.taskQueue = this.taskQueue.filter(t => t.taskId !== taskId)
     this.db.dismissPendingConfirmationsForTask(taskId)
 
@@ -314,10 +331,16 @@ export class TaskScheduler {
       this.emitUpdate(taskId, 'running', undefined, status)
     })
 
+    const isCancelled = () => this.cancelledTaskIds.has(taskId)
+
     try {
       const result = await this.executor.executeSingle(taskId, item, platform, (msg) => {
         this.emitUpdate(taskId, 'running', undefined, msg)
-      }, task.instruction, undefined, task.paymentMode)
+      }, task.instruction, undefined, task.paymentMode, isCancelled)
+
+      if (isCancelled()) {
+        return { success: false, error: '任务已取消' }
+      }
 
       itemResults[0] = result
       const updatedItemResultsJson = JSON.stringify(itemResults)

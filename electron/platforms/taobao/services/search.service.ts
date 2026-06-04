@@ -279,7 +279,11 @@ export class SearchService {
           })();
         `
         searchWindow.webContents.executeJavaScript(bannerJs).catch(() => {})
-        searchWindow.show()
+        if (this.windowManager.cabinMode) {
+          this.windowManager.showInCabin(searchWindow)
+        } else {
+          searchWindow.show()
+        }
       })
 
       searchWindow.loadURL(searchUrl)

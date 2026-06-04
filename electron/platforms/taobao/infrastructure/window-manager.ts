@@ -7,6 +7,13 @@ export class WindowManager {
   private loginWindow: BrowserWindow | null = null
   private shopWindow: BrowserWindow | null = null
   private managedWindows: Set<BrowserWindow> = new Set()
+  private _cabinMode: boolean = false
+  private _cabinOpen: boolean = false
+  private _cabinBounds: { x: number; y: number; width: number; height: number } | null = null
+  private _cabinDisplayMode: 'auto' | 'interactive' = 'auto'
+  private cabinWindows: Set<BrowserWindow> = new Set()
+  private _lastCabinWindow: BrowserWindow | null = null
+  private _cabinCapturePaused: boolean = false
 
   trackWindow(win: BrowserWindow): BrowserWindow {
     this.managedWindows.add(win)
@@ -40,6 +47,102 @@ export class WindowManager {
     this.loginWindow = win
   }
 
+  get cabinMode(): boolean {
+    return this._cabinMode
+  }
+
+  set cabinMode(value: boolean) {
+    this._cabinMode = value
+  }
+
+  get cabinOpen(): boolean {
+    return this._cabinOpen
+  }
+
+  set cabinOpen(value: boolean) {
+    this._cabinOpen = value
+    this._cabinMode = value
+    if (!value) {
+      for (const win of this.cabinWindows) {
+        if (!win.isDestroyed()) {
+          win.hide()
+        }
+      }
+    } else {
+      if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+        this.mainWindow.webContents.send('cabin:mode-change', this._cabinDisplayMode)
+      }
+    }
+  }
+
+  get cabinDisplayMode(): 'auto' | 'interactive' {
+    return this._cabinDisplayMode
+  }
+
+  set cabinDisplayMode(mode: 'auto' | 'interactive') {
+    this._cabinDisplayMode = mode
+    if (mode === 'auto') {
+      for (const win of this.cabinWindows) {
+        if (!win.isDestroyed()) win.hide()
+      }
+    } else {
+      for (const win of this.cabinWindows) {
+        if (!win.isDestroyed()) {
+          if (this.mainWindow) win.setParentWindow(this.mainWindow)
+          if (this._cabinBounds) win.setBounds(this._cabinBounds)
+          win.show()
+        }
+      }
+    }
+    if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+      this.mainWindow.webContents.send('cabin:mode-change', mode)
+    }
+  }
+
+  setCabinBounds(bounds: { x: number; y: number; width: number; height: number }) {
+    this._cabinBounds = bounds
+  }
+
+  get cabinCapturePaused(): boolean {
+    return this._cabinCapturePaused
+  }
+
+  set cabinCapturePaused(value: boolean) {
+    this._cabinCapturePaused = value
+  }
+
+  getLastCabinWindow(): BrowserWindow | null {
+    if (this._lastCabinWindow && !this._lastCabinWindow.isDestroyed()) {
+      return this._lastCabinWindow
+    }
+    return null
+  }
+
+  showInCabin(win: BrowserWindow): boolean {
+    if (!this._cabinMode || !this.mainWindow || this.mainWindow.isDestroyed()) return false
+    try {
+      this.cabinWindows.add(win)
+      this._lastCabinWindow = win
+      win.on('closed', () => {
+        this.cabinWindows.delete(win)
+        if (this._lastCabinWindow === win) this._lastCabinWindow = null
+      })
+      if (this.mainWindow) {
+        win.setParentWindow(this.mainWindow)
+      }
+      if (this._cabinBounds) {
+        win.setBounds(this._cabinBounds)
+      } else {
+        const mainBounds = this.mainWindow.getBounds()
+        win.setBounds({ x: 224, y: 0, width: mainBounds.width - 224, height: mainBounds.height })
+      }
+      this.cabinDisplayMode = 'interactive'
+      return true
+    } catch {
+      return false
+    }
+  }
+
   createLoginWindow(): BrowserWindow {
     this.loginWindow = new BrowserWindow({
       width: 900,
@@ -51,6 +154,7 @@ export class WindowManager {
       parent: this.mainWindow!,
       modal: true,
       autoHideMenuBar: true,
+      show: false,
       webPreferences: {
         contextIsolation: true,
         nodeIntegration: false,
@@ -66,7 +170,7 @@ export class WindowManager {
     this.shopWindow = new BrowserWindow({
       width: options?.width ?? 1280,
       height: options?.height ?? 800,
-      show: options?.show ?? false,
+      show: false,
       autoHideMenuBar: true,
       icon: APP_ICON,
       webPreferences: {
@@ -97,10 +201,14 @@ export class WindowManager {
     setUserAgent(win)
     win.loadURL(url)
     win.setTitle('请手动选择商品规格')
-    if (this.mainWindow) {
-      win.setParentWindow(this.mainWindow)
+    if (this._cabinMode) {
+      this.showInCabin(win)
+    } else {
+      if (this.mainWindow) {
+        win.setParentWindow(this.mainWindow)
+      }
+      win.show()
     }
-    win.show()
     return this.trackWindow(win)
   }
 
@@ -108,7 +216,7 @@ export class WindowManager {
     const win = new BrowserWindow({
       width: 1280,
       height: 800,
-      show: true,
+      show: false,
       icon: APP_ICON,
       webPreferences: {
         contextIsolation: true,
@@ -143,7 +251,7 @@ export class WindowManager {
     const win = new BrowserWindow({
       width: 1280,
       height: 800,
-      show: true,
+      show: false,
       icon: APP_ICON,
       webPreferences: {
         contextIsolation: true,

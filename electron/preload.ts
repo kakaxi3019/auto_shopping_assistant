@@ -86,6 +86,43 @@ const api = {
   },
   openInteractionWindow: (url: string, platform?: string) => ipcRenderer.invoke('window:open-interaction', url, platform),
   openSearchInBrowser: (keyword: string, platform?: string) => ipcRenderer.invoke('platform:open-search-in-browser', keyword, platform),
+
+  // Execution Cabin
+  cabinStartScreencast: (platform?: string) => ipcRenderer.invoke('cabin:start-screencast', platform),
+  cabinStopScreencast: (platform?: string) => ipcRenderer.invoke('cabin:stop-screencast', platform),
+  cabinIsScreencasting: (platform?: string) => ipcRenderer.invoke('cabin:is-screencasting', platform),
+  onCabinFrame: (callback: (base64Jpeg: string) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, data: string) => callback(data)
+    ipcRenderer.on('cabin:frame', handler)
+    return () => ipcRenderer.removeListener('cabin:frame', handler)
+  },
+  cabinSetCabinBounds: (bounds: { x: number; y: number; width: number; height: number }) => ipcRenderer.send('cabin:set-cabin-bounds', bounds),
+  cabinSetMode: (mode: 'auto' | 'interactive') => ipcRenderer.send('cabin:set-mode', mode),
+  cabinSetOpen: (open: boolean) => ipcRenderer.send('cabin:set-open', open),
+  onCabinModeChange: (callback: (mode: 'auto' | 'interactive') => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, mode: 'auto' | 'interactive') => callback(mode)
+    ipcRenderer.on('cabin:mode-change', handler)
+    return () => ipcRenderer.removeListener('cabin:mode-change', handler)
+  },
+  onCabinInteractionUrl: (callback: (url: string) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, url: string) => callback(url)
+    ipcRenderer.on('cabin:interaction-url', handler)
+    return () => ipcRenderer.removeListener('cabin:interaction-url', handler)
+  },
+  onCabinCommand: (callback: (command: { id: string; type: string; payload: any }) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, command: { id: string; type: string; payload: any }) => callback(command)
+    ipcRenderer.on('cabin:command', handler)
+    return () => ipcRenderer.removeListener('cabin:command', handler)
+  },
+  cabinSendCommandResult: (commandId: string, result: { success: boolean; data?: any; error?: string }) => ipcRenderer.send('cabin:command-result', commandId, result),
+  cabinReportNavigation: (url: string) => ipcRenderer.send('cabin:webview-navigated', url),
+  onCabinPaymentInfo: (callback: (info: { amount: number; paymentMode: string } | null) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, info: { amount: number; paymentMode: string } | null) => callback(info)
+    ipcRenderer.on('cabin:payment-info', handler)
+    return () => ipcRenderer.removeListener('cabin:payment-info', handler)
+  },
+  cabinLog: (message: string) => ipcRenderer.send('cabin:log', message),
+  cabinGetPreloadPath: () => ipcRenderer.invoke('cabin:get-preload-path'),
 }
 
 contextBridge.exposeInMainWorld('api', api)

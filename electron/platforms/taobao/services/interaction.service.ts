@@ -1,4 +1,4 @@
-import { BrowserWindow } from 'electron'
+import { BrowserWindow, ipcMain } from 'electron'
 import { isDisposableUrl, isLoginPage, isIdentityVerifyPage, isCheckoutOrPayPage, isBuyPage, isCartPage } from '../utils/url-helper'
 import { setUserAgent, injectOverlayBanner, injectCenterToast } from '../utils/page-helper'
 import { APP_ICON } from '../utils/constants'
@@ -89,6 +89,8 @@ export class InteractionService {
         bannerMessage,
         scene,
       }
+
+      this.notifyInteractionUrl(windowUrl)
 
       if (!win.isDestroyed()) {
         const onNavigate = () => {
@@ -219,7 +221,11 @@ export class InteractionService {
           if (mw) newWindow.setParentWindow(mw)
           injectOverlayBanner(newWindow, "🔐 自动购物助手：淘宝要求身份验证，请在下方完成验证后继续")
           injectCenterToast(newWindow, "请完成身份验证")
-          newWindow.show()
+          if (this.windowManager.cabinMode) {
+            this.windowManager.showInCabin(newWindow)
+          } else {
+            newWindow.show()
+          }
           newWindow.focus()
           return
         }
@@ -253,7 +259,11 @@ export class InteractionService {
     win.loadURL(windowUrl)
     injectOverlayBanner(win, bannerMessage)
     injectCenterToast(win, bannerMessage.replace(/^[🛒🔐💳🔑⚠️📋💰]\s*自动购物助手[：:]\s*/, ''))
-    win.show()
+    if (this.windowManager.cabinMode) {
+      this.windowManager.showInCabin(win)
+    } else {
+      win.show()
+    }
     this.pendingConfirmation.window = win
 
     win.webContents.on('did-finish-load', async () => {
@@ -299,5 +309,14 @@ export class InteractionService {
 
   private async tryAutoLoginThenShow(win: BrowserWindow): Promise<void> {
     await tryAutoLoginThenShow(win, this.cookieManager, this.windowManager, this.auth, this.emitStatus)
+  }
+
+  private notifyInteractionUrl(url: string) {
+    try {
+      const mainWindow = this.windowManager.getMainWindow()
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('cabin:interaction-url', url)
+      }
+    } catch { /* ignore */ }
   }
 }

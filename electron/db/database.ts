@@ -2,11 +2,11 @@ import initSqlJs, { type Database as SqlJsDatabase } from 'sql.js'
 import { join } from 'path'
 import { app, safeStorage } from 'electron'
 import { existsSync, readFileSync, writeFileSync } from 'fs'
-import { MIGRATIONS, MIGRATION_V2, MIGRATION_V3, MIGRATION_V4, MIGRATION_V5, MIGRATION_V6, MIGRATION_V7, MIGRATION_V8, MIGRATION_V9, MIGRATION_V10, MIGRATION_V11, MIGRATION_V12, MIGRATION_V13, MIGRATION_V14, MIGRATION_V15 } from './migrations'
+import { MIGRATIONS, MIGRATION_V2, MIGRATION_V3, MIGRATION_V4, MIGRATION_V5, MIGRATION_V6, MIGRATION_V7, MIGRATION_V8, MIGRATION_V9, MIGRATION_V10, MIGRATION_V11, MIGRATION_V12, MIGRATION_V13, MIGRATION_V14, MIGRATION_V15, MIGRATION_V16 } from './migrations'
 import type { ShoppingTask, PendingConfirmation } from '../../shared/types/task.types'
 import type { Order } from '../../shared/types/platform.types'
 
-const MIGRATION_VERSION = 15
+const MIGRATION_VERSION = 16
 
 const SENSITIVE_KEYS = new Set(['openai_api_key', 'anthropic_api_key'])
 
@@ -191,6 +191,12 @@ export class Database {
 
     if (currentVersion < 15) {
       for (const sql of MIGRATION_V15) {
+        this.db.run(sql)
+      }
+    }
+
+    if (currentVersion < 16) {
+      for (const sql of MIGRATION_V16) {
         this.db.run(sql)
       }
     }
@@ -752,11 +758,11 @@ export class Database {
     this.scheduleSave()
   }
 
-  createPendingConfirmation(item: { taskId: number; productName: string; originalPrice: number; failureReason: string; searchKeyword: string; candidates: string; orderId?: number }): number {
+  createPendingConfirmation(item: { taskId: number; productName: string; originalPrice: number; failureReason: string; searchKeyword: string; candidates: string; orderId?: number; interactionUrl?: string }): number {
     this.db.run(
-      `INSERT INTO pending_confirmations (task_id, product_name, original_price, failure_reason, search_keyword, candidates, order_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [item.taskId, item.productName, item.originalPrice, item.failureReason, item.searchKeyword, item.candidates, item.orderId || null]
+      `INSERT INTO pending_confirmations (task_id, product_name, original_price, failure_reason, search_keyword, candidates, order_id, interaction_url)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [item.taskId, item.productName, item.originalPrice, item.failureReason, item.searchKeyword, item.candidates, item.orderId || null, item.interactionUrl || null]
     )
     this.scheduleSave()
     const row = this.db.exec('SELECT last_insert_rowid() as id')

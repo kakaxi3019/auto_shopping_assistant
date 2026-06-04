@@ -55,6 +55,15 @@ declare global {
       confirmAction: (platform?: string) => Promise<unknown>
       rejectAction: (platform?: string) => Promise<unknown>
       reopenConfirmationWindow: (platform?: string) => Promise<unknown>
+      cabinStartScreencast: (platform?: string) => Promise<unknown>
+      cabinStopScreencast: (platform?: string) => Promise<unknown>
+      cabinIsScreencasting: (platform?: string) => Promise<unknown>
+      onCabinFrame: (callback: (base64Jpeg: string) => void) => () => void
+      cabinSetCabinBounds: (bounds: { x: number; y: number; width: number; height: number }) => void
+      cabinSetMode: (mode: 'auto' | 'interactive') => void
+      cabinSetOpen: (open: boolean) => void
+      onCabinModeChange: (callback: (mode: 'auto' | 'interactive') => void) => () => void
+      onCabinInteractionUrl: (callback: (url: string) => void) => () => void
     }
   }
 }

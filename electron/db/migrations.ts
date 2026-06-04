@@ -128,3 +128,7 @@ export const MIGRATION_V15 = [
   `ALTER TABLE tasks ADD COLUMN day_of_week INTEGER`,
   `ALTER TABLE tasks ADD COLUMN day_of_month INTEGER`,
 ]
+
+export const MIGRATION_V16 = [
+  `ALTER TABLE pending_confirmations ADD COLUMN interaction_url TEXT`,
+]

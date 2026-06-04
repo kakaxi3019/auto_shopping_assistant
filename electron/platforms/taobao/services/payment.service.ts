@@ -79,7 +79,11 @@ export class PaymentService {
       const bannerMsg = `⚠️ 自动支付已暂停：订单金额 ¥${totalAmount!.toFixed(2)} 超过免密支付上限 ¥${payFreeLimit.toFixed(2)}，为保障资金安全需要您手动确认。请在下方完成付款后点击"已完成"`
       injectOverlayBanner(shopWindow, bannerMsg)
       injectCenterToast(shopWindow, "请完成付款后点击已完成")
-      shopWindow.show()
+      if (this.windowManager.cabinMode) {
+        this.windowManager.showInCabin(shopWindow)
+      } else {
+        shopWindow.show()
+      }
       const confirmed = await this.interactionService.waitForUserConfirmation(
         shopWindow,
         `订单金额 ¥${totalAmount!.toFixed(2)} 超过免密支付上限 ¥${payFreeLimit.toFixed(2)}，为保障资金安全需要您手动确认付款。请在弹出的窗口中完成支付，然后点击"已完成"`,
@@ -132,7 +136,11 @@ export class PaymentService {
             const verifyBanner = '🔐 自动支付已暂停：淘宝检测到异常操作，要求进行安全验证。请拖动滑块完成验证，然后点击"已完成"'
             injectOverlayBanner(currentShopWindow, verifyBanner)
             injectCenterToast(currentShopWindow, "请拖动滑块完成验证")
-            currentShopWindow.show()
+            if (this.windowManager.cabinMode) {
+              this.windowManager.showInCabin(currentShopWindow)
+            } else {
+              currentShopWindow.show()
+            }
 
             const verified = await this.interactionService.waitForUserConfirmation(
               currentShopWindow,
@@ -189,7 +197,11 @@ export class PaymentService {
             const captchaBanner = '🔐 自动支付已暂停：淘宝检测到异常操作，要求进行验证码验证。请完成验证后点击"已完成"，系统将继续自动完成后续流程'
             injectOverlayBanner(currentShopWindow, captchaBanner)
             injectCenterToast(currentShopWindow, "请完成验证码验证")
-            currentShopWindow.show()
+            if (this.windowManager.cabinMode) {
+              this.windowManager.showInCabin(currentShopWindow)
+            } else {
+              currentShopWindow.show()
+            }
 
             const verified = await this.interactionService.waitForUserConfirmation(
               currentShopWindow,
@@ -235,7 +247,11 @@ export class PaymentService {
                   if (mainWindow) win.setParentWindow(mainWindow)
                   injectOverlayBanner(win, '💳 自动支付已暂停：订单金额超过免密支付限额，支付宝需要您输入支付密码。请在下方输入密码完成支付，系统将自动检测支付结果')
                   injectCenterToast(win, "请输入支付密码完成支付")
-                  win.show()
+                  if (this.windowManager.cabinMode) {
+                    this.windowManager.showInCabin(win)
+                  } else {
+                    win.show()
+                  }
                 }
                 continue
               }
@@ -264,7 +280,11 @@ export class PaymentService {
                   if (mainWindow) win.setParentWindow(mainWindow)
                   injectOverlayBanner(win, '💳 自动支付已暂停：订单金额超过免密支付限额，支付宝需要您输入支付密码。请在下方输入密码完成支付，系统将自动检测支付结果')
                   injectCenterToast(win, "请输入支付密码完成支付")
-                  win.show()
+                  if (this.windowManager.cabinMode) {
+                    this.windowManager.showInCabin(win)
+                  } else {
+                    win.show()
+                  }
                 }
               } catch { /* ignore */ }
             }
@@ -276,7 +296,11 @@ export class PaymentService {
               if (mainWindow) finalWin.setParentWindow(mainWindow)
               injectOverlayBanner(finalWin, '📋 自动支付超时：系统等待支付结果超过60秒未能自动检测到。请在下方确认是否已完成支付，然后点击"已完成"')
               injectCenterToast(finalWin, "请确认是否已完成支付")
-              finalWin.show()
+              if (this.windowManager.cabinMode) {
+                this.windowManager.showInCabin(finalWin)
+              } else {
+                finalWin.show()
+              }
               const confirmed = await this.interactionService.waitForUserConfirmation(
                 finalWin,
                 '系统等待支付结果超过60秒未能自动检测到。请在弹出的窗口中确认是否已完成支付，然后点击"已完成"',
@@ -301,7 +325,11 @@ export class PaymentService {
           if (mainWindow) currentShopWindow.setParentWindow(mainWindow)
           injectOverlayBanner(currentShopWindow, '📋 订单已提交成功，当前支付模式为手动支付，请在下方完成支付后点击"已完成"')
           injectCenterToast(currentShopWindow, "请完成支付后点击已完成")
-          currentShopWindow.show()
+          if (this.windowManager.cabinMode) {
+            this.windowManager.showInCabin(currentShopWindow)
+          } else {
+            currentShopWindow.show()
+          }
 
           const confirmed = await this.interactionService.waitForUserConfirmation(
             currentShopWindow,
@@ -343,7 +371,11 @@ export class PaymentService {
     }
     injectOverlayBanner(shopWindow, title || '💰 自动支付已暂停：金额超过免密支付上限，为保障资金安全需要您手动确认。请在下方完成付款后关闭窗口')
     injectCenterToast(shopWindow, "请完成付款后关闭窗口")
-    shopWindow.show()
+    if (this.windowManager.cabinMode) {
+      this.windowManager.showInCabin(shopWindow)
+    } else {
+      shopWindow.show()
+    }
 
     let paymentDetected = false
 

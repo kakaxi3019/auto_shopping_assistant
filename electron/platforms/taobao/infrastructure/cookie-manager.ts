@@ -1,4 +1,5 @@
 import { session } from 'electron'
+import { debugLog } from '../../../utils/debug-log'
 import type { BrowserContext } from 'playwright'
 import type { TaobaoAuth } from '../taobao.auth'
 
@@ -42,30 +43,43 @@ export class CookieManager {
     this.lastCookieToElectronSyncTime = 0
   }
 
-  async syncCookiesToElectron(context: BrowserContext | null, auth: TaobaoAuth): Promise<void> {
-    if (this.pendingSyncTimer) {
+  async syncCookiesToElectron(context: BrowserContext | null, auth: TaobaoAuth, force = false): Promise<void> {
+    debugLog('DIAG', `[syncCookiesToElectron] 开始同步. hasContext=${!!context}, force=${force}`)
+    if (!force) {
+      if (this.pendingSyncTimer) {
+        debugLog('DIAG', `[syncCookiesToElectron] 存在活跃的待处理 timer，将当前同步挂载到队列中`)
+        await new Promise<void>(resolve => {
+          this.pendingSyncResolves.push(resolve)
+        })
+        debugLog('DIAG', `[syncCookiesToElectron] 挂载队列的 Promise 恢复执行并直接返回 (由第一个主 timer 代为执行)`)
+        return
+      }
+
+      debugLog('DIAG', `[syncCookiesToElectron] 开启 1.5 秒合并防抖 timer`)
       await new Promise<void>(resolve => {
-        this.pendingSyncResolves.push(resolve)
+        this.pendingSyncTimer = setTimeout(() => {
+          this.pendingSyncTimer = null
+          resolve()
+        }, 1500)
       })
-      return
+      debugLog('DIAG', `[syncCookiesToElectron] 合并防抖 timer 结束，释放队列中挂起的所有 Promise`)
+
+      const resolves = this.pendingSyncResolves
+      this.pendingSyncResolves = []
+      for (const r of resolves) {
+        r()
+      }
+
+      const now = Date.now()
+      if (now - this.lastCookieToElectronSyncTime < 1500) {
+        debugLog('DIAG', `[syncCookiesToElectron] 同步频率过高 (距上次同步不足 1.5秒)，拦截返回`)
+        return
+      }
+    } else {
+      debugLog('DIAG', `[syncCookiesToElectron] 强同步模式被激活！跳过防抖合并，0毫秒级即刻执行！`)
     }
 
-    await new Promise<void>(resolve => {
-      this.pendingSyncTimer = setTimeout(() => {
-        this.pendingSyncTimer = null
-        resolve()
-      }, 1500)
-    })
-
-    const resolves = this.pendingSyncResolves
-    this.pendingSyncResolves = []
-    for (const r of resolves) {
-      r()
-    }
-
-    const now = Date.now()
-    if (now - this.lastCookieToElectronSyncTime < 1500) return
-
+    debugLog('DIAG', `[syncCookiesToElectron] 开始读取 cookies 并写入 Electron session...`)
     try {
       let sourceCookies: { name: string; value: string; domain: string; path: string; secure: boolean; httpOnly?: boolean; sameSite?: string; expires?: number }[] = []
 
@@ -109,7 +123,8 @@ export class CookieManager {
         }
       }
 
-      const existingCookies = await session.defaultSession.cookies.get({})
+      const targetSession = session.fromPartition('persist:taobao')
+      const existingCookies = await targetSession.cookies.get({})
       const taobaoExisting = existingCookies.filter(
         (c) => c.domain.includes('taobao') || c.domain.includes('tmall') || c.domain.includes('alipay')
       )
@@ -229,7 +244,7 @@ export class CookieManager {
         try {
           const sameSite = this.toElectronApiSameSite((cookie as any).sameSite as string | undefined, cookie.secure)
 
-          await session.defaultSession.cookies.set({
+          const cookieObj = {
             url: `https://${cookie.domain.replace(/^\./, '')}${cookie.path}`,
             name: cookie.name,
             value: cookie.value,
@@ -239,7 +254,9 @@ export class CookieManager {
             httpOnly: cookie.httpOnly ?? false,
             sameSite,
             expirationDate: cookie.expires && cookie.expires > 0 ? cookie.expires : undefined,
-          })
+          }
+          await targetSession.cookies.set(cookieObj).catch(() => {})
+          await session.defaultSession.cookies.set(cookieObj).catch(() => {})
           synced++
         } catch (e) {
           console.log(`[Taobao] Failed to sync cookie ${cookie.name}: ${e}`)
@@ -251,7 +268,9 @@ export class CookieManager {
       if (synced > 0) {
         await new Promise(r => setTimeout(r, 200))
       }
+      debugLog('DIAG', `[syncCookiesToElectron] 同步完成. 共成功同步 cookies 数: ${synced}`)
     } catch (e) {
+      debugLog('DIAG', `[syncCookiesToElectron] 异常退出: ${e}`)
       console.log(`[Taobao] syncCookiesToElectron error: ${e}`)
     }
   }
@@ -263,7 +282,8 @@ export class CookieManager {
 
     this.cookieSyncInProgress = true
     try {
-      const electronCookies = await session.defaultSession.cookies.get({})
+      const targetSession = session.fromPartition('persist:taobao')
+      const electronCookies = await targetSession.cookies.get({})
       const taobaoCookies = electronCookies.filter(
         (c) => c.domain.includes('taobao') || c.domain.includes('tmall') || c.domain.includes('alipay')
       )

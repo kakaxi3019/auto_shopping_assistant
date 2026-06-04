@@ -1,4 +1,4 @@
-﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿import { BrowserWindow } from 'electron'
+﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿import { BrowserWindow } from 'electron'
 import type { Page, BrowserContext } from 'playwright'
 import type { Database } from '../../../db/database'
 import type { AddToCartResult, Order } from '../../../../shared/types/platform.types'
@@ -13,6 +13,7 @@ import { APP_ICON, WINDOW_SIZES, TIMEOUTS, KEYWORDS } from '../utils/constants'
 import { isCheckoutOrPayPage, isLoginPage, isIdentityVerifyPage, isBuyPage, isCartPage, isProductDetailPage, isOrderArchivePage, isOrderDetailPage } from '../utils/url-helper'
 import { TAOBAO_SELECTORS } from '../taobao.selectors'
 import { HUMAN_SIM_JS } from '../utils/human-sim'
+import { debugLog } from '../../../utils/debug-log'
 
 export class CartService {
   private browserManager: BrowserManager
@@ -196,7 +197,11 @@ export class CartService {
               if (mw) newWindow.setParentWindow(mw)
               injectOverlayBanner(newWindow, "🔐 自动购物助手：淘宝要求身份验证，请在下方完成验证后继续")
               injectCenterToast(newWindow, "请完成身份验证")
-              newWindow.show()
+              if (this.windowManager.cabinMode) {
+                this.windowManager.showInCabin(newWindow)
+              } else {
+                newWindow.show()
+              }
               return
             }
 
@@ -358,7 +363,11 @@ export class CartService {
                 if (mw) sw!.setParentWindow(mw)
                 injectOverlayBanner(sw!, "🛒 自动购物助手：需要选择商品规格，请在下方选择后点击\"加入购物车\"")
                 injectCenterToast(sw!, "请选择规格后点击加入购物车")
-                sw!.show()
+                if (this.windowManager.cabinMode) {
+                  this.windowManager.showInCabin(sw!)
+                } else {
+                  sw!.show()
+                }
 
                 lt.on(sw!.webContents, 'did-navigate', async (_evt, url: string) => {
                   await handleNavigation(url)
@@ -568,7 +577,11 @@ export class CartService {
               if (mw) newWindow.setParentWindow(mw)
               injectOverlayBanner(newWindow, "🔐 自动购物助手：淘宝要求身份验证，请在下方完成验证后继续")
               injectCenterToast(newWindow, "请完成身份验证")
-              newWindow.show()
+              if (this.windowManager.cabinMode) {
+                this.windowManager.showInCabin(newWindow)
+              } else {
+                newWindow.show()
+              }
               return
             }
 
@@ -717,7 +730,11 @@ export class CartService {
                 if (mw) sw!.setParentWindow(mw)
                 injectOverlayBanner(sw!, "🛒 自动购物助手：需要选择商品规格，请在下方选择后点击\"立即购买\"")
                 injectCenterToast(sw!, "请选择规格后点击立即购买")
-                sw!.show()
+                if (this.windowManager.cabinMode) {
+                  this.windowManager.showInCabin(sw!)
+                } else {
+                  sw!.show()
+                }
 
                 lt.on(sw!.webContents, 'did-navigate', async (_evt, url: string) => {
                   await handleNavigation(url)
@@ -793,16 +810,17 @@ export class CartService {
       })
       this.windowManager.setShopWindow(newShopWindow)
       setUserAgent(newShopWindow)
-      if (mainWindow) {
-        newShopWindow.setParentWindow(mainWindow)
-      }
       newShopWindow.loadURL(detailUrl)
+
+      debugLog('DIAG', `runInHiddenWindow: window created, show=false, hasParent=${!!mainWindow}, mainWindowExists=${!!mainWindow}`)
 
       newShopWindow.webContents.setWindowOpenHandler(({ url: openUrl }) => {
         return { action: 'allow', overrideBrowserWindowOptions: { show: false, webPreferences: { sandbox: false, contextIsolation: true, nodeIntegration: false, backgroundThrottling: false } } }
       })
 
       lt.on(newShopWindow.webContents, 'did-create-window', (newWindow) => {
+        debugLog('DIAG', `did-create-window: newWindow url=${newWindow.webContents?.getURL()?.substring(0, 100)}`)
+        newWindowCreated = true
         setUserAgent(newWindow)
         newWindow.setIcon(APP_ICON)
         this.windowManager.trackWindow(newWindow)
@@ -832,7 +850,11 @@ export class CartService {
             }
             injectOverlayBanner(newWindow, "💳 自动购物助手：请确认订单信息并提交")
             injectCenterToast(newWindow, "请确认订单信息并提交")
-            newWindow.show()
+            if (this.windowManager.cabinMode) {
+              this.windowManager.showInCabin(newWindow)
+            } else {
+              newWindow.show()
+            }
             doResolve({ success: true, directToPay: true })
             return
           }
@@ -855,7 +877,11 @@ export class CartService {
             }
             injectOverlayBanner(newWindow, "🔐 自动购物助手：淘宝要求身份验证，请在下方完成验证后继续")
             injectCenterToast(newWindow, "请完成身份验证")
-            newWindow.show()
+            if (this.windowManager.cabinMode) {
+              this.windowManager.showInCabin(newWindow)
+            } else {
+              newWindow.show()
+            }
             return
           }
           if (isLoginPage(popupUrl)) {
@@ -983,7 +1009,11 @@ export class CartService {
                   if (newWindow.isMinimized()) {
                     newWindow.restore()
                   }
-                  newWindow.show()
+                  if (this.windowManager.cabinMode) {
+                    this.windowManager.showInCabin(newWindow)
+                  } else {
+                    newWindow.show()
+                  }
                   newWindow.focus()
                   const verified = await this.interactionService.waitForUserConfirmation(
                     newWindow,
@@ -1015,7 +1045,11 @@ export class CartService {
                       if (mw) newWindow.setParentWindow(mw)
                       injectOverlayBanner(newWindow, '🛒 自动购物助手：验证通过，请选择规格并点击"立即购买"或"加入购物车"')
                       injectCenterToast(newWindow, '验证通过，请选择规格并购买')
-                      newWindow.show()
+                      if (this.windowManager.cabinMode) {
+                        this.windowManager.showInCabin(newWindow)
+                      } else {
+                        newWindow.show()
+                      }
                       const confirmed = await this.interactionService.waitForUserConfirmation(
                         newWindow,
                         '验证通过，已进入商品详情页，请在弹出的窗口中选择规格并购买，完成后点击"已完成"',
@@ -1100,7 +1134,11 @@ export class CartService {
                   if (newWindow.isMinimized()) {
                     newWindow.restore()
                   }
-                  newWindow.show()
+                  if (this.windowManager.cabinMode) {
+                    this.windowManager.showInCabin(newWindow)
+                  } else {
+                    newWindow.show()
+                  }
                   newWindow.focus()
                   const captchaConfirmed = await this.interactionService.waitForUserConfirmation(
                     newWindow,
@@ -1132,7 +1170,11 @@ export class CartService {
                       if (mw) newWindow.setParentWindow(mw)
                       injectOverlayBanner(newWindow, '🛒 自动购物助手：验证通过，请选择规格并点击"立即购买"或"加入购物车"')
                       injectCenterToast(newWindow, '验证通过，请选择规格并购买')
-                      newWindow.show()
+                      if (this.windowManager.cabinMode) {
+                        this.windowManager.showInCabin(newWindow)
+                      } else {
+                        newWindow.show()
+                      }
                       const confirmed = await this.interactionService.waitForUserConfirmation(
                         newWindow,
                         '验证通过，已进入商品详情页，请在弹出的窗口中选择规格并购买，完成后点击"已完成"',
@@ -1181,7 +1223,11 @@ export class CartService {
                   const bannerMsg = `⚠️ 自动购物助手：原商品规格信息已失效，请重新选择规格后${actionText}`
                   injectOverlayBanner(newWindow, bannerMsg)
                   injectCenterToast(newWindow, `请重新选择规格后${actionText}`)
-                  newWindow.show()
+                  if (this.windowManager.cabinMode) {
+                    this.windowManager.showInCabin(newWindow)
+                  } else {
+                    newWindow.show()
+                  }
 
                   const confirmed = await this.interactionService.waitForUserConfirmation(
                     newWindow,
@@ -1225,7 +1271,11 @@ export class CartService {
                 const fallbackBanner = `⚠️ 自动购物助手：${fallbackReason}，请在下方手动完成购买操作`
                 injectOverlayBanner(newWindow, fallbackBanner)
                 injectCenterToast(newWindow, "请手动完成购买操作")
-                newWindow.show()
+                if (this.windowManager.cabinMode) {
+                  this.windowManager.showInCabin(newWindow)
+                } else {
+                  newWindow.show()
+                }
 
                 const confirmed = await this.interactionService.waitForUserConfirmation(
                   newWindow,
@@ -1346,7 +1396,11 @@ export class CartService {
                     const bannerMsg2 = `⚠️ 自动购物助手：原商品规格信息已失效，请重新选择规格后${actionText2}`
                     injectOverlayBanner(newWindow, bannerMsg2)
                     injectCenterToast(newWindow, `请重新选择规格后${actionText2}`)
-                    newWindow.show()
+                    if (this.windowManager.cabinMode) {
+                      this.windowManager.showInCabin(newWindow)
+                    } else {
+                      newWindow.show()
+                    }
 
                     const confirmed = await this.interactionService.waitForUserConfirmation(
                       newWindow,
@@ -1396,7 +1450,11 @@ export class CartService {
                   const fallbackBanner2 = `⚠️ 自动购物助手：${fallbackReason2}，请在下方手动完成购买操作`
                   injectOverlayBanner(newWindow, fallbackBanner2)
                   injectCenterToast(newWindow, "请手动完成购买操作")
-                  newWindow.show()
+                  if (this.windowManager.cabinMode) {
+                    this.windowManager.showInCabin(newWindow)
+                  } else {
+                    newWindow.show()
+                  }
 
                   const confirmed2 = await this.interactionService.waitForUserConfirmation(
                     newWindow,
@@ -1520,6 +1578,7 @@ export class CartService {
       }
       let sameUrlCount = 0
       let rebuyRetryCount = 0
+      let newWindowCreated = false
       const MAX_REBUY_RETRIES = 3
       const timeout = setTimeout(() => {
         if (!resolved) {
@@ -1535,27 +1594,14 @@ export class CartService {
             (function() {
               var bodyText = (document.body?.innerText || '');
               var keywords = ${JSON.stringify(KEYWORDS.OFF_SHELF)};
-              var extraKeywords = ['下架啦', '已经下架', '已下架啦', '悄悄别的', '看看别的'];
+              var extraKeywords = ['下架啦', '已经下架', '已下架啦', '悄悄别的', '看看别的', '已卖光', '卖光了', '卖完了', '无法下单', '不能下单', '商品过期', '活动结束', '已结束', '宝贝失效', '链接失效'];
               var allKeywords = keywords.concat(extraKeywords);
-              var matchedKeyword = '';
               for (var i = 0; i < allKeywords.length; i++) {
                 if (bodyText.includes(allKeywords[i])) {
-                  matchedKeyword = allKeywords[i];
-                  break;
+                  return allKeywords[i];
                 }
               }
-              if (!matchedKeyword) return '';
-              var buyTexts = ${JSON.stringify(KEYWORDS.BUY_BUTTONS)};
-              var btns = document.querySelectorAll('button, a, [class*="btn"], [class*="Button"], [role="button"], [class*="action"], [class*="submit"]');
-              for (var j = 0; j < btns.length; j++) {
-                var btnText = (btns[j].textContent || '').replace(/\\s+/g, '');
-                var rect = btns[j].getBoundingClientRect();
-                if (rect.width <= 0 || rect.height <= 0) continue;
-                for (var k = 0; k < buyTexts.length; k++) {
-                  if (btnText.includes(buyTexts[k])) return '';
-                }
-              }
-              return matchedKeyword;
+              return '';
             })()
           `)
           return result || ''
@@ -1573,6 +1619,10 @@ export class CartService {
           const cartTargets = cartOnly ? [...KEYWORDS.CART_BUTTONS] : []
           const rebuyTargets = [...KEYWORDS.REBUY_BUTTONS]
           const allTargets = [...cartTargets, ...rebuyTargets]
+
+          this.windowManager.cabinCapturePaused = true
+
+          debugLog('DIAG', `tryClickRebuy: START, sw.isVisible=${sw.isVisible()}, sw.isMinimized=${sw.isMinimized()}, sw.isFocused=${sw.isFocused()}, sw.isDestroyed=${sw.isDestroyed()}, cabinMode=${this.windowManager.cabinMode}, cabinCapturePaused=${this.windowManager.cabinCapturePaused}`)
 
           const mainResult = await execJS(sw, `
             (function() {
@@ -1633,14 +1683,20 @@ export class CartService {
               }
               var chosen = bestCartMatch || bestMatch;
               if (chosen) {
+                var rect = chosen.el.getBoundingClientRect();
+                var clickX = rect.left + rect.width * (0.3 + Math.random() * 0.4);
+                var clickY = rect.top + rect.height * (0.3 + Math.random() * 0.4);
+                var docHasFocus = document.hasFocus();
+                var elVisible = chosen.el.offsetParent !== null || chosen.el.offsetWidth > 0;
                 _hs.click(chosen.el);
-                return { clicked: true, text: chosen.text, isCart: !!bestCartMatch, matches: debugMatches };
+                return { clicked: true, text: chosen.text, isCart: !!bestCartMatch, matches: debugMatches, clickX: Math.round(clickX), clickY: Math.round(clickY), elRect: { left: Math.round(rect.left), top: Math.round(rect.top), width: Math.round(rect.width), height: Math.round(rect.height) }, docHasFocus: docHasFocus, elVisible: elVisible, elTag: chosen.el.tagName, elHref: chosen.el.href || '' };
               }
               return { clicked: false, matches: debugMatches };
             })()
           `)
 
           if (mainResult && mainResult.clicked) {
+            debugLog('DIAG', `tryClickRebuy firstClick: text=${mainResult.text} isCart=${mainResult.isCart} tag=${mainResult.elTag} href=${mainResult.elHref} clickAt=(${mainResult.clickX},${mainResult.clickY}) rect=${JSON.stringify(mainResult.elRect)} docHasFocus=${mainResult.docHasFocus} elVisible=${mainResult.elVisible} matches=${JSON.stringify(mainResult.matches)?.substring(0, 200)}`)
             if (mainResult.isCart) {
               this.emitStatus('已点击加入购物车，等待结果...')
               await humanDelay(3000)
@@ -1689,25 +1745,126 @@ export class CartService {
               }
             } else {
               this.emitStatus('已点击再买一单，等待页面跳转...')
-              await humanDelay(3000)
-              if (resolved) return
 
-              const afterClickUrl = sw.webContents.getURL()
-              if (isProductDetailPage(afterClickUrl)) {
-                const offShelfKeyword = await checkOffShelf(sw)
-                if (offShelfKeyword) {
-                  this.windowManager.closeShopWindow(async () => { await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth) })
-                  this.emitStatus(`商品不可购买（${offShelfKeyword}）`)
-                  doResolve({ success: false, error: `商品不可购买（${offShelfKeyword}）` })
-                  return
+              const beforeClickUrl = sw.webContents.getURL()
+              debugLog('DIAG', `tryClickRebuy: BEFORE wait loop, url=${beforeClickUrl.substring(0, 100)}, sw.isVisible=${sw.isVisible()}, sw.isMinimized=${sw.isMinimized()}, sw.isFocused=${sw.isFocused()}`)
+              newWindowCreated = false
+              for (let retryIdx = 0; retryIdx < 3; retryIdx++) {
+                await humanDelay(3000)
+                if (resolved) return
+
+                const afterClickUrl = sw.webContents.getURL()
+                debugLog('DIAG', `tryClickRebuy retry=${retryIdx} beforeUrl=${beforeClickUrl.substring(0, 80)} afterUrl=${afterClickUrl.substring(0, 80)} urlChanged=${afterClickUrl !== beforeClickUrl} sw.isVisible=${sw.isVisible()} sw.isMinimized=${sw.isMinimized()} newWindowCreated=${newWindowCreated}`)
+                if (newWindowCreated) {
+                  debugLog('DIAG', `tryClickRebuy: new window was created by click, rebuy succeeded via new window`)
+                  break
                 }
-              } else if (!isOrderDetailPage(afterClickUrl) && !afterClickUrl.includes('orderDetail')) {
-                const offShelfKeyword = await checkOffShelf(sw)
-                if (offShelfKeyword) {
-                  this.windowManager.closeShopWindow(async () => { await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth) })
-                  this.emitStatus(`商品不可购买（${offShelfKeyword}）`)
-                  doResolve({ success: false, error: `商品不可购买（${offShelfKeyword}）` })
-                  return
+                if (afterClickUrl !== beforeClickUrl) {
+                  if (isProductDetailPage(afterClickUrl)) {
+                    const offShelfKeyword = await checkOffShelf(sw)
+                    if (offShelfKeyword) {
+                      this.windowManager.closeShopWindow(async () => { await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth) })
+                      this.emitStatus(`商品不可购买（${offShelfKeyword}）`)
+                      doResolve({ success: false, error: `商品不可购买（${offShelfKeyword}）` })
+                      return
+                    }
+                    this.emitStatus('再买一单后跳转到商品详情页，请在弹出的窗口中选择规格并购买')
+                    sw.setSize(WINDOW_SIZES.CONFIRMATION.width, WINDOW_SIZES.CONFIRMATION.height)
+                    sw.setTitle('请选择规格并购买')
+                    const mw = this.windowManager.getMainWindow()
+                    if (mw) sw.setParentWindow(mw)
+                    injectOverlayBanner(sw, '🛒 自动购物助手：请选择规格并点击"立即购买"或"加入购物车"')
+                    injectCenterToast(sw, '请选择规格并购买')
+                    if (this.windowManager.cabinMode) {
+                      this.windowManager.showInCabin(sw)
+                    } else {
+                      sw.show()
+                    }
+                    const confirmed = await this.interactionService.waitForUserConfirmation(
+                      sw,
+                      '已进入商品详情页，请在弹出的窗口中选择规格并购买，完成后点击"已完成"',
+                      '选择规格并购买',
+                      '🛒 请选择规格并购买',
+                      'add-to-cart',
+                    )
+                    if (!confirmed || sw.isDestroyed()) {
+                      if (!sw.isDestroyed()) this.windowManager.closeShopWindow(async () => { await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth) })
+                      doResolve({ success: false, error: '用户取消了购买' })
+                      return
+                    }
+                    let afterUrl = ''
+                    try { afterUrl = sw.webContents.getURL() } catch { /* window destroyed */ }
+                    if (isBuyPage(afterUrl)) {
+                      await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth)
+                      this.emitStatus('已进入结算页面')
+                      doResolve({ success: true, directToPay: true })
+                      return
+                    }
+                    if (isCartPage(afterUrl)) {
+                      await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth)
+                      this.emitStatus('已加入购物车')
+                      doResolve({ success: true, directToPay: false })
+                      return
+                    }
+                    await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth)
+                    this.emitStatus('已加入购物车')
+                    doResolve({ success: true, directToPay: false })
+                    return
+                  } else if (!isOrderDetailPage(afterClickUrl) && !afterClickUrl.includes('orderDetail')) {
+                    const offShelfKeyword = await checkOffShelf(sw)
+                    if (offShelfKeyword) {
+                      this.windowManager.closeShopWindow(async () => { await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth) })
+                      this.emitStatus(`商品不可购买（${offShelfKeyword}）`)
+                      doResolve({ success: false, error: `商品不可购买（${offShelfKeyword}）` })
+                      return
+                    }
+                  }
+                  break
+                }
+
+                if (retryIdx < 2) {
+                  this.emitStatus(`再买一单点击未生效，正在重试（第${retryIdx + 2}次）...`)
+                  const diagInfo = await execJS(sw, `
+                    (function() {
+                      var bodyText = (document.body?.innerText || '').substring(0, 500);
+                      var hasPopup = !!document.querySelector('[class*="dialog"], [class*="Dialog"], [class*="modal"], [class*="Modal"], [class*="popup"], [class*="Popup"], [class*="layer"], [class*="Layer"]');
+                      var title = document.title || '';
+                      var docHasFocus = document.hasFocus();
+                      var rebuyBtns = document.querySelectorAll('[class*="rebuy"], [class*="Rebuy"], [data-spm*="rebuy"], [class*="buy-again"]');
+                      var rebuyInfo = [];
+                      for (var ri = 0; ri < Math.min(rebuyBtns.length, 5); ri++) {
+                        var r = rebuyBtns[ri].getBoundingClientRect();
+                        rebuyInfo.push({ tag: rebuyBtns[ri].tagName, text: (rebuyBtns[ri].textContent || '').substring(0, 30), visible: r.width > 0 && r.height > 0, rect: { w: Math.round(r.width), h: Math.round(r.height) } });
+                      }
+                      return { bodyText: bodyText, hasPopup: hasPopup, title: title, docHasFocus: docHasFocus, rebuyBtnCount: rebuyBtns.length, rebuyInfo: rebuyInfo };
+                    })()
+                  `)
+                  debugLog('DIAG', `tryClickRebuy diag retry=${retryIdx} title=${diagInfo?.title} hasPopup=${diagInfo?.hasPopup} docHasFocus=${diagInfo?.docHasFocus} rebuyBtnCount=${diagInfo?.rebuyBtnCount} rebuyInfo=${JSON.stringify(diagInfo?.rebuyInfo)} bodyPreview=${diagInfo?.bodyText?.substring(0, 300)}`)
+                  newWindowCreated = false
+                  const retryResult = await execJS(sw, `
+                    (function() {
+                      var allTargets = ${JSON.stringify(allTargets)};
+                      var selectors = ['button', 'a', '[class*="btn"]', '[class*="Button"]', '[role="button"]', '[class*="action"]', '[class*="submit"]', '[class*="rebuy"]', '[class*="Rebuy"]', '[class*="buy-again"]', '[class*="BuyAgain"]', '[data-spm*="rebuy"]', '[data-spm*="buy"]', 'span[class*="click"]', 'div[class*="click"]'];
+                      var found = _hs.findVisible(selectors, allTargets);
+                      var best = null;
+                      for (var i = 0; i < found.length; i++) {
+                        if (!best || found[i].area < best.area) {
+                          best = found[i];
+                        }
+                      }
+                      if (!best) {
+                        var rebuyEl = document.querySelector('[class*="rebuy"], [class*="Rebuy"], [data-spm*="rebuy"], [class*="buy-again"]');
+                        if (rebuyEl) {
+                          _hs.click(rebuyEl);
+                          return { clicked: true, method: 'class-selector' };
+                        }
+                        return { clicked: false };
+                      }
+                      _hs.click(best.el);
+                      return { clicked: true, method: 'retry', text: best.text.substring(0, 30) };
+                    })()
+                  `)
+                  if (!retryResult?.clicked) break
                 }
               }
             }
@@ -1834,25 +1991,100 @@ export class CartService {
                   }
                 } else {
                   this.emitStatus('已点击再买一单，等待页面跳转...')
-                  await humanDelay(3000)
-                  if (resolved) return
+                  const beforeFrameClickUrl = sw.webContents.getURL()
+                  newWindowCreated = false
+                  for (let retryIdx = 0; retryIdx < 3; retryIdx++) {
+                    await humanDelay(3000)
+                    if (resolved) return
 
-                  const afterFrameClickUrl = sw.webContents.getURL()
-                  if (isProductDetailPage(afterFrameClickUrl)) {
-                    const offShelfKeyword = await checkOffShelf(sw)
-                    if (offShelfKeyword) {
-                      this.windowManager.closeShopWindow(async () => { await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth) })
-                      this.emitStatus(`商品不可购买（${offShelfKeyword}）`)
-                      doResolve({ success: false, error: `商品不可购买（${offShelfKeyword}）` })
-                      return
+                    const afterFrameClickUrl = sw.webContents.getURL()
+                    if (newWindowCreated) {
+                      debugLog('DIAG', `tryClickRebuy iframe: new window was created by click, rebuy succeeded via new window`)
+                      break
                     }
-                  } else if (!isOrderDetailPage(afterFrameClickUrl) && !afterFrameClickUrl.includes('orderDetail')) {
-                    const offShelfKeyword = await checkOffShelf(sw)
-                    if (offShelfKeyword) {
-                      this.windowManager.closeShopWindow(async () => { await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth) })
-                      this.emitStatus(`商品不可购买（${offShelfKeyword}）`)
-                      doResolve({ success: false, error: `商品不可购买（${offShelfKeyword}）` })
-                      return
+                    if (afterFrameClickUrl !== beforeFrameClickUrl) {
+                      if (isProductDetailPage(afterFrameClickUrl)) {
+                        const offShelfKeyword = await checkOffShelf(sw)
+                        if (offShelfKeyword) {
+                          this.windowManager.closeShopWindow(async () => { await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth) })
+                          this.emitStatus(`商品不可购买（${offShelfKeyword}）`)
+                          doResolve({ success: false, error: `商品不可购买（${offShelfKeyword}）` })
+                          return
+                        }
+                        this.emitStatus('再买一单后跳转到商品详情页，请在弹出的窗口中选择规格并购买')
+                        sw.setSize(WINDOW_SIZES.CONFIRMATION.width, WINDOW_SIZES.CONFIRMATION.height)
+                        sw.setTitle('请选择规格并购买')
+                        const mw = this.windowManager.getMainWindow()
+                        if (mw) sw.setParentWindow(mw)
+                        injectOverlayBanner(sw, '🛒 自动购物助手：请选择规格并点击"立即购买"或"加入购物车"')
+                        injectCenterToast(sw, '请选择规格并购买')
+                        if (this.windowManager.cabinMode) {
+                          this.windowManager.showInCabin(sw)
+                        } else {
+                          sw.show()
+                        }
+                        const confirmed = await this.interactionService.waitForUserConfirmation(
+                          sw,
+                          '已进入商品详情页，请在弹出的窗口中选择规格并购买，完成后点击"已完成"',
+                          '选择规格并购买',
+                          '🛒 请选择规格并购买',
+                          'add-to-cart',
+                        )
+                        if (!confirmed || sw.isDestroyed()) {
+                          if (!sw.isDestroyed()) this.windowManager.closeShopWindow(async () => { await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth) })
+                          doResolve({ success: false, error: '用户取消了购买' })
+                          return
+                        }
+                        let afterUrl = ''
+                        try { afterUrl = sw.webContents.getURL() } catch { /* window destroyed */ }
+                        if (isBuyPage(afterUrl)) {
+                          await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth)
+                          this.emitStatus('已进入结算页面')
+                          doResolve({ success: true, directToPay: true })
+                          return
+                        }
+                        if (isCartPage(afterUrl)) {
+                          await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth)
+                          this.emitStatus('已加入购物车')
+                          doResolve({ success: true, directToPay: false })
+                          return
+                        }
+                        await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth)
+                        this.emitStatus('已加入购物车')
+                        doResolve({ success: true, directToPay: false })
+                        return
+                      } else if (!isOrderDetailPage(afterFrameClickUrl) && !afterFrameClickUrl.includes('orderDetail')) {
+                        const offShelfKeyword = await checkOffShelf(sw)
+                        if (offShelfKeyword) {
+                          this.windowManager.closeShopWindow(async () => { await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth) })
+                          this.emitStatus(`商品不可购买（${offShelfKeyword}）`)
+                          doResolve({ success: false, error: `商品不可购买（${offShelfKeyword}）` })
+                          return
+                        }
+                      }
+                      break
+                    }
+
+                    if (retryIdx < 2) {
+                      this.emitStatus(`再买一单点击未生效，正在重试（第${retryIdx + 2}次）...`)
+                      newWindowCreated = false
+                      try {
+                        await frame.executeJavaScript(`
+                          (function() {
+                            var allTargets = ${JSON.stringify(allTargets)};
+                            var selectors = ['button', 'a', '[class*="btn"]', '[class*="Button"]', '[role="button"]', '[class*="action"]', '[class*="submit"]', '[class*="rebuy"]', '[class*="Rebuy"]', '[class*="buy-again"]', '[class*="BuyAgain"]', '[data-spm*="rebuy"]', '[data-spm*="buy"]', 'span[class*="click"]', 'div[class*="click"]'];
+                            var found = _hs.findVisible(selectors, allTargets);
+                            var best = null;
+                            for (var i = 0; i < found.length; i++) {
+                              if (!best || found[i].area < best.area) best = found[i];
+                            }
+                            if (best) { _hs.click(best.el); return true; }
+                            var rebuyEl = document.querySelector('[class*="rebuy"], [class*="Rebuy"], [data-spm*="rebuy"], [class*="buy-again"]');
+                            if (rebuyEl) { _hs.click(rebuyEl); return true; }
+                            return false;
+                          })()
+                        `)
+                      } catch { /* frame may be gone */ break }
                     }
                   }
                 }
@@ -1868,6 +2100,8 @@ export class CartService {
 
           this.windowManager.closeShopWindow(async () => { await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth) })
           doResolve({ success: false, error: String(e) })
+        } finally {
+          this.windowManager.cabinCapturePaused = false
         }
       }
       let loginRetryCount = 0
@@ -1880,6 +2114,7 @@ export class CartService {
         const sw = this.windowManager.getShopWindow()
         const url = sw?.webContents.getURL()
         if (!url) return
+        debugLog('DIAG', `did-finish-load: url=${url.substring(0, 100)}, isOrderDetail=${isOrderDetailPage(url)}, isBuy=${isBuyPage(url)}, isCart=${isCartPage(url)}, isProductDetail=${isProductDetailPage(url)}`)
 
         const hasCaptcha = await this.verificationService.detectCaptcha(sw!)
         if (hasCaptcha) {
@@ -1890,7 +2125,11 @@ export class CartService {
           if (sw?.isMinimized()) {
             sw.restore()
           }
-          sw?.show()
+          if (this.windowManager.cabinMode) {
+            this.windowManager.showInCabin(sw)
+          } else {
+            sw?.show()
+          }
           sw?.focus()
           this.emitStatus('需要进行滑块验证，请在弹出的窗口中完成验证...')
           const verified = await this.interactionService.waitForUserConfirmation(
@@ -1951,7 +2190,11 @@ export class CartService {
               if (mw) currentSw.setParentWindow(mw)
               injectOverlayBanner(currentSw, '🛒 自动购物助手：验证通过，请选择规格并点击"立即购买"或"加入购物车"')
               injectCenterToast(currentSw, '验证通过，请选择规格并购买')
-              currentSw.show()
+              if (this.windowManager.cabinMode) {
+                this.windowManager.showInCabin(currentSw)
+              } else {
+                currentSw.show()
+              }
               const confirmed = await this.interactionService.waitForUserConfirmation(
                 currentSw,
                 '验证通过，已进入商品详情页，请在弹出的窗口中选择规格并购买，完成后点击"已完成"',
@@ -2040,7 +2283,11 @@ export class CartService {
           if (mw) sw!.setParentWindow(mw)
           injectOverlayBanner(sw!, '🛒 自动购物助手：请选择规格并点击"立即购买"或"加入购物车"')
           injectCenterToast(sw!, '请选择规格并购买')
-          sw!.show()
+          if (this.windowManager.cabinMode) {
+            this.windowManager.showInCabin(sw!)
+          } else {
+            sw!.show()
+          }
           const confirmed = await this.interactionService.waitForUserConfirmation(
             sw!,
             '已进入商品详情页，请在弹出的窗口中选择规格并购买，完成后点击"已完成"',
@@ -2259,6 +2506,7 @@ export class CartService {
           }
           if (isOrderDetailPage(url)) {
             sameUrlCount++
+            debugLog('DIAG', `did-finish-load: still on orderDetail, sameUrlCount=${sameUrlCount}, rebuyRetryCount=${rebuyRetryCount}, MAX_REBUY_RETRIES=${MAX_REBUY_RETRIES}`)
             if (sameUrlCount >= 15) {
               rebuyRetryCount++
               if (rebuyRetryCount > MAX_REBUY_RETRIES) {
@@ -2285,6 +2533,7 @@ export class CartService {
       })
 
       lt.on(currentSw.webContents, 'did-navigate', async (_event, navUrl: string) => {
+        debugLog('DIAG', `did-navigate: navUrl=${navUrl?.substring(0, 100)}`)
         if (resolved) return
         await humanDelay(1500)
         const sw = this.windowManager.getShopWindow()
@@ -2324,7 +2573,11 @@ export class CartService {
           if (mw) sw.setParentWindow(mw)
           injectOverlayBanner(sw, '🛒 自动购物助手：请选择规格并点击"立即购买"或"加入购物车"')
           injectCenterToast(sw, '请选择规格并购买')
-          sw.show()
+          if (this.windowManager.cabinMode) {
+            this.windowManager.showInCabin(sw)
+          } else {
+            sw.show()
+          }
           const confirmed = await this.interactionService.waitForUserConfirmation(
             sw,
             '已进入商品详情页，请在弹出的窗口中选择规格并购买，完成后点击"已完成"',
@@ -2418,7 +2671,11 @@ export class CartService {
           if (mw) sw.setParentWindow(mw)
           injectOverlayBanner(sw, '🛒 自动购物助手：请选择规格并点击"立即购买"或"加入购物车"')
           injectCenterToast(sw, '请选择规格并购买')
-          sw.show()
+          if (this.windowManager.cabinMode) {
+            this.windowManager.showInCabin(sw)
+          } else {
+            sw.show()
+          }
           const confirmed = await this.interactionService.waitForUserConfirmation(
             sw,
             '已进入商品详情页，请在弹出的窗口中选择规格并购买，完成后点击"已完成"',
@@ -2491,7 +2748,11 @@ export class CartService {
             if (mw) sw.setParentWindow(mw)
             injectOverlayBanner(sw, '🛒 自动购物助手：请选择规格并点击"立即购买"或"加入购物车"')
             injectCenterToast(sw, '请选择规格并购买')
-            sw.show()
+            if (this.windowManager.cabinMode) {
+              this.windowManager.showInCabin(sw)
+            } else {
+              sw.show()
+            }
             this.emitStatus('再买一单后跳转到商品详情页，请在弹出的窗口中选择规格并购买')
             const confirmed = await this.interactionService.waitForUserConfirmation(
               sw,
@@ -2554,7 +2815,11 @@ export class CartService {
             if (sw.isMinimized()) {
               sw.restore()
             }
-            sw.show()
+            if (this.windowManager.cabinMode) {
+              this.windowManager.showInCabin(sw)
+            } else {
+              sw.show()
+            }
             sw.focus()
             this.emitStatus('需要进行滑块验证，请在弹出的窗口中完成验证...')
             const verified = await this.interactionService.waitForUserConfirmation(
@@ -2605,7 +2870,11 @@ export class CartService {
                 if (mw) checkSw.setParentWindow(mw)
                 injectOverlayBanner(checkSw, '🛒 自动购物助手：验证通过，请选择规格并点击"立即购买"或"加入购物车"')
                 injectCenterToast(checkSw, '验证通过，请选择规格并购买')
-                checkSw.show()
+                if (this.windowManager.cabinMode) {
+                  this.windowManager.showInCabin(checkSw)
+                } else {
+                  checkSw.show()
+                }
                 const confirmed = await this.interactionService.waitForUserConfirmation(
                   checkSw,
                   '验证通过，已进入商品详情页，请在弹出的窗口中选择规格并购买，完成后点击"已完成"',
@@ -2736,7 +3005,11 @@ export class CartService {
                 if (mw) sw!.setParentWindow(mw)
                 injectOverlayBanner(sw!, '🛒 自动购物助手：请选择规格并点击"立即购买"或"加入购物车"')
                 injectCenterToast(sw!, '请选择规格并购买')
-                sw!.show()
+                if (this.windowManager.cabinMode) {
+                  this.windowManager.showInCabin(sw!)
+                } else {
+                  sw!.show()
+                }
                 this.emitStatus('再买一单后跳转到商品详情页，请在弹出的窗口中选择规格并购买')
                 const confirmed = await this.interactionService.waitForUserConfirmation(
                   sw!,
@@ -2841,7 +3114,11 @@ export class CartService {
               if (mw) sw!.setParentWindow(mw)
               injectOverlayBanner(sw!, '🛒 自动购物助手：请选择规格并点击"立即购买"或"加入购物车"')
               injectCenterToast(sw!, '请选择规格并购买')
-              sw!.show()
+              if (this.windowManager.cabinMode) {
+                this.windowManager.showInCabin(sw!)
+              } else {
+                sw!.show()
+              }
               const confirmed = await this.interactionService.waitForUserConfirmation(
                 sw!,
                 '已进入商品详情页，请在弹出的窗口中选择规格并购买，完成后点击"已完成"',

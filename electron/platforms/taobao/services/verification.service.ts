@@ -89,7 +89,10 @@ export class VerificationService {
     await this.cookieManager.syncCookiesToElectron(this.getContext(), this.auth)
 
     const mainWindow = this.windowManager.getMainWindow()
-    if (mainWindow) {
+
+    if (this.windowManager.cabinMode) {
+      this.emitStatus('需要进行身份验证，请在验证页面中完成验证...')
+    } else if (mainWindow) {
       await dialog.showMessageBox(mainWindow, {
         type: 'info',
         title: '需要身份验证',
@@ -125,6 +128,11 @@ export class VerificationService {
       })
       setUserAgent(verifyWindow)
       verifyWindow.loadURL(verifyUrl)
+      if (this.windowManager.cabinMode) {
+        this.windowManager.showInCabin(verifyWindow)
+      } else {
+        verifyWindow.show()
+      }
 
       let resolved = false
       const timeout = setTimeout(() => {

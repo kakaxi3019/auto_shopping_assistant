@@ -1,4 +1,4 @@
-import { chromium, type Browser, type BrowserContext, type Page } from 'playwright'
+import { chromium, type Browser, type BrowserContext, type Page, type CDPSession } from 'playwright'
 import { getChromiumPath } from '../utils/page-helper'
 import { CHROME_UA } from '../utils/constants'
 import { HUMAN_SIM_JS } from '../utils/human-sim'
@@ -11,6 +11,9 @@ export class BrowserManager {
   private context: BrowserContext | null = null
   private page: Page | null = null
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null
+  private cdpSession: CDPSession | null = null
+  private screencastActive: boolean = false
+  private onFrameCallback: ((base64Jpeg: string) => void) | null = null
   private static readonly HEARTBEAT_INTERVAL = 5 * 60 * 1000
   private static readonly HEARTBEAT_URL = 'https://www.taobao.com'
 
@@ -92,10 +95,12 @@ export class BrowserManager {
   }
 
   cleanup() {
+    this.stopScreencast()
     this.stopHeartbeat()
     this.page = null
     this.context = null
     this.browser = null
+    this.cdpSession = null
   }
 
   private startHeartbeat() {
@@ -124,6 +129,65 @@ export class BrowserManager {
       clearInterval(this.heartbeatTimer)
       this.heartbeatTimer = null
     }
+  }
+
+  async startScreencast(onFrame: (base64Jpeg: string) => void): Promise<void> {
+    if (this.screencastActive) {
+      return
+    }
+
+    if (!this.page) {
+      throw new Error('Cannot start screencast: no active page')
+    }
+
+    this.onFrameCallback = onFrame
+    this.cdpSession = await this.page.context().newCDPSession(this.page)
+
+    this.cdpSession.on('Page.screencastFrame', async (event: { data: string; sessionId: number }) => {
+      if (this.onFrameCallback) {
+        this.onFrameCallback(event.data)
+      }
+      try {
+        await this.cdpSession?.send('Page.screencastFrameAck', {
+          sessionId: event.sessionId,
+        })
+      } catch {
+        this.stopScreencast()
+      }
+    })
+
+    await this.cdpSession.send('Page.startScreencast', {
+      format: 'jpeg',
+      quality: 85,
+      maxWidth: 1280,
+      maxHeight: 800,
+      everyNthFrame: 1,
+    })
+
+    this.screencastActive = true
+  }
+
+  async stopScreencast(): Promise<void> {
+    if (!this.screencastActive) {
+      return
+    }
+
+    this.screencastActive = false
+    this.onFrameCallback = null
+
+    try {
+      await this.cdpSession?.send('Page.stopScreencast')
+    } catch { /* ignore */ }
+
+    try {
+      await this.cdpSession?.detach()
+    } catch { /* ignore */ }
+
+    this.cdpSession = null
+  }
+
+  isScreencasting(): boolean {
+    return this.screencastActive
   }
 
   async close() {

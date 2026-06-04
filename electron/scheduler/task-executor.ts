@@ -53,10 +53,15 @@ export class TaskExecutor {
     instruction?: string,
     dryRun?: boolean,
     paymentMode?: string,
+    isCancelled?: () => boolean,
   ): Promise<{ success: boolean; itemResults: ItemResult[]; error?: string }> {
     const itemResults: ItemResult[] = []
 
     for (const item of parsedItems) {
+      if (isCancelled?.()) {
+        return { success: false, itemResults, error: '任务已取消' }
+      }
+
       const result: ItemResult = { name: item.name, quantity: item.quantity, status: 'failed' }
       const candidateOrders = this.findCandidateOrders(item, platform.name, result, onProgress, instruction)
 
@@ -67,7 +72,7 @@ export class TaskExecutor {
       }
 
       const order = candidateOrders[0]
-      await this.processPurchase(taskId, item, order, platform, result, onProgress, dryRun, paymentMode)
+      await this.processPurchase(taskId, item, order, platform, result, onProgress, dryRun, paymentMode, isCancelled)
       itemResults.push(result)
 
       if (platform.cleanup) {
@@ -105,21 +110,32 @@ export class TaskExecutor {
     onProgress: (msg: string) => void,
     dryRun?: boolean,
     paymentMode?: string,
+    isCancelled?: () => boolean,
   ): Promise<void> {
+    if (isCancelled?.()) {
+      result.error = '任务已取消'
+      return
+    }
+
     const isCartOnly = paymentMode === 'cart_only'
     const url = platform.getProductUrl(order)
 
     onProgress(`正在为 "${item.name}" 执行再买一单（订单 ${order.orderId}）...`)
     try {
       const cartResult: AddToCartResult = await platform.addToCart(url, item.sku, order.orderId, isCartOnly)
+      if (isCancelled?.()) {
+        result.error = '任务已取消'
+        return
+      }
+
       if (!cartResult.success) {
-        await this.handleSearchFallback(taskId, item, order, platform, cartResult, result, onProgress, dryRun, paymentMode)
+        await this.handleSearchFallback(taskId, item, order, platform, cartResult, result, onProgress, dryRun, paymentMode, isCancelled)
       } else if (isCartOnly) {
         onProgress(`已将 "${item.name}" 加入购物车`)
         result.matchedProduct = order.productName
         result.status = 'success'
       } else {
-        await this.handleCheckoutAndPay(taskId, item, order, platform, cartResult.directToPay ?? false, url, result, onProgress, dryRun, paymentMode)
+        await this.handleCheckoutAndPay(taskId, item, order, platform, cartResult.directToPay ?? false, url, result, onProgress, dryRun, paymentMode, isCancelled)
       }
     } catch (e) {
       const errMsg = String(e)
@@ -143,7 +159,13 @@ export class TaskExecutor {
     onProgress: (msg: string) => void,
     dryRun?: boolean,
     paymentMode?: string,
+    isCancelled?: () => boolean,
   ): Promise<void> {
+    if (isCancelled?.()) {
+      result.error = '任务已取消'
+      return
+    }
+
     const isCartOnly = paymentMode === 'cart_only'
     const searchParts = [order.productName]
     if (order.shopName) searchParts.push(order.shopName)
@@ -152,15 +174,25 @@ export class TaskExecutor {
     onProgress(`再买一单失败（${cartResult.error}），正在打开搜索页面，请在搜索结果中找到对应商品并点击进入...`)
     try {
       const searchUrl = await platform.openSearchPage(searchKeyword)
+      if (isCancelled?.()) {
+        result.error = '任务已取消'
+        return
+      }
+
       if (searchUrl) {
         const purchaseResult = await platform.purchaseFromUrl(searchUrl)
+        if (isCancelled?.()) {
+          result.error = '任务已取消'
+          return
+        }
+
         if (purchaseResult.success) {
           if (isCartOnly) {
             onProgress(`已将商品加入购物车`)
             result.matchedProduct = order.productName
             result.status = 'success'
           } else {
-            await this.handleCheckoutAndPay(taskId, item, order, platform, purchaseResult.directToPay ?? false, searchUrl, result, onProgress, dryRun, paymentMode)
+            await this.handleCheckoutAndPay(taskId, item, order, platform, purchaseResult.directToPay ?? false, searchUrl, result, onProgress, dryRun, paymentMode, isCancelled)
           }
         } else {
           result.error = '商品页面无法购买'
@@ -184,9 +216,20 @@ export class TaskExecutor {
     onProgress: (msg: string) => void,
     dryRun?: boolean,
     paymentMode?: string,
+    isCancelled?: () => boolean,
   ): Promise<void> {
+    if (isCancelled?.()) {
+      result.error = '任务已取消'
+      return
+    }
+
     onProgress(`正在结算 "${item.name}"${item.quantity > 1 ? `（x${item.quantity}）` : ''}...`)
     const checkoutResult = await platform.checkout(directToPay, item.quantity)
+    if (isCancelled?.()) {
+      result.error = '任务已取消'
+      return
+    }
+
     if (!checkoutResult.success) {
       result.error = checkoutResult.error || '结算失败'
       return
@@ -638,8 +681,14 @@ export class TaskExecutor {
     instruction?: string,
     dryRun?: boolean,
     paymentMode?: string,
+    isCancelled?: () => boolean,
   ): Promise<ItemResult> {
     const result: ItemResult = { name: item.name, quantity: item.quantity, status: 'failed' }
+
+    if (isCancelled?.()) {
+      result.error = '任务已取消'
+      return result
+    }
 
     const candidateOrders = this.findCandidateOrders(item, platform.name, result, onProgress, instruction)
 
@@ -649,7 +698,7 @@ export class TaskExecutor {
     }
 
     const order = candidateOrders[0]
-    await this.processPurchase(taskId, item, order, platform, result, onProgress, dryRun, paymentMode)
+    await this.processPurchase(taskId, item, order, platform, result, onProgress, dryRun, paymentMode, isCancelled)
 
     if (platform.cleanup) {
       await platform.cleanup()

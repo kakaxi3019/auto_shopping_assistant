@@ -1,4 +1,6 @@
 import { ipcMain, BrowserWindow, shell } from 'electron'
+import { join } from 'path'
+import { debugLog } from '../utils/debug-log'
 import type { ParsedShoppingItem, PaymentMode } from '../../shared/types/platform.types'
 import type { Database } from '../db/database'
 import type { TaskScheduler } from '../scheduler/task-scheduler'
@@ -73,6 +75,11 @@ export function registerIpcHandlers(db: Database, scheduler: TaskScheduler) {
 
   ipcMain.handle('task:confirm', async (_event, instruction: string, items: ParsedShoppingItem[], platform?: string, dryRun?: boolean, paymentMode?: PaymentMode) => {
     try {
+      const activePlatform = scheduler.getRegistry().get('taobao')
+      if (activePlatform?.name === 'taobao') {
+        const wm = (activePlatform as any).windowManager
+        if (wm) wm.cabinOpen = true
+      }
       const taskId = await scheduler.confirmTask(instruction, items, platform || 'taobao', dryRun, paymentMode)
       return { taskId }
     } catch (e) {
@@ -127,6 +134,11 @@ export function registerIpcHandlers(db: Database, scheduler: TaskScheduler) {
 
   ipcMain.handle('task:retry-item', async (_event, taskId: number, itemName: string) => {
     try {
+      const activePlatform = scheduler.getRegistry().get('taobao')
+      if (activePlatform?.name === 'taobao') {
+        const wm = (activePlatform as any).windowManager
+        if (wm) wm.cabinOpen = true
+      }
       return await scheduler.retryTaskItem(taskId, itemName)
     } catch (e) {
       return { success: false, error: e instanceof Error ? e.message : String(e) }
@@ -461,6 +473,76 @@ export function registerIpcHandlers(db: Database, scheduler: TaskScheduler) {
         return { success: false, error: String(e2) }
       }
     }
+  })
+
+  // Execution Cabin
+  ipcMain.handle('cabin:start-screencast', async (_event, platformName?: string) => {
+    try {
+      const platform = scheduler.getRegistry().get(platformName || 'taobao')
+      if (!platform?.startScreencast) return { success: false, error: '平台不支持执行舱' }
+
+      await platform.startScreencast((base64Jpeg: string) => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('cabin:frame', base64Jpeg)
+        }
+      })
+      return { success: true }
+    } catch (e) {
+      return { success: false, error: e instanceof Error ? e.message : String(e) }
+    }
+  })
+
+  ipcMain.handle('cabin:stop-screencast', async (_event, platformName?: string) => {
+    try {
+      const platform = scheduler.getRegistry().get(platformName || 'taobao')
+      if (!platform?.stopScreencast) return { success: false, error: '平台不支持执行舱' }
+
+      await platform.stopScreencast()
+      return { success: true }
+    } catch (e) {
+      return { success: false, error: e instanceof Error ? e.message : String(e) }
+    }
+  })
+
+  ipcMain.handle('cabin:is-screencasting', async (_event, platformName?: string) => {
+    const platform = scheduler.getRegistry().get(platformName || 'taobao')
+    return platform?.isScreencasting?.() ?? false
+  })
+
+  ipcMain.on('cabin:set-cabin-bounds', (_event, bounds: { x: number; y: number; width: number; height: number }) => {
+    const platform = scheduler.getRegistry().get('taobao')
+    if (platform?.name === 'taobao') {
+      const wm = (platform as any).windowManager
+      if (wm?.setCabinBounds) wm.setCabinBounds(bounds)
+    }
+  })
+
+  ipcMain.on('cabin:set-mode', (_event, mode: 'auto' | 'interactive') => {
+    const platform = scheduler.getRegistry().get('taobao')
+    if (platform?.name === 'taobao') {
+      const wm = (platform as any).windowManager
+      if (wm) wm.cabinDisplayMode = mode
+    }
+  })
+
+  ipcMain.on('cabin:set-open', (_event, open: boolean) => {
+    const platform = scheduler.getRegistry().get('taobao')
+    if (platform?.name === 'taobao') {
+      const wm = (platform as any).windowManager
+      if (wm) wm.cabinOpen = open
+    }
+  })
+
+  ipcMain.on('cabin:log', (_event, message: string) => {
+    debugLog('DIAG', `[FE-DIAG] ${message}`)
+  })
+
+  ipcMain.handle('cabin:get-preload-path', () => {
+    const { pathToFileURL } = require('url')
+    const absPath = join(__dirname, 'cabin-preload.js')
+    const fileUrl = pathToFileURL(absPath).href
+    debugLog('DIAG', `[handlers] 操作舱 Webview Preload 绝对路径格式化为合规 file 协议: ${fileUrl}`)
+    return fileUrl
   })
 
   return { setMainWindow }

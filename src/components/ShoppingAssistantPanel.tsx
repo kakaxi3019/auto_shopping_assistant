@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { api } from '../lib/api'
 import type { ItemResult } from '../../shared/types/task.types'
+import ExecutionCabin, { type ExecutionCabinHandle } from './ExecutionCabin'
 
 type AmbiguityLevel = 'none' | 'low' | 'high'
 
@@ -217,6 +218,9 @@ export default function ShoppingAssistantPanel({
   const [editQuantity, setEditQuantity] = useState<number>(1)
   const [confirmingCancel, setConfirmingCancel] = useState(false)
   const logRef = useRef<HTMLDivElement>(null)
+  const [cabinExpanded, setCabinExpanded] = useState(false)
+  const [cabinMode, setCabinMode] = useState<'auto' | 'interactive'>('auto')
+  const cabinRef = useRef<ExecutionCabinHandle>(null)
 
   useEffect(() => {
     api.getSetting('payment_mode').then((mode) => {
@@ -228,6 +232,14 @@ export default function ShoppingAssistantPanel({
 
   const activeTask = activeTaskId ? tasks.find(t => t.id === activeTaskId) : null
   const mode: PanelMode = preview ? 'preview' : 'progress'
+
+  useEffect(() => {
+    if (mode === 'progress' && activeTask && (activeTask.status === 'running' || activeTask.status === 'partial') && !cabinExpanded) {
+      setCabinExpanded(true)
+      setCabinMode('auto')
+      window.api.cabinSetOpen(true)
+    }
+  }, [mode, activeTask?.status])
 
   useEffect(() => {
     if (!activeTask?.itemResults) {
@@ -253,6 +265,27 @@ export default function ShoppingAssistantPanel({
     Array.isArray(activeTask?.progressLog) &&
     activeTask.progressLog.some(msg => typeof msg === 'string' && msg.includes('|REOPEN:')) === true
 
+  const showInteractiveFooter = hasPendingConfirmation || cabinMode === 'interactive'
+
+  const cabinStep = (() => {
+    if (!activeTask?.progressLog) return { step: 0, total: 6, text: '' }
+    const logs = activeTask.progressLog
+    const steps = [
+      { keywords: ['解析', 'LLM', '匹配'], label: '解析指令' },
+      { keywords: ['查找', '搜索', '历史订单', '订单'], label: '查找订单' },
+      { keywords: ['再买一单', '加购', '加入购物车', '复购', '购买'], label: '加入购物车' },
+      { keywords: ['结算', '去结算', '确认订单'], label: '结算' },
+      { keywords: ['提交订单', '提交', '去支付'], label: '提交订单' },
+      { keywords: ['支付', '付款', '免密'], label: '支付' },
+    ]
+    let step = 0
+    for (const s of steps) {
+      if (logs.some(l => typeof l === 'string' && s.keywords.some(kw => l.includes(kw)))) step++
+    }
+    const lastLog = logs.length > 0 ? cleanLogTags(logs[logs.length - 1]) : ''
+    return { step, total: steps.length, text: lastLog }
+  })()
+
   useEffect(() => {
     if (logRef.current) {
       logRef.current.scrollTop = logRef.current.scrollHeight
@@ -277,12 +310,49 @@ export default function ShoppingAssistantPanel({
     }
   }, [hasPendingConfirmation])
 
+  useEffect(() => {
+    if (!cabinExpanded || cabinMode !== 'auto') return
+    const unsubscribe = api.onCabinFrame((base64Jpeg: string) => {
+      cabinRef.current?.drawFrame(`data:image/jpeg;base64,${base64Jpeg}`)
+    })
+    return unsubscribe
+  }, [cabinExpanded, cabinMode])
+
+  useEffect(() => {
+    if (mode !== 'progress' || !activeTask) return
+    if (cabinExpanded && cabinMode === 'auto' && (activeTask.status === 'running' || activeTask.status === 'partial')) {
+      api.cabinStartScreencast().catch(() => {})
+      return () => { api.cabinStopScreencast().catch(() => {}) }
+    }
+  }, [mode, activeTask?.status, cabinExpanded, cabinMode])
+
+  useEffect(() => {
+    const unsubscribe = window.api.onCabinModeChange((newMode) => {
+      setCabinMode(newMode)
+    })
+    return unsubscribe
+  }, [])
+
   const handleClose = () => {
     setClosing(true)
+    if (cabinExpanded) {
+      window.api.cabinSetOpen(false)
+    }
     setTimeout(() => {
       setClosing(false)
       onClose()
     }, 250)
+  }
+
+  const handleToggleCabin = () => {
+    if (cabinExpanded) {
+      setCabinExpanded(false)
+      api.cabinStopScreencast().catch(() => {})
+      window.api.cabinSetOpen(false)
+    } else {
+      setCabinExpanded(true)
+      window.api.cabinSetOpen(true)
+    }
   }
 
   const handleRetry = async (itemName: string) => {
@@ -894,7 +964,7 @@ export default function ShoppingAssistantPanel({
 
     return (
       <div className="flex-1 overflow-y-auto p-5 space-y-4">
-        {hasPendingConfirmation && (
+        {showInteractiveFooter && (
           <div className="p-3 rounded-lg bg-amber-50 border border-amber-200">
             {isWindowClosed ? (
               <>
@@ -1292,9 +1362,9 @@ export default function ShoppingAssistantPanel({
     <>
       <div className="fixed inset-0 bg-black/20 z-40 animate-fade-in-backdrop" />
       <div
-        className={`fixed top-0 right-0 h-full w-[480px] max-w-[90vw] bg-white shadow-2xl z-50 flex flex-col ${
+        className={`fixed top-0 right-0 h-full ${cabinExpanded ? 'w-[calc(100vw-224px)]' : 'w-[480px] max-w-[90vw]'} bg-white shadow-2xl z-50 flex flex-col ${
           closing ? 'animate-slide-out-right' : 'animate-slide-in-right'
-        }`}
+        } transition-all duration-300`}
       >
         <div className={`px-5 py-3 border-b flex items-center justify-between flex-shrink-0 ${
           headerConfig.color === 'blue' ? 'bg-blue-50 border-blue-100' :
@@ -1337,6 +1407,18 @@ export default function ShoppingAssistantPanel({
               </div>
             )}
           </div>
+          {mode === 'progress' && activeTask && (activeTask.status === 'running' || activeTask.status === 'partial') && (
+            <button
+              onClick={handleToggleCabin}
+              className={`text-sm px-2 py-1 rounded-md transition-colors ${
+                cabinExpanded
+                  ? 'bg-blue-100 text-blue-700 hover:bg-blue-200'
+                  : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+              }`}
+            >
+              {cabinExpanded ? '👁 收起执行舱' : '👁 执行舱'}
+            </button>
+          )}
           <button onClick={handleClose} className="text-gray-400 hover:text-gray-600 transition-colors p-1">
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -1361,6 +1443,27 @@ export default function ShoppingAssistantPanel({
                   })}
                 </div>
               )}
+            </div>
+          </div>
+        )}
+
+        {mode === 'progress' && activeTask && (activeTask.status === 'running' || activeTask.status === 'partial') && (
+          <div className="flex-shrink-0 p-3 border-b border-gray-100">
+            <div className="relative w-full rounded-xl overflow-hidden transition-[height] duration-300 ease-in-out" style={{ height: cabinExpanded ? (cabinMode === 'interactive' ? '75vh' : '60vh') : '0' }}>
+              <ExecutionCabin
+                ref={cabinRef}
+                expanded={cabinExpanded}
+                mode={cabinMode}
+                statusText={cabinStep.text}
+                step={cabinStep.step}
+                totalSteps={cabinStep.total}
+                needsUserAction={hasPendingConfirmation}
+                onExpand={() => setCabinExpanded(true)}
+                onCollapse={() => { setCabinExpanded(false); api.cabinStopScreencast().catch(() => {}); window.api.cabinSetOpen(false) }}
+                onConfirmAction={handleConfirmActionClick}
+                onRejectAction={handleRejectActionClick}
+                confirmActionLoading={confirmActionStatus === 'loading'}
+              />
             </div>
           </div>
         )}
