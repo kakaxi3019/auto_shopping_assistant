@@ -50,6 +50,7 @@ export class CheckoutService {
 
   async checkout(directToPay = false, quantity = 1): Promise<CheckoutResult> {
     this.emitStatus('正在结算...')
+    debugLog(`[Taobao-Checkout] checkout called: directToPay=${directToPay}, quantity=${quantity}`)
 
     try {
       const shopWindow = this.windowManager.getShopWindow()
@@ -57,26 +58,31 @@ export class CheckoutService {
         return await this.checkoutViaElectron(directToPay, quantity)
       }
 
+      debugLog('[Taobao-Checkout] fallback to browser context (no Electron shopWindow)')
       await this.browserManager.ensureBrowser(this.auth, this.cookieManager, this.emitStatus)
       if (!this.getPage()) return { success: false, error: '浏览器未初始化' }
 
       const currentUrl = this.getPage()!.url()
       if (isLoginPage(currentUrl)) {
+        debugLog('[Taobao-Checkout] login required on page')
         return { success: false, error: '登录已过期，请重新登录' }
       }
 
       if (directToPay || isBuyPage(currentUrl)) {
+        debugLog(`[Taobao-Checkout] already on buy page: ${currentUrl}, submitting order`)
         return await this.submitOrder()
       }
 
       if (!isCartPage(currentUrl)) {
         this.emitStatus('正在跳转购物车...')
+        debugLog(`[Taobao-Checkout] navigating to cart: ${TAOBAO_SELECTORS.CART.URL}`)
         await this.getPage()!.goto(TAOBAO_SELECTORS.CART.URL, { waitUntil: 'domcontentloaded', timeout: TIMEOUTS.PAGE_LOAD })
       }
 
       await humanDelay(2000)
 
       if (isLoginPage(this.getPage()!.url())) {
+        debugLog('[Taobao-Checkout] login required after cart load')
         return { success: false, error: '登录已过期，请重新登录' }
       }
 
@@ -84,6 +90,7 @@ export class CheckoutService {
         TAOBAO_SELECTORS.CART.CHECKOUT_SELECTORS as unknown as string[],
         ['结算', '去结算', '去购物车结算', '去支付']
       )
+      debugLog(`[Taobao-Checkout] checkoutClicked: ${JSON.stringify(checkoutClicked)}`)
 
       if (!checkoutClicked.clicked) {
         return { success: false, error: '未找到结算按钮' }
@@ -99,6 +106,7 @@ export class CheckoutService {
 
       return { success: true }
     } catch (e: unknown) {
+      debugLog(`[Taobao-Checkout] checkout error: ${e}`)
       return { success: false, error: String(e) }
     }
   }
@@ -106,38 +114,46 @@ export class CheckoutService {
   private async checkoutViaElectron(directToPay: boolean, quantity: number): Promise<CheckoutResult> {
     const shopWindow = this.windowManager.getShopWindow()
     if (!shopWindow || shopWindow.isDestroyed()) {
+      debugLog('[Taobao-Checkout] checkoutViaElectron failed: shopWindow is null or destroyed')
       return { success: false, error: '购物窗口已关闭' }
     }
 
     const wc = shopWindow.webContents
     const currentUrl = wc.getURL()
+    debugLog(`[Taobao-Checkout] checkoutViaElectron started: url=${currentUrl}, directToPay=${directToPay}`)
     if (isLoginPage(currentUrl)) {
+      debugLog('[Taobao-Checkout] login required inside electron shopWindow')
       await this.closeShopWindow()
       return { success: false, error: '登录已过期，请重新登录' }
     }
 
     if (directToPay || isBuyPage(currentUrl)) {
       this.emitStatus('正在等待确认订单页面加载...')
+      debugLog('[Taobao-Checkout] directToPay is true or currently on buy page, waiting for checkout page')
       return await this.waitForCheckoutPage(quantity)
     }
 
     if (!isCartPage(currentUrl)) {
       this.emitStatus('正在跳转购物车...')
+      debugLog(`[Taobao-Checkout] loading cart page url: ${TAOBAO_SELECTORS.CART.URL}`)
       await wc.loadURL(TAOBAO_SELECTORS.CART.URL)
       await humanDelay(3000)
 
       if (isLoginPage(wc.getURL())) {
+        debugLog('[Taobao-Checkout] login required after cart page load')
         await this.closeShopWindow()
         return { success: false, error: '登录已过期，请重新登录' }
       }
     }
 
     this.emitStatus('正在结算...')
+    debugLog('[Taobao-Checkout] clicking checkout button in cart page')
     const checkoutResult = await clickInShopWindow(
       shopWindow,
       TAOBAO_SELECTORS.CART.CHECKOUT_SELECTORS as unknown as string[],
       ['结算', '去结算', '去购物车结算', '去支付']
     )
+    debugLog(`[Taobao-Checkout] checkout click result: ${JSON.stringify(checkoutResult)}`)
 
     if (!checkoutResult.clicked) {
       await this.closeShopWindow()
@@ -149,12 +165,14 @@ export class CheckoutService {
   }
 
   private async waitForCheckoutPage(quantity = 1): Promise<CheckoutResult> {
+    debugLog(`[Taobao-Checkout] waitForCheckoutPage started: quantity=${quantity}`)
     for (let attempt = 0; attempt < 15; attempt++) {
       const delay = attempt === 0 ? 500 : 1500
       await humanDelay(delay)
 
       const shopWindow = this.windowManager.getShopWindow()
       if (!shopWindow || shopWindow.isDestroyed()) {
+        debugLog('[Taobao-Checkout] waitForCheckoutPage failed: shopWindow is null or destroyed')
         return { success: false, error: '购物窗口已关闭' }
       }
 
@@ -177,18 +195,24 @@ export class CheckoutService {
           return t.includes('免密支付') || t.includes('立即支付') || t.includes('提交订单') || t.includes('去支付') || t.includes('立即付款')
         })
 
+        debugLog(`[Taobao-Checkout] waitForCheckoutPage attempt=${attempt}, url=${diag.url}, bodyLen=${diag.bodyLen}, hasPayButton=${hasPayButton}`)
+
         if (diag.bodyLen > 100 && hasPayButton) {
           if (quantity > 1) {
+            debugLog(`[Taobao-Checkout] quantity is ${quantity}, setting quantity...`)
             await this.setQuantity(quantity)
           }
           const currentPrice = await this.extractCheckoutPrice(shopWindow)
           this.emitStatus('已到达确认订单页面')
+          debugLog(`[Taobao-Checkout] arrived checkout page! currentPrice=${currentPrice}`)
           return { success: true, currentPrice }
         }
       } catch (e: unknown) {
+        debugLog(`[Taobao-Checkout] waitForCheckoutPage evaluation error: ${e}`)
       }
     }
 
+    debugLog('[Taobao-Checkout] checkout page load timeout')
     await this.closeShopWindow()
     return { success: false, error: '确认订单页面加载超时' }
   }

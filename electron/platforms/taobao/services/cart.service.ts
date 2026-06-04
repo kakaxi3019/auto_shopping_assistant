@@ -1,4 +1,4 @@
-﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿import { BrowserWindow } from 'electron'
+﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿import { BrowserWindow } from 'electron'
 import type { Page, BrowserContext } from 'playwright'
 import type { Database } from '../../../db/database'
 import type { AddToCartResult, Order } from '../../../../shared/types/platform.types'
@@ -8,9 +8,9 @@ import { CookieManager } from '../infrastructure/cookie-manager'
 import { VerificationService } from './verification.service'
 import { InteractionService } from './interaction.service'
 import { TaobaoAuth } from '../taobao.auth'
-import { setUserAgent, humanDelay, humanClickAt, humanClickElement, execJS, injectOverlayBanner, injectCenterToast, rand, ListenerTracker, cleanupForCaptcha, resetCaptchaMode } from '../utils/page-helper'
+import { setUserAgent, debugLog, humanDelay, humanClickAt, humanClickElement, execJS, injectOverlayBanner, injectCenterToast, rand, ListenerTracker, cleanupForCaptcha, resetCaptchaMode } from '../utils/page-helper'
 import { APP_ICON, WINDOW_SIZES, TIMEOUTS, KEYWORDS } from '../utils/constants'
-import { isCheckoutOrPayPage, isLoginPage, isIdentityVerifyPage, isBuyPage, isCartPage, isProductDetailPage, isOrderArchivePage, isOrderDetailPage } from '../utils/url-helper'
+import { isCheckoutOrPayPage, isLoginPage, isIdentityVerifyPage, isBuyPage, isCartPage, isProductDetailPage, isOrderArchivePage, isOrderDetailPage, isErrorPage } from '../utils/url-helper'
 import { TAOBAO_SELECTORS } from '../taobao.selectors'
 import { HUMAN_SIM_JS } from '../utils/human-sim'
 
@@ -58,9 +58,11 @@ export class CartService {
 
   async addToCart(productUrl: string, sku?: string, orderId?: string, cartOnly?: boolean): Promise<AddToCartResult> {
     this.emitStatus('正在再买一单...')
+    debugLog(`[Taobao-Cart] addToCart invoked: productUrl=${productUrl}, sku=${sku}, orderId=${orderId}, cartOnly=${cartOnly}`)
 
     if (!orderId) {
       this.emitStatus('没有订单号，无法再买一单')
+      debugLog('[Taobao-Cart] addToCart failed: missing orderId')
       return { success: false, error: '没有订单号' }
     }
 
@@ -135,6 +137,13 @@ export class CartService {
         const handleNavigation = async (url: string) => {
           if (resolved) return
 
+          if (isErrorPage(url)) {
+            this.windowManager.closeShopWindow()
+            this.emitStatus('⚠️ 商品页面无法访问，可能已下架或活动已结束')
+            doResolve({ success: false, error: '商品页面无法访问（跳转到了错误页面）' })
+            return
+          }
+
           if (isCartPage(url)) {
             const sw = this.windowManager.getShopWindow()
             if (sw && !sw.isDestroyed()) sw.hide()
@@ -167,6 +176,13 @@ export class CartService {
 
           const handlePopupUrl = async (popupUrl: string) => {
             if (resolved) return
+
+            if (isErrorPage(popupUrl)) {
+              this.windowManager.closeShopWindow()
+              this.emitStatus('⚠️ 商品页面无法访问，可能已下架或活动已结束')
+              doResolve({ success: false, error: '商品页面无法访问（跳转到了错误页面）' })
+              return
+            }
 
             if (isCartPage(popupUrl)) {
               const sw = this.windowManager.getShopWindow()
@@ -507,6 +523,13 @@ export class CartService {
         const handleNavigation = async (url: string) => {
           if (resolved) return
 
+          if (isErrorPage(url)) {
+            this.windowManager.closeShopWindow()
+            this.emitStatus('⚠️ 商品页面无法访问，可能已下架或活动已结束')
+            doResolve({ success: false, error: '商品页面无法访问（跳转到了错误页面）' })
+            return
+          }
+
           if (isBuyPage(url)) {
             const sw = this.windowManager.getShopWindow()
             if (sw && !sw.isDestroyed()) sw.hide()
@@ -539,6 +562,13 @@ export class CartService {
 
           const handlePopupUrl = async (popupUrl: string) => {
             if (resolved) return
+
+            if (isErrorPage(popupUrl)) {
+              this.windowManager.closeShopWindow()
+              this.emitStatus('⚠️ 商品页面无法访问，可能已下架或活动已结束')
+              doResolve({ success: false, error: '商品页面无法访问（跳转到了错误页面）' })
+              return
+            }
 
             if (isBuyPage(popupUrl)) {
               const sw = this.windowManager.getShopWindow()
@@ -762,47 +792,75 @@ export class CartService {
   private async runInHiddenWindow(orderId: string, productUrl?: string, cartOnly?: boolean): Promise<AddToCartResult | null> {
     const mainWindow = this.windowManager.getMainWindow()
     if (!mainWindow) {
+      debugLog('[Taobao-Cart] runInHiddenWindow failed: mainWindow is null')
       return null
     }
     const bizOrderId = orderId.replace(/_\d+$/, '')
-    const detailUrl = `https://trade.tmall.com/detail/orderDetail.htm?bizOrderId=${bizOrderId}`
+    const detailUrl = `https://buyertrade.taobao.com/trade/detail/trade_item_detail.htm?bizOrderId=${bizOrderId}`
+    const detailUrlLoadOptions = { httpReferrer: 'https://buyertrade.taobao.com/trade/itemlist/list_bought_items.htm' }
     this.emitStatus('正在打开订单详情页...')
+    debugLog(`[Taobao-Cart] runInHiddenWindow: detailUrl=${detailUrl}, cartOnly=${cartOnly}`)
 
-    this.cookieManager.resetToElectronSyncTimer()
-    await this.cookieManager.syncCookiesToElectron(this.getContext(), this.auth)
+    await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth, true)
+    await this.cookieManager.syncCookiesToElectron(this.getContext(), this.auth, true)
 
-    const shopWindow = this.windowManager.getShopWindow()
-    if (shopWindow && !shopWindow.isDestroyed()) {
-      shopWindow.close()
-      this.windowManager.setShopWindow(null)
+    await this.windowManager.closeShopWindow(async () => { await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth) })
+
+    // Create window first, then do session warmup before loading order detail page
+    const newShopWindow = new BrowserWindow({
+      width: WINDOW_SIZES.SHOP.width,
+      height: WINDOW_SIZES.SHOP.height,
+      show: false,
+      autoHideMenuBar: true,
+      icon: APP_ICON,
+      webPreferences: {
+        nodeIntegration: false,
+        contextIsolation: true,
+        sandbox: false,
+        backgroundThrottling: false,
+      },
+    })
+    this.windowManager.setShopWindow(newShopWindow)
+    setUserAgent(newShopWindow)
+    if (mainWindow) {
+      newShopWindow.setParentWindow(mainWindow)
     }
+
+    // Session warmup: navigate to taobao.com first to trigger cross-domain SSO token exchange.
+    // Without this, the order detail page (which requires full auth) may redirect to login
+    // even though cookies are present, because the new BrowserWindow hasn't completed SSO handshake.
+    try {
+      debugLog('[Taobao-Cart] Starting SSO warmup navigate to www.taobao.com')
+      await new Promise<void>((warmupResolve) => {
+        let done = false
+        const onDone = () => { if (!done) { done = true; warmupResolve() } }
+        setTimeout(onDone, 8000)
+        if (newShopWindow.isDestroyed()) { onDone(); return }
+        newShopWindow.webContents.once('did-finish-load', onDone)
+        newShopWindow.loadURL('https://www.taobao.com/')
+      })
+      if (!newShopWindow.isDestroyed()) {
+        debugLog('[Taobao-Cart] SSO warmup completed, syncing cookies from Electron')
+        await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth, true)
+      }
+    } catch (e: any) {
+      debugLog(`[Taobao-Cart] SSO warmup error: ${e.message || String(e)}`)
+    }
+
+    if (newShopWindow.isDestroyed()) {
+      return null
+    }
+
     return new Promise<AddToCartResult | null>((resolve) => {
       const lt = new ListenerTracker()
-      const newShopWindow = new BrowserWindow({
-        width: WINDOW_SIZES.SHOP.width,
-        height: WINDOW_SIZES.SHOP.height,
-        show: false,
-        autoHideMenuBar: true,
-        icon: APP_ICON,
-        webPreferences: {
-          nodeIntegration: false,
-          contextIsolation: true,
-          sandbox: false,
-          backgroundThrottling: false,
-        },
-      })
-      this.windowManager.setShopWindow(newShopWindow)
-      setUserAgent(newShopWindow)
-      if (mainWindow) {
-        newShopWindow.setParentWindow(mainWindow)
-      }
-      newShopWindow.loadURL(detailUrl)
+      newShopWindow.loadURL(detailUrl, detailUrlLoadOptions)
 
       newShopWindow.webContents.setWindowOpenHandler(({ url: openUrl }) => {
         return { action: 'allow', overrideBrowserWindowOptions: { show: false, webPreferences: { sandbox: false, contextIsolation: true, nodeIntegration: false, backgroundThrottling: false } } }
       })
 
       lt.on(newShopWindow.webContents, 'did-create-window', (newWindow) => {
+        debugLog('[Taobao-Cart] popup window created via click inside detail window')
         setUserAgent(newWindow)
         newWindow.setIcon(APP_ICON)
         this.windowManager.trackWindow(newWindow)
@@ -811,11 +869,22 @@ export class CartService {
 
         const handlePopupUrl = async (popupUrl: string) => {
           if (resolved) return
+          debugLog(`[Taobao-Cart] handlePopupUrl: ${popupUrl}`)
+
+          if (isErrorPage(popupUrl)) {
+            debugLog(`[Taobao-Cart] encountered error page: ${popupUrl}`)
+            this.windowManager.closeShopWindow()
+            this.emitStatus('⚠️ 商品页面无法访问，可能已下架或活动已结束')
+            doResolve({ success: false, error: '商品页面无法访问（跳转到了错误页面）' })
+            return
+          }
 
           if (isBuyPage(popupUrl)) {
+            debugLog(`[Taobao-Cart] buy page detected, directToPay flow: ${popupUrl}`)
             if (cartOnly) {
               this.windowManager.closeShopWindow(async () => { await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth) })
               this.emitStatus('该商品不支持加入购物车，点击后直接进入了结算页面')
+              debugLog('[Taobao-Cart] product does not support cart, directly entered buy page during cartOnly mode')
               doResolve({ success: false, error: '该商品不支持加入购物车，点击后直接进入了结算页面' })
               return
             }
@@ -837,6 +906,7 @@ export class CartService {
             return
           }
           if (isCartPage(popupUrl)) {
+            debugLog(`[Taobao-Cart] cart page detected, item added to cart successfully: ${popupUrl}`)
             const sw = this.windowManager.getShopWindow()
             if (sw && !sw.isDestroyed()) sw.hide()
             this.windowManager.setShopWindow(newWindow)
@@ -846,6 +916,7 @@ export class CartService {
             return
           }
           if (isIdentityVerifyPage(popupUrl)) {
+            debugLog(`[Taobao-Cart] security identity verification page detected: ${popupUrl}`)
             this.emitStatus('需要进行身份验证，请在弹出的窗口中完成验证...')
             newWindow.setSize(WINDOW_SIZES.SMALL.width, WINDOW_SIZES.SMALL.height)
             newWindow.setTitle('淘宝身份验证')
@@ -859,6 +930,7 @@ export class CartService {
             return
           }
           if (isLoginPage(popupUrl)) {
+            debugLog(`[Taobao-Cart] login page detected on popup, trying auto login: ${popupUrl}`)
             await this.verificationService.tryAutoLoginThenShow(newWindow)
             return
           }
@@ -965,8 +1037,10 @@ export class CartService {
                     return { clicked: false, matches: allMatches };
                   })()
                 `)
+                debugLog(`[Taobao-Cart] click buy button result: ${JSON.stringify(clickResult)}`)
 
                 if (cartOnly && !clickResult?.clicked) {
+                  debugLog('[Taobao-Cart] cartOnly button click failed')
                   this.windowManager.closeShopWindow(async () => { await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth) })
                   this.emitStatus('该商品不支持加入购物车（未找到加购按钮）')
                   doResolve({ success: false, error: '该商品不支持加入购物车（未找到加购按钮）' })
@@ -976,6 +1050,7 @@ export class CartService {
 
                 const currentPopupUrl = newWindow.webContents.getURL()
                 if (isIdentityVerifyPage(currentPopupUrl) || currentPopupUrl.includes('nocaptcha') || currentPopupUrl.includes('slider')) {
+                  debugLog(`[Taobao-Cart] security identity/captcha page detected: ${currentPopupUrl}`)
                   cleanupForCaptcha(newWindow)
                   newWindow.setSize(WINDOW_SIZES.CONFIRMATION.width, WINDOW_SIZES.CONFIRMATION.height)
                   newWindow.setTitle('淘宝安全验证')
@@ -983,6 +1058,8 @@ export class CartService {
                   if (newWindow.isMinimized()) {
                     newWindow.restore()
                   }
+                  injectOverlayBanner(newWindow, '🔐 自动购物助手：淘宝要求安全验证，请在下方拖动滑块完成验证')
+                  injectCenterToast(newWindow, '请拖动滑块完成验证')
                   newWindow.show()
                   newWindow.focus()
                   const verified = await this.interactionService.waitForUserConfirmation(
@@ -1100,6 +1177,8 @@ export class CartService {
                   if (newWindow.isMinimized()) {
                     newWindow.restore()
                   }
+                  injectOverlayBanner(newWindow, '🔐 自动购物助手：淘宝要求安全验证，请在下方拖动滑块完成验证')
+                  injectCenterToast(newWindow, '请拖动滑块完成验证')
                   newWindow.show()
                   newWindow.focus()
                   const captchaConfirmed = await this.interactionService.waitForUserConfirmation(
@@ -1216,6 +1295,7 @@ export class CartService {
                 } else if (!pageDiag.hasBuyBtn) {
                   fallbackReason = '页面上未找到可点击的购买按钮'
                 }
+                debugLog(`[Taobao-Cart] manual fallback required: fallbackReason="${fallbackReason}", pageDiag=${JSON.stringify(pageDiag)}`)
                 newWindow.setSize(WINDOW_SIZES.CONFIRMATION.width, WINDOW_SIZES.CONFIRMATION.height)
                 newWindow.setTitle('请手动完成购买操作')
                 const mw = this.windowManager.getMainWindow()
@@ -1521,13 +1601,14 @@ export class CartService {
       let sameUrlCount = 0
       let rebuyRetryCount = 0
       const MAX_REBUY_RETRIES = 3
+      const REBUY_TIMEOUT = 45000 // 提升至 45 秒，为用户处理滑块验证和页面载入留出足够时间
       const timeout = setTimeout(() => {
         if (!resolved) {
           doResolve(null)
           this.windowManager.closeShopWindow(async () => { await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth) })
-          this.emitStatus('操作超时')
+          this.emitStatus('⚠️ 再买一单操作超时，请尝试手动操作')
         }
-      }, TIMEOUTS.OPERATION)
+      }, REBUY_TIMEOUT)
 
       const checkOffShelf = async (win: BrowserWindow): Promise<string> => {
         try {
@@ -1881,6 +1962,13 @@ export class CartService {
         const url = sw?.webContents.getURL()
         if (!url) return
 
+        if (isErrorPage(url)) {
+          this.windowManager.closeShopWindow()
+          this.emitStatus('⚠️ 商品页面无法访问，可能已下架或活动已结束')
+          doResolve({ success: false, error: '商品页面无法访问（跳转到了错误页面）' })
+          return
+        }
+
         const hasCaptcha = await this.verificationService.detectCaptcha(sw!)
         if (hasCaptcha) {
           cleanupForCaptcha(sw!)
@@ -1890,6 +1978,8 @@ export class CartService {
           if (sw?.isMinimized()) {
             sw.restore()
           }
+          injectOverlayBanner(sw!, '🔐 自动购物助手：淘宝要求安全验证，请在下方拖动滑块完成验证')
+          injectCenterToast(sw!, '请拖动滑块完成验证')
           sw?.show()
           sw?.focus()
           this.emitStatus('需要进行滑块验证，请在弹出的窗口中完成验证...')
@@ -1985,16 +2075,16 @@ export class CartService {
           return
         }
         if (isLoginPage(url)) {
-          if (loginRetryCount < 1) {
+          if (loginRetryCount < 2) {
             loginRetryCount++
             this.emitStatus('检测到登录页面，正在重新同步登录状态...')
-            this.cookieManager.resetToElectronSyncTimer()
-            await this.cookieManager.syncCookiesToElectron(this.getContext(), this.auth)
+            await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth, true)
+            await this.cookieManager.syncCookiesToElectron(this.getContext(), this.auth, true)
             await humanDelay(500)
-            sw?.loadURL(detailUrl)
+            if (sw && !sw.isDestroyed()) sw.loadURL(detailUrl, detailUrlLoadOptions)
             return
           }
-          this.windowManager.closeShopWindow(async () => { await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth) })
+          this.windowManager.closeShopWindow()
           this.emitStatus('登录已过期，请重新登录')
           doResolve({ success: false, error: '登录已过期' })
           return
@@ -2291,6 +2381,13 @@ export class CartService {
         if (!sw || sw.isDestroyed()) return
         const url = sw.webContents.getURL()
 
+        if (isErrorPage(url)) {
+          this.windowManager.closeShopWindow()
+          this.emitStatus('⚠️ 商品页面无法访问，可能已下架或活动已结束')
+          doResolve({ success: false, error: '商品页面无法访问（跳转到了错误页面）' })
+          return
+        }
+
         if (isBuyPage(url)) {
           await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth)
           if (cartOnly) {
@@ -2364,16 +2461,16 @@ export class CartService {
           return
         }
         if (isLoginPage(url)) {
-          if (loginRetryCount < 1) {
+          if (loginRetryCount < 2) {
             loginRetryCount++
             this.emitStatus('检测到登录页面，正在重新同步登录状态...')
-            this.cookieManager.resetToElectronSyncTimer()
-            await this.cookieManager.syncCookiesToElectron(this.getContext(), this.auth)
+            await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth, true)
+            await this.cookieManager.syncCookiesToElectron(this.getContext(), this.auth, true)
             await humanDelay(500)
-            sw.loadURL(detailUrl)
+            if (sw && !sw.isDestroyed()) sw.loadURL(detailUrl, detailUrlLoadOptions)
             return
           }
-          this.windowManager.closeShopWindow(async () => { await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth) })
+          this.windowManager.closeShopWindow()
           this.emitStatus('登录已过期，请重新登录')
           doResolve({ success: false, error: '登录已过期' })
           return
@@ -2554,6 +2651,8 @@ export class CartService {
             if (sw.isMinimized()) {
               sw.restore()
             }
+            injectOverlayBanner(sw, '🔐 自动购物助手：淘宝要求安全验证，请在下方拖动滑块完成验证')
+            injectCenterToast(sw, '请拖动滑块完成验证')
             sw.show()
             sw.focus()
             this.emitStatus('需要进行滑块验证，请在弹出的窗口中完成验证...')
@@ -2638,16 +2737,16 @@ export class CartService {
           }
 
           if (isLoginPage(url)) {
-            if (loginRetryCount < 1) {
+            if (loginRetryCount < 2) {
               loginRetryCount++
               this.emitStatus('检测到登录页面，正在重新同步登录状态...')
-              this.cookieManager.resetToElectronSyncTimer()
-              await this.cookieManager.syncCookiesToElectron(this.getContext(), this.auth)
+              await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth, true)
+              await this.cookieManager.syncCookiesToElectron(this.getContext(), this.auth, true)
               await humanDelay(500)
-              sw.loadURL(detailUrl)
+              if (sw && !sw.isDestroyed()) sw.loadURL(detailUrl, detailUrlLoadOptions)
               return
             }
-            this.windowManager.closeShopWindow(async () => { await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth) })
+            this.windowManager.closeShopWindow()
             this.emitStatus('登录已过期，请重新登录')
             doResolve({ success: false, error: '登录已过期' })
             return

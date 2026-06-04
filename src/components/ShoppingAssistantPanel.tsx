@@ -1,6 +1,8 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { api } from '../lib/api'
 import type { ItemResult } from '../../shared/types/task.types'
+import type { ParsedShoppingItem } from '../../shared/types/platform.types'
+
 
 type AmbiguityLevel = 'none' | 'low' | 'high'
 
@@ -54,6 +56,7 @@ interface Task {
 
 interface ShoppingAssistantPanelProps {
   preview: TaskPreview | null
+  previewLoading?: boolean
   activeTaskId: number | null
   tasks: Task[]
   onConfirm: (instruction: string, items: PreviewItem[], dryRun?: boolean, paymentMode?: string, platform?: string) => Promise<void>
@@ -180,10 +183,76 @@ function deduplicateLogs(logs: string[]): { originalIndex: number }[] {
   return result
 }
 
+interface LoadingContentProps {
+  instruction?: string
+}
+
+function LoadingContent({ instruction }: LoadingContentProps) {
+  const [phaseIndex, setPhaseIndex] = useState(0)
+  const phases = [
+    '🔍 正在提取商品名称与购买数量...',
+    '🧠 正在检索您的历史复购商品数据库...',
+    '🛍️ 正在与各平台匹配最精准的商品规格...',
+    '⚡ 正在计算最优组合及价格预算...',
+    '✨ 正在为您生成最终的确认清单...'
+  ]
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setPhaseIndex((prev) => (prev < phases.length - 1 ? prev + 1 : prev))
+    }, 1200)
+    return () => clearInterval(timer)
+  }, [])
+
+  return (
+    <div className="flex-1 flex flex-col p-5 space-y-5 overflow-y-auto">
+      {/* 炫彩极光 AI 呼吸卡片 */}
+      <div className="p-5 rounded-xl bg-gradient-to-tr from-blue-500 via-indigo-500 to-purple-600 text-white shadow-md animate-aurora relative overflow-hidden">
+        {/* 装饰性底层背景 */}
+        <div className="absolute inset-0 bg-black/10 mix-blend-overlay" />
+        <div className="relative z-10 space-y-3">
+          <div className="flex items-center gap-2">
+            <span className="text-lg">✨</span>
+            <span className="text-xs font-semibold tracking-wider uppercase opacity-90">AI 智能提取助手</span>
+          </div>
+          <h4 className="text-base font-semibold leading-relaxed line-clamp-2">
+            “{instruction}”
+          </h4>
+          <div className="pt-1 flex items-center gap-2 text-xs font-mono text-white/95">
+            <span className="w-2.5 h-2.5 bg-green-400 rounded-full animate-ping" />
+            <span className="font-sans font-medium transition-all duration-300">
+              {phases[phaseIndex]}
+            </span>
+          </div>
+        </div>
+      </div>
+
+      {/* 骨架屏占位 */}
+      <div className="space-y-3">
+        <p className="text-xs font-medium text-gray-400">即将为您呈现匹配结果：</p>
+        {[1, 2].map((i) => (
+          <div key={i} className="flex items-center gap-3 p-3 rounded-lg border border-gray-100 bg-white shadow-sm animate-pulse">
+            <div className="w-10 h-10 rounded-md bg-gray-200 flex-shrink-0" />
+            <div className="flex-1 min-w-0 space-y-2">
+              <div className="h-4 bg-gray-200 rounded w-3/4" />
+              <div className="flex items-center gap-1.5">
+                <div className="h-3.5 bg-gray-100 rounded w-16" />
+                <div className="h-3.5 bg-gray-100 rounded w-12" />
+              </div>
+            </div>
+            <div className="w-12 h-6 bg-gray-100 rounded-md flex-shrink-0" />
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 type PanelMode = 'preview' | 'progress'
 
 export default function ShoppingAssistantPanel({
   preview,
+  previewLoading = false,
   activeTaskId,
   tasks,
   onConfirm,
@@ -534,18 +603,34 @@ export default function ShoppingAssistantPanel({
       const candidates = item.candidates || []
       const hasCandidates = candidates.length > 1
       const ambiguityLevel = item.ambiguityLevel || 'none'
-      const visibleCandidates = isExpanded ? candidates : candidates.slice(0, 5)
-      const hasMore = candidates.length > 5
+      const COLLAPSE_THRESHOLD = 3
+      const needsCollapse = candidates.length > COLLAPSE_THRESHOLD
+      const visibleCandidates = (!needsCollapse || isExpanded) ? candidates : candidates.slice(0, COLLAPSE_THRESHOLD)
       const totalCount = item.totalMatchCount || candidates.length
+
+      const currentRef = item.orderRef
+      const currentCandidate = candidates.find(c => c.id === currentRef) || candidates[0]
+      let currentScore = currentCandidate?.matchScore || 0
+      if (currentCandidate && currentCandidate.matchScore === undefined) {
+        if (item.matchMethod === 'exact') currentScore = 95
+        else if (item.matchMethod === 'llm_direct') currentScore = 90
+        else if (item.matchMethod === 'fuzzy') currentScore = 75
+      }
+      const isHighConfidence = item.matched && currentScore >= 90
+      const isMediumConfidence = item.matched && currentScore >= 70 && currentScore < 90
 
       return (
         <div
           key={index}
-          className={`rounded-lg border p-3 transition-colors ${
+          className={`rounded-lg border p-3 transition-all duration-200 ${
             item.matched
-              ? ambiguityLevel === 'high' && hasCandidates
-                ? 'border-amber-200 bg-amber-50/30'
-                : 'border-green-200 bg-green-50/40'
+              ? isHighConfidence
+                ? 'border-emerald-300 bg-gradient-to-br from-emerald-50/50 via-green-50/20 to-white shadow-sm shadow-emerald-500/5 hover:shadow-md'
+                : isMediumConfidence
+                  ? 'border-blue-200 bg-gradient-to-br from-blue-50/30 via-indigo-50/10 to-white shadow-sm shadow-blue-500/5 hover:shadow-md'
+                  : ambiguityLevel === 'high' && hasCandidates
+                    ? 'border-amber-200 bg-amber-50/30'
+                    : 'border-green-200 bg-green-50/40'
               : 'border-gray-200 bg-gray-50/40'
           }`}
         >
@@ -581,8 +666,29 @@ export default function ShoppingAssistantPanel({
               </div>
               {item.matched ? (
                 <div className="mt-1">
-                  <p className="text-sm font-medium text-gray-900 truncate">{item.matchedProduct}</p>
+                  <p className={`text-sm truncate flex items-center gap-1 ${
+                    isHighConfidence ? 'font-semibold text-gray-900' : 'font-medium text-gray-900'
+                  }`}>
+                    {isHighConfidence && <span className="text-emerald-600 text-xs select-none">🏆 首选</span>}
+                    {isMediumConfidence && <span className="text-blue-500 text-xs select-none">✨</span>}
+                    <span>{item.matchedProduct}</span>
+                  </p>
                   <div className="flex items-center flex-wrap gap-1.5 mt-1">
+                    {currentScore > 0 && (
+                      isHighConfidence ? (
+                        <span className="inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full text-[10px] font-bold bg-gradient-to-r from-emerald-500 to-teal-600 text-white shadow-sm shadow-emerald-500/20">
+                          🔥 极高匹配 {currentScore}%
+                        </span>
+                      ) : isMediumConfidence ? (
+                        <span className="inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-gradient-to-r from-blue-500 to-indigo-500 text-white shadow-sm shadow-blue-500/20">
+                          ✨ 高度相关 {currentScore}%
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium bg-gray-100 text-gray-700 border border-gray-200">
+                          相似 {currentScore}%
+                        </span>
+                      )
+                    )}
                     {platformInfo && (
                       <span className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-xs font-medium ${platformInfo.bg} ${platformInfo.color}`}>
                         {platformInfo.icon} {platformInfo.label}
@@ -599,12 +705,12 @@ export default function ShoppingAssistantPanel({
                   </div>
                   {hasCandidates && (
                     <div className="mt-2">
-                      {ambiguityLevel === 'high' && (
+                      {ambiguityLevel === 'high' && needsCollapse && !isExpanded && (
                         <span className="text-xs text-amber-600 font-medium">⚠️ 存在多个不同匹配，请确认选择</span>
                       )}
-                      {ambiguityLevel === 'low' && !isExpanded && (
+                      {needsCollapse && !isExpanded && (
                         <button onClick={() => toggleExpand(index)} className="text-xs text-blue-500 hover:text-blue-600 mb-1.5">
-                          ▼ 还有 {candidates.length - 1} 个可选订单
+                          ▼ 还有 {candidates.length - COLLAPSE_THRESHOLD} 个可选订单
                         </button>
                       )}
                       <div className="space-y-1 mt-1">
@@ -616,6 +722,19 @@ export default function ShoppingAssistantPanel({
                           const dateStr = purchaseDate && !isNaN(purchaseDate.getTime())
                             ? `${purchaseDate.getFullYear()}/${purchaseDate.getMonth() + 1}/${purchaseDate.getDate()}`
                             : ''
+                          let candidateScore = candidate.matchScore || 0
+                          if (candidate.matchScore === undefined) {
+                            if (isSelected) {
+                              if (item.matchMethod === 'exact') candidateScore = 95
+                              else if (item.matchMethod === 'llm_direct') candidateScore = 90
+                              else if (item.matchMethod === 'fuzzy') candidateScore = 75
+                            } else {
+                              candidateScore = 60
+                            }
+                          }
+                          const isCandidateHigh = candidateScore >= 90
+                          const isCandidateMedium = candidateScore >= 70 && candidateScore < 90
+
                           return (
                             <button
                               key={candidate.id}
@@ -628,8 +747,12 @@ export default function ShoppingAssistantPanel({
                                   name: candidate.productName, platform: candidate.platform,
                                 })
                               }}
-                              className={`w-full text-left px-2 py-1.5 rounded-md transition-colors flex items-center gap-2 ${
-                                isSelected ? 'bg-blue-50 border border-blue-200' : 'bg-white border border-gray-100 hover:border-blue-200 hover:bg-blue-50/50'
+                              className={`w-full text-left px-2 py-1.5 rounded-md transition-all duration-150 flex items-center gap-2 ${
+                                isSelected
+                                  ? isCandidateHigh
+                                    ? 'bg-emerald-50/60 border border-emerald-300 ring-1 ring-emerald-500/10'
+                                    : 'bg-blue-50 border border-blue-200'
+                                  : 'bg-white border border-gray-100 hover:border-blue-200 hover:bg-blue-50/50'
                               }`}
                             >
                               {candidate.imageUrl && (
@@ -637,11 +760,15 @@ export default function ShoppingAssistantPanel({
                                   onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
                               )}
                               <div className="min-w-0 flex-1">
-                                <p className={`text-xs font-medium truncate ${isSelected ? 'text-blue-700' : 'text-gray-800'}`}>
+                                <p className={`text-xs truncate ${
+                                  isSelected
+                                    ? isCandidateHigh ? 'text-emerald-700 font-semibold' : 'text-blue-700 font-medium'
+                                    : 'text-gray-800 font-medium'
+                                }`}>
                                   {candidate.productName}
                                 </p>
                                 <div className="flex items-center gap-2 mt-0.5">
-                                  {candidate.price > 0 && <span className="text-xs text-gray-400">¥{candidate.price.toFixed(2)}</span>}
+                                  {candidate.price > 0 && <span className="text-xs text-gray-500 font-medium">¥{candidate.price.toFixed(2)}</span>}
                                   {candidatePlatformInfo && (
                                     <span className={`inline-flex items-center gap-0.5 px-1 py-0.5 rounded text-xs font-medium ${candidatePlatformInfo.bg} ${candidatePlatformInfo.color}`}>
                                       {candidatePlatformInfo.icon} {candidatePlatformInfo.label}
@@ -650,11 +777,32 @@ export default function ShoppingAssistantPanel({
                                   {dateStr && <span className="text-xs text-gray-300">{dateStr}</span>}
                                 </div>
                               </div>
-                              {isSelected && <span className="text-xs text-blue-500 flex-shrink-0">✓</span>}
+                              <div className="flex items-center gap-1.5 flex-shrink-0">
+                                {candidateScore > 0 && (
+                                  isCandidateHigh ? (
+                                    <span className="text-[9px] font-bold text-emerald-600 bg-emerald-50 px-1 py-0.5 rounded border border-emerald-200 select-none">
+                                      🔥 {candidateScore}%
+                                    </span>
+                                  ) : isCandidateMedium ? (
+                                    <span className="text-[9px] font-semibold text-blue-600 bg-blue-50 px-1 py-0.5 rounded border border-blue-200 select-none">
+                                      ✨ {candidateScore}%
+                                    </span>
+                                  ) : (
+                                    <span className="text-[9px] text-gray-500 bg-gray-50 px-1 py-0.5 rounded border border-gray-100 select-none">
+                                      {candidateScore}%
+                                    </span>
+                                  )
+                                )}
+                                {isSelected && (
+                                  <span className={`text-xs flex-shrink-0 ${
+                                    isCandidateHigh ? 'text-emerald-600 font-bold' : 'text-blue-500'
+                                  }`}>✓</span>
+                                )}
+                              </div>
                             </button>
                           )
                         })}
-                        {hasMore && (
+                        {needsCollapse && (
                           <button onClick={() => toggleExpand(index)} className="text-xs text-blue-500 hover:text-blue-600 w-full text-center py-1">
                             {isExpanded ? '收起' : `查看全部 ${candidates.length} 条订单`}
                           </button>
@@ -820,6 +968,13 @@ export default function ShoppingAssistantPanel({
       return []
     })()
 
+    const parsedItems: ParsedShoppingItem[] = (() => {
+      try {
+        if (activeTask.parsedItems) return JSON.parse(activeTask.parsedItems)
+      } catch { /* ignore */ }
+      return []
+    })()
+
     const isRunning = activeTask.status === 'running'
     const isTerminal = ['success', 'failed', 'cancelled', 'partial'].includes(activeTask.status)
     const hasProgressLog = safeProgressLog.length > 0
@@ -841,42 +996,58 @@ export default function ShoppingAssistantPanel({
       return 'add-to-cart' as const
     })()
 
-    const sceneLabels: Record<string, { noun: string; action: string; reopenBtn: string; confirmBtn: string; failBtn: string; closedTitle: string; closedHint: string; openTitle: string; openHint: string }> = {
-      'verification': {
-        noun: '验证',
-        action: '完成验证',
-        reopenBtn: '🪟 重新打开验证窗口',
-        confirmBtn: '✓ 我已完成验证',
-        failBtn: '✗ 无法完成验证',
-        closedTitle: '验证窗口已关闭',
-        closedHint: '如需继续验证，请点击"重新打开验证窗口"；如无法完成验证，请点击"无法完成验证"取消当前任务',
-        openTitle: '请在弹出的窗口中完成验证',
-        openHint: '系统已打开验证窗口，请在窗口中拖动滑块完成验证后点击下方按钮继续',
-      },
-      'add-to-cart': {
-        noun: '购买',
-        action: '完成购买',
-        reopenBtn: '🪟 重新打开商品页面',
-        confirmBtn: '✓ 我已完成购买',
-        failBtn: '✗ 商品无法购买',
-        closedTitle: '商品页面已关闭',
-        closedHint: '如需继续购买，请点击"重新打开商品页面"；如商品无法购买，请点击"商品无法购买"取消当前任务',
-        openTitle: '请在弹出的窗口中选择规格并购买',
-        openHint: '系统已打开商品页面，请在窗口中选择规格并加入购物车后点击下方按钮继续',
-      },
-      'payment': {
-        noun: '支付',
-        action: '完成支付',
-        reopenBtn: '🪟 重新打开支付页面',
-        confirmBtn: '✓ 我已完成支付',
-        failBtn: '✗ 支付遇到问题',
-        closedTitle: '支付页面已关闭',
-        closedHint: '如需继续支付，请点击"重新打开支付页面"；如支付遇到问题，请点击"支付遇到问题"取消当前任务',
-        openTitle: '请在弹出的窗口中完成支付',
-        openHint: '系统已打开支付页面，请在窗口中确认金额并完成支付后点击下方按钮继续',
-      },
+    const getSceneLabels = (scene: 'verification' | 'add-to-cart' | 'payment', payMode: string = 'cart_only', cannotRestore: boolean = false) => {
+      const config = {
+        'verification': {
+          noun: '验证',
+          action: '完成验证',
+          reopenBtn: '🪟 重新打开验证窗口',
+          confirmBtn: '✓ 我已完成验证',
+          failBtn: '✗ 无法完成验证',
+          closedTitle: '验证窗口已关闭',
+          closedHint: '如需继续验证，请点击"重新打开验证窗口"；如无法完成验证，请点击"无法完成验证"取消当前任务',
+          openTitle: '请在弹出的窗口中完成验证',
+          openHint: '系统已打开验证窗口，请在窗口中拖动滑块完成验证后点击下方按钮继续',
+        },
+        'add-to-cart': {
+          noun: payMode === 'cart_only' ? '加购' : payMode === 'auto_pay' ? '规格选择' : '购买',
+          action: payMode === 'cart_only' ? '完成加购' : payMode === 'auto_pay' ? '完成规格选择' : '完成加购',
+          reopenBtn: '🪟 重新打开商品页面',
+          confirmBtn: payMode === 'cart_only' ? '✓ 我已完成加购' : payMode === 'auto_pay' ? '✓ 我已选好规格并加购' : '✓ 我已选好规格并加购',
+          closedTitle: '商品页面已关闭',
+          closedHint: cannotRestore
+            ? '由于该商品结算页面已失效且无法恢复，当前任务已自动取消。请重新下单'
+            : '如需继续购买，请点击"重新打开商品页面"；如商品无法购买，请点击"商品无法购买"取消当前任务',
+          openTitle: payMode === 'cart_only' ? '请在弹出的窗口中选择规格并加购' : payMode === 'auto_pay' ? '请在弹出的窗口中选择规格并加入购物车' : '请在弹出的窗口中选择规格',
+          openHint: payMode === 'cart_only'
+            ? '系统已打开商品页面，请在窗口中选择规格并加入购物车，随后点击下方按钮继续'
+            : payMode === 'auto_pay'
+              ? '系统已打开商品页面，请在窗口中选择规格并加入购物车，随后系统将自动为您提交并支付'
+              : '系统已打开商品页面，请在窗口中选择规格并加入购物车，系统将自动进入结算页继续',
+        },
+        'payment': {
+          noun: '支付',
+          action: '完成支付',
+          reopenBtn: '🪟 重新打开支付页面',
+          confirmBtn: '✓ 我已完成支付',
+          failBtn: '✗ 支付遇到问题',
+          closedTitle: '支付页面已关闭',
+          closedHint: cannotRestore
+            ? '由于该支付页面已失效且无法恢复，当前任务已自动取消。请重新下单'
+            : '如需继续支付，请点击"重新打开支付页面"；如支付遇到问题，请点击"支付遇到问题"取消当前任务',
+          openTitle: '请在弹出的窗口中完成支付',
+          openHint: '系统已打开支付页面，请在窗口中确认金额并完成支付后点击下方按钮继续',
+        }
+      }
+      return config[scene]
     }
-    const labels = sceneLabels[sceneFromLog]
+
+    const currentPayMode = activeTask.paymentMode || paymentMode || 'cart_only'
+    const isCannotRestore = safeProgressLog.some(msg =>
+      typeof msg === 'string' &&
+      (msg.includes('无法恢复') || msg.includes('无法重新打开') || msg.includes('已失效'))
+    )
+    const labels = getSceneLabels(sceneFromLog, currentPayMode, isCannotRestore)
 
     let itemResults: ItemResult[] = safeItemResults
 
@@ -932,24 +1103,26 @@ export default function ShoppingAssistantPanel({
               </div>
             )}
             <div className="flex items-center gap-2">
-              {isWindowClosed && (
+              {!isCannotRestore && isWindowClosed && (
                 <button onClick={handleReopenWindowClick} disabled={confirmActionStatus === 'loading'}
                   className="px-3 py-1.5 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors">
                   {labels.reopenBtn}
                 </button>
               )}
-              <button onClick={handleConfirmActionClick} disabled={confirmActionStatus !== 'idle'}
-                className="px-3 py-1.5 text-sm font-medium text-white bg-green-600 rounded-lg hover:bg-green-700 transition-colors">
-                {confirmActionStatus === 'loading' ? (
-                  <span className="flex items-center gap-1.5">
-                    <span className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                    处理中...
-                  </span>
-                ) : confirmActionStatus === 'success' ? '✅ 已确认' : labels.confirmBtn}
-              </button>
+              {!isCannotRestore && (
+                <button onClick={handleConfirmActionClick} disabled={confirmActionStatus !== 'idle'}
+                  className="px-3 py-1.5 text-sm font-medium text-white bg-green-600 rounded-lg hover:bg-green-700 transition-colors">
+                  {confirmActionStatus === 'loading' ? (
+                    <span className="flex items-center gap-1.5">
+                      <span className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                      处理中...
+                    </span>
+                  ) : confirmActionStatus === 'success' ? '✅ 已确认' : labels.confirmBtn}
+                </button>
+              )}
               <button onClick={handleRejectActionClick} disabled={confirmActionStatus === 'loading' || confirmActionStatus === 'success'}
                 className="px-3 py-1.5 text-sm font-medium text-white bg-red-500 rounded-lg hover:bg-red-600 transition-colors">
-                {labels.failBtn}
+                {isCannotRestore ? '确认关闭任务' : labels.failBtn}
               </button>
             </div>
           </div>
@@ -1074,15 +1247,57 @@ export default function ShoppingAssistantPanel({
                 const errCat = item.status === 'failed' ? categorizeError(item.error) : null
                 const retryable = errCat ? errorRetryable[errCat] : false
                 const candidates = item.pendingConfirmationId ? candidatesMap[item.pendingConfirmationId] : undefined
+                
+                const matchedParsedItem = parsedItems.find(pi => pi.name === item.name)
+                let currentScore = 0
+                if (matchedParsedItem) {
+                  const targetOrderId = item.orderId || matchedParsedItem.orderRef
+                  const match = matchedParsedItem.matchedOrders?.find(m => m.orderRef === targetOrderId)
+                  currentScore = match?.confidence || 0
+                  if (currentScore === 0) {
+                    if (item.status === 'success') currentScore = 95
+                    else currentScore = 90
+                  }
+                }
+                const isHighConfidence = currentScore >= 90
+                const isMediumConfidence = currentScore >= 70 && currentScore < 90
+
                 return (
                   <div key={i}>
-                    <div className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm ${
-                      item.status === 'success' ? 'bg-green-50 text-green-700' :
-                      item.status === 'pending' ? 'bg-amber-50 text-amber-600' :
-                      'bg-red-50 text-red-600'
+                    <div className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm transition-all duration-200 ${
+                      item.status === 'success'
+                        ? isHighConfidence
+                          ? 'bg-gradient-to-r from-emerald-50/70 via-green-50/50 to-white text-emerald-800 border border-emerald-200 shadow-sm shadow-emerald-500/5'
+                          : isMediumConfidence
+                            ? 'bg-gradient-to-r from-blue-50/70 via-indigo-50/50 to-white text-blue-800 border border-blue-200 shadow-sm shadow-blue-500/5'
+                            : 'bg-green-50 text-green-700'
+                        : item.status === 'pending'
+                          ? 'bg-amber-50 text-amber-600'
+                          : 'bg-red-50 text-red-600'
                     }`}>
                       <span>{item.status === 'success' ? '✓' : item.status === 'pending' ? '⏳' : '✗'}</span>
-                      <span className="truncate flex-1">{item.name} x{item.quantity}</span>
+                      <span className={`truncate flex-1 flex items-center gap-1 ${
+                        item.status === 'success' && isHighConfidence ? 'font-medium' : ''
+                      }`}>
+                        {item.status === 'success' && isHighConfidence && <span className="text-xs select-none">🏆</span>}
+                        {item.status === 'success' && isMediumConfidence && <span className="text-xs select-none">✨</span>}
+                        <span>{item.name} x{item.quantity}</span>
+                      </span>
+                      {item.status === 'success' && currentScore > 0 && (
+                        isHighConfidence ? (
+                          <span className="text-[9px] font-bold text-emerald-600 bg-emerald-50 px-1 py-0.5 rounded border border-emerald-200 select-none flex-shrink-0">
+                            🔥 {currentScore}%
+                          </span>
+                        ) : isMediumConfidence ? (
+                          <span className="text-[9px] font-semibold text-blue-600 bg-blue-50 px-1 py-0.5 rounded border border-blue-200 select-none flex-shrink-0">
+                            ✨ {currentScore}%
+                          </span>
+                        ) : (
+                          <span className="text-[9px] text-gray-500 bg-gray-50 px-1 py-0.5 rounded border border-gray-100 select-none flex-shrink-0">
+                            {currentScore}%
+                          </span>
+                        )
+                      )}
                       {item.status === 'pending' && item.currentPrice && item.currentPrice > 0 && item.lastPrice && item.lastPrice > 0 && (
                         <span className="text-xs text-amber-500 flex-shrink-0">
                           ¥{item.currentPrice.toFixed(2)}
@@ -1276,17 +1491,19 @@ export default function ShoppingAssistantPanel({
     )
   }
 
-  const headerConfig = mode === 'preview'
-    ? { icon: '🔍', title: '解析结果', color: 'blue' }
-    : activeTask?.status === 'success'
-      ? { icon: '✅', title: '购买结果', color: 'green' }
-      : activeTask?.status === 'failed'
-        ? { icon: '❌', title: '购买结果', color: 'red' }
-        : activeTask?.status === 'partial'
-          ? { icon: '⚠️', title: '待处理', color: 'amber' }
-          : activeTask?.status === 'running'
-            ? { icon: '⚙️', title: '正在执行', color: 'blue', running: true }
-            : { icon: '🛒', title: '购物助手', color: 'blue' }
+  const headerConfig = previewLoading
+    ? { icon: '✨', title: 'AI 智能解析', color: 'blue', running: true }
+    : mode === 'preview'
+      ? { icon: '🔍', title: '解析结果', color: 'blue' }
+      : activeTask?.status === 'success'
+        ? { icon: '✅', title: '购买结果', color: 'green' }
+        : activeTask?.status === 'failed'
+          ? { icon: '❌', title: '购买结果', color: 'red' }
+          : activeTask?.status === 'partial'
+            ? { icon: '⚠️', title: '待处理', color: 'amber' }
+            : activeTask?.status === 'running'
+              ? { icon: '⚙️', title: '正在执行', color: 'blue', running: true }
+              : { icon: '🛒', title: '购物助手', color: 'blue' }
 
   return (
     <>
@@ -1322,7 +1539,7 @@ export default function ShoppingAssistantPanel({
                 <div className="w-1.5 h-1.5 bg-blue-500 rounded-full animate-pulse-dot" style={{ animationDelay: '0.6s' }} />
               </div>
             )}
-            {mode === 'preview' && preview && (
+            {mode === 'preview' && preview && !previewLoading && (
               <div className="flex items-center gap-1.5 text-sm ml-2">
                 {preview.items.filter(i => i.matched).length > 0 && (
                   <span className="px-2 py-0.5 rounded-full bg-green-100 text-green-700 font-medium text-xs">
@@ -1344,7 +1561,7 @@ export default function ShoppingAssistantPanel({
           </button>
         </div>
 
-        {mode === 'preview' && preview && (
+        {mode === 'preview' && preview && !previewLoading && (
           <div className="px-5 py-2 border-b border-gray-100 bg-gray-50/50 flex-shrink-0">
             <div className="flex items-center gap-2">
               <p className="text-sm text-blue-600">指令：{preview.instruction}</p>
@@ -1365,7 +1582,11 @@ export default function ShoppingAssistantPanel({
           </div>
         )}
 
-        {mode === 'preview' ? renderPreviewContent() : renderProgressContent()}
+        {previewLoading
+          ? <LoadingContent instruction={preview?.instruction} />
+          : mode === 'preview'
+            ? renderPreviewContent()
+            : renderProgressContent()}
       </div>
     </>
   )

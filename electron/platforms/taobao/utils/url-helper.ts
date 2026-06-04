@@ -60,3 +60,14 @@ export function isDisposableUrl(url: string): boolean {
   if (url.includes('buy.taobao.com') || url.includes('buy.tmall.com')) return true
   return false
 }
+
+export function isErrorPage(url: string): boolean {
+  if (!url) return false
+  if (url.includes('index_error.html')) return true
+  if (url.includes('error.html')) return true
+  if (url.includes('huodong.m.taobao.com/hd/')) return true
+  if (url.includes('page_not_found')) return true
+  if (url.includes('item-not-found')) return true
+  if (url.includes('notfound')) return true
+  return false
+}

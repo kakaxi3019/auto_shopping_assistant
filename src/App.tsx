@@ -4,7 +4,6 @@ import Dashboard from './components/Dashboard'
 import ShoppingInput from './components/ShoppingInput'
 import TaskList from './components/TaskList'
 import ShoppingAssistantPanel from './components/ShoppingAssistantPanel'
-import ToastProvider from './components/ToastProvider'
 import ErrorBoundary from './components/ErrorBoundary'
 import { useTasks } from './hooks/useTasks'
 import { api } from './lib/api'
@@ -26,7 +25,7 @@ export default function App() {
     deleteTask, deleteTasks, clearHistory,
     preview, previewLoading, previewTask, confirmTask, cancelPreview,
     updatePreviewItem, removePreviewItem,
-    activeTaskId, panelOpen, closePanel, openTaskPanel, recentSuggestions } = useTasks()
+    activeTaskId, panelOpen, closePanel, openPreviewPanel, openTaskPanel, recentSuggestions } = useTasks()
 
   const handleReExecute = useCallback(async (task: { instruction: string; parsedItems: string; paymentMode?: string }) => {
     try {
@@ -122,7 +121,7 @@ export default function App() {
 
   return (
     <ErrorBoundary>
-      <ToastProvider>
+      <>
         <Layout currentPage={page} onNavigate={setPage} mainRef={mainRef} onScrollStateChange={(scrolled) => setScrolledDown(scrolled && page === 'shopping')}>
           {!backendReady && (
             <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg text-sm text-blue-700 flex items-center gap-2" role="status" aria-live="polite">
@@ -135,6 +134,7 @@ export default function App() {
         {panelOpen && (
           <ShoppingAssistantPanel
             preview={preview}
+            previewLoading={previewLoading}
             activeTaskId={activeTaskId}
             tasks={tasks}
             onConfirm={confirmTask}
@@ -149,33 +149,61 @@ export default function App() {
             onCancelTask={cancelTask}
           />
         )}
-        {scrolledDown && (() => {
-          const hasAssistantButton = !panelOpen && activeTaskId && tasks.some(t => t.id === activeTaskId && (t.status === 'running' || t.status === 'partial'))
+        {(() => {
+          const isTaskRunning = !panelOpen && activeTaskId && tasks.some(t => t.id === activeTaskId && (t.status === 'running' || t.status === 'partial'))
+          const showAssistantButton = !panelOpen && (isTaskRunning || previewLoading || preview !== null)
+
+          const buttonConfig = (() => {
+            if (previewLoading) {
+              return {
+                text: 'AI 正在解析指令...',
+                dotClass: 'bg-indigo-400 animate-pulse',
+                onClick: openPreviewPanel
+              }
+            }
+            if (preview !== null) {
+              return {
+                text: '解析就绪，请确认',
+                dotClass: 'bg-green-400 animate-bounce',
+                onClick: openPreviewPanel
+              }
+            }
+            return {
+              text: '购物助手',
+              dotClass: 'bg-green-400 animate-pulse',
+              onClick: () => openTaskPanel(activeTaskId!)
+            }
+          })()
+
           return (
-            <button
-              onClick={() => mainRef.current?.scrollTo({ top: 0, behavior: 'smooth' })}
-              className={`fixed bottom-6 z-40 flex items-center justify-center w-11 h-11 bg-white text-gray-600 rounded-full shadow-lg border border-gray-200 hover:bg-gray-50 hover:text-gray-900 transition-all hover:scale-105 active:scale-95 ${hasAssistantButton ? 'left-64' : 'right-6'}`}
-              aria-label="回到输入框"
-            >
-              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M5 15l7-7 7 7" />
-              </svg>
-            </button>
+            <>
+              {scrolledDown && (
+                <button
+                  onClick={() => mainRef.current?.scrollTo({ top: 0, behavior: 'smooth' })}
+                  className={`fixed bottom-6 z-40 flex items-center justify-center w-11 h-11 bg-white text-gray-600 rounded-full shadow-lg border border-gray-200 hover:bg-gray-50 hover:text-gray-900 transition-all hover:scale-105 active:scale-95 ${showAssistantButton ? 'left-64' : 'right-6'}`}
+                  aria-label="回到输入框"
+                >
+                  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M5 15l7-7 7 7" />
+                  </svg>
+                </button>
+              )}
+              {showAssistantButton && (
+                <button
+                  onClick={buttonConfig.onClick}
+                  className="fixed bottom-6 right-6 z-40 flex items-center gap-1.5 px-4 py-3 bg-blue-600 text-white rounded-full shadow-lg hover:bg-blue-700 transition-all hover:scale-105 active:scale-95 group"
+                >
+                  <span className={`w-2 h-2 rounded-full ${buttonConfig.dotClass}`} />
+                  <span className="text-sm font-medium">{buttonConfig.text}</span>
+                  <svg className="w-4 h-4 transition-transform group-hover:translate-x-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+                  </svg>
+                </button>
+              )}
+            </>
           )
         })()}
-        {!panelOpen && activeTaskId && tasks.some(t => t.id === activeTaskId && (t.status === 'running' || t.status === 'partial')) && (
-          <button
-            onClick={() => openTaskPanel(activeTaskId)}
-            className="fixed bottom-6 right-6 z-40 flex items-center gap-1.5 px-4 py-3 bg-blue-600 text-white rounded-full shadow-lg hover:bg-blue-700 transition-all hover:scale-105 active:scale-95 group"
-          >
-            <span className="w-2 h-2 bg-green-400 rounded-full animate-pulse" />
-            <span className="text-sm font-medium">购物助手</span>
-            <svg className="w-4 h-4 transition-transform group-hover:translate-x-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
-            </svg>
-          </button>
-        )}
-      </ToastProvider>
+      </>
     </ErrorBoundary>
   )
 }

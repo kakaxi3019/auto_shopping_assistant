@@ -227,24 +227,65 @@ export async function humanDelay(base: number, jitter?: number): Promise<void> {
   await new Promise(r => setTimeout(r, Math.max(200, ms)))
 }
 
-export function injectOverlayBanner(win: BrowserWindow, message: string) {
+export type HintContext = 'guide' | 'warning' | 'security' | 'error'
+
+export function injectOverlayBanner(win: BrowserWindow, message: string, context?: HintContext) {
   const js = `
     (function() {
-      var existing = document.getElementById('site-nav');
-      if (existing && existing.querySelector('[data-hint]')) return;
-      var nav = document.getElementById('site-nav') || document.body.firstChild;
+      var msg = ${JSON.stringify(message)};
+      
+      var existing = document.getElementById('__auto_shop_banner__');
+      if (existing) {
+        var textSpan = existing.querySelector('.banner-text');
+        if (textSpan && textSpan.textContent === msg) return;
+        existing.remove();
+      }
+
+      // 统一使用极具高级感的深色石板蓝灰渐变
+      var bg = 'linear-gradient(135deg, rgba(15, 23, 42, 0.93), rgba(30, 41, 59, 0.93))';
+      var border = 'rgba(255, 255, 255, 0.15)';
+      var shadow = 'rgba(0, 0, 0, 0.3)';
+      // 统一使用闪电购物助手图标 ⚡
+      var iconSvg = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="position:absolute;left:16px;top:50%;transform:translateY(-50%);opacity:0.95;"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>';
+
       var hint = document.createElement('div');
+      hint.id = '__auto_shop_banner__';
       hint.setAttribute('data-hint', '1');
-      hint.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:2147483647;padding:10px 20px;background:rgba(37,99,235,0.9);color:#fff;font-size:14px;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;text-align:center;backdrop-filter:blur(4px);box-shadow:0 2px 8px rgba(0,0,0,0.15);line-height:1.5;pointer-events:none;';
-      hint.textContent = ${JSON.stringify(message)};
+      hint.style.cssText = 'position:fixed;top:16px;left:50%;z-index:2147483647;padding:12px 42px 12px 46px;border-radius:12px;color:#fff;font-size:14px;font-weight:500;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;text-align:left;line-height:1.5;pointer-events:none;box-sizing:border-box;width:92%;max-width:580px;backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);transition:transform 0.5s cubic-bezier(0.34, 1.56, 0.64, 1), opacity 0.4s ease;transform:translate(-50%, -20px) scale(0.95);opacity:0;';
+      hint.style.background = bg;
+      hint.style.border = '1px solid ' + border;
+      hint.style.boxShadow = '0 10px 25px -5px ' + shadow + ', 0 8px 10px -6px ' + shadow + ', inset 0 1px 0 rgba(255,255,255,0.1)';
+
+      var tempDiv = document.createElement('div');
+      tempDiv.innerHTML = iconSvg;
+      var iconNode = tempDiv.firstChild;
+      hint.appendChild(iconNode);
+
+      var textSpan = document.createElement('span');
+      textSpan.className = 'banner-text';
+      textSpan.textContent = msg;
+      hint.appendChild(textSpan);
+
       var closeBtn = document.createElement('span');
-      closeBtn.textContent = '✕';
-      closeBtn.style.cssText = 'position:absolute;right:12px;top:50%;transform:translateY(-50%);cursor:pointer;font-size:16px;opacity:0.7;pointer-events:auto;';
-      closeBtn.onmouseover = function() { closeBtn.style.opacity = '1'; };
-      closeBtn.onmouseout = function() { closeBtn.style.opacity = '0.7'; };
-      closeBtn.onclick = function() { hint.remove(); };
+      closeBtn.innerHTML = '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>';
+      closeBtn.style.cssText = 'position:absolute;right:14px;top:50%;transform:translateY(-50%);cursor:pointer;opacity:0.75;pointer-events:auto;display:flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;transition:background-color 0.2s, opacity 0.2s;';
+      closeBtn.onmouseover = function() { this.style.opacity = '1'; this.style.backgroundColor = 'rgba(255,255,255,0.15)'; };
+      closeBtn.onmouseout = function() { this.style.opacity = '0.75'; this.style.backgroundColor = 'transparent'; };
+      closeBtn.onclick = function() {
+        hint.style.transform = 'translate(-50%, -20px) scale(0.95)';
+        hint.style.opacity = '0';
+        setTimeout(function() { hint.remove(); }, 400);
+      };
       hint.appendChild(closeBtn);
+
       document.documentElement.appendChild(hint);
+
+      requestAnimationFrame(function() {
+        requestAnimationFrame(function() {
+          hint.style.transform = 'translate(-50%, 0) scale(1)';
+          hint.style.opacity = '1';
+        });
+      });
     })();
   `;
   win.webContents.executeJavaScript(js).catch(() => {});
@@ -258,23 +299,49 @@ export function injectOverlayBanner(win: BrowserWindow, message: string) {
   });
 }
 
-export function injectCenterToast(win: BrowserWindow, message: string) {
+export function injectCenterToast(win: BrowserWindow, message: string, context?: HintContext) {
   const js = `
     (function() {
+      var msg = ${JSON.stringify(message)};
+
       var old = document.getElementById('__auto_shop_toast__');
       if (old) old.remove();
+
+      // 统一使用极具高级感的深色石板蓝灰渐变
+      var bg = 'linear-gradient(135deg, rgba(15, 23, 42, 0.78), rgba(30, 41, 59, 0.78))';
+      var border = 'rgba(255, 255, 255, 0.18)';
+      var shadow = 'rgba(0, 0, 0, 0.4)';
+      var iconSvg = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="margin-bottom:8px;opacity:0.9;"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>';
+
       var toast = document.createElement('div');
       toast.id = '__auto_shop_toast__';
-      toast.style.cssText = 'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%) scale(0.9);z-index:2147483647;padding:24px 40px;border-radius:16px;background:linear-gradient(135deg,rgba(37,99,235,0.95),rgba(29,78,216,0.95));color:#fff;font-size:18px;font-weight:600;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;text-align:center;line-height:1.6;pointer-events:none;opacity:0;transition:opacity 0.5s ease,transform 0.5s ease;max-width:420px;backdrop-filter:blur(12px);box-shadow:0 12px 40px rgba(37,99,235,0.4),0 0 0 1px rgba(255,255,255,0.1);border:1px solid rgba(255,255,255,0.15);text-shadow:0 1px 2px rgba(0,0,0,0.2);';
-      toast.textContent = ${JSON.stringify(message)};
+      toast.style.cssText = 'position:fixed;top:50%;left:50%;z-index:2147483647;padding:20px 32px;border-radius:14px;color:#fff;font-size:15px;font-weight:500;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;text-align:center;line-height:1.5;pointer-events:none;box-sizing:border-box;max-width:360px;backdrop-filter:blur(24px);-webkit-backdrop-filter:blur(24px);display:flex;flex-direction:column;align-items:center;justify-content:center;transition:opacity 0.5s cubic-bezier(0.34, 1.56, 0.64, 1), transform 0.5s cubic-bezier(0.34, 1.56, 0.64, 1);transform:translate(-50%, -50%) scale(0.9);opacity:0;';
+      toast.style.background = bg;
+      toast.style.border = '1px solid ' + border;
+      toast.style.boxShadow = '0 20px 50px ' + shadow + ', 0 0 0 1px rgba(255,255,255,0.05), inset 0 1px 0 rgba(255,255,255,0.15)';
+      toast.style.textShadow = '0 1px 2px rgba(0,0,0,0.15)';
+
+      var tempDiv = document.createElement('div');
+      tempDiv.innerHTML = iconSvg;
+      var iconNode = tempDiv.firstChild;
+      toast.appendChild(iconNode);
+
+      var textSpan = document.createElement('span');
+      textSpan.textContent = msg;
+      toast.appendChild(textSpan);
+
       document.documentElement.appendChild(toast);
+
       requestAnimationFrame(function() {
-        toast.style.opacity = '1';
-        toast.style.transform = 'translate(-50%,-50%) scale(1)';
+        requestAnimationFrame(function() {
+          toast.style.opacity = '1';
+          toast.style.transform = 'translate(-50%, -50%) scale(1)';
+        });
       });
+
       setTimeout(function() {
         toast.style.opacity = '0';
-        toast.style.transform = 'translate(-50%,-50%) scale(0.95)';
+        toast.style.transform = 'translate(-50%, -50%) scale(0.93)';
         setTimeout(function() { toast.remove(); }, 500);
       }, 8000);
     })();

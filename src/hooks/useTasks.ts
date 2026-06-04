@@ -1,5 +1,6 @@
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { api } from '../lib/api'
+import { useToast } from '../components/ToastProvider'
 
 interface Task {
   id: number
@@ -66,6 +67,7 @@ interface RecentSuggestion {
 }
 
 export function useTasks() {
+  const { showToast } = useToast()
   const [tasks, setTasks] = useState<Task[]>([])
   const [orders, setOrders] = useState<Order[]>([])
   const [loading, setLoading] = useState(false)
@@ -73,6 +75,11 @@ export function useTasks() {
   const [previewLoading, setPreviewLoading] = useState(false)
   const [activeTaskId, setActiveTaskId] = useState<number | null>(null)
   const [panelOpen, setPanelOpen] = useState(false)
+
+  const panelOpenRef = useRef(panelOpen)
+  useEffect(() => {
+    panelOpenRef.current = panelOpen
+  }, [panelOpen])
 
   const refresh = useCallback(async () => {
     setLoading(true)
@@ -177,17 +184,43 @@ export function useTasks() {
 
   const previewTask = useCallback(async (instruction: string) => {
     setPreviewLoading(true)
+    setPreview({
+      instruction,
+      items: [],
+      platform: 'taobao'
+    })
+    setPanelOpen(true)
     try {
       const result = await api.previewTask(instruction) as TaskPreview & { error?: string }
       if (result && result.error) {
         throw new Error(result.error)
       }
       setPreview(result)
-      setPanelOpen(true)
+      
+      // 如果此时面板已经被用户误操作/主动关闭，弹出 Toast 提醒一键找回
+      if (!panelOpenRef.current) {
+        showToast({
+          message: '✨ 购物指令解析就绪',
+          type: 'success',
+          action: {
+            label: '确认详情',
+            onClick: () => {
+              setPanelOpen(true)
+            }
+          }
+        })
+      }
+    } catch (e) {
+      setPreview(null)
+      // 只有在面板依然开着时才处理关闭与对外抛出错误
+      if (panelOpenRef.current) {
+        setPanelOpen(false)
+        throw e
+      }
     } finally {
       setPreviewLoading(false)
     }
-  }, [])
+  }, [showToast])
 
   const confirmTask = useCallback(async (instruction: string, items: PreviewItem[], dryRun?: boolean, paymentMode?: string, platform?: string) => {
     console.log('[useTasks] confirmTask START', { instruction, itemCount: items.length, dryRun, paymentMode, platform })
@@ -226,7 +259,11 @@ export function useTasks() {
 
   const closePanel = useCallback(() => {
     setPanelOpen(false)
-    setPreview(null)
+    // 注意：不清除 preview，以便在误操作关闭后仍可通过悬浮球或 Toast 找回
+  }, [])
+
+  const openPreviewPanel = useCallback(() => {
+    setPanelOpen(true)
   }, [])
 
   const openTaskPanel = useCallback((taskId: number) => {
@@ -340,7 +377,7 @@ export function useTasks() {
     deleteTask, deleteTasks, clearHistory,
     preview, previewLoading, previewTask, confirmTask, cancelPreview,
     updatePreviewItem, removePreviewItem,
-    activeTaskId, panelOpen, closePanel, openTaskPanel,
+    activeTaskId, panelOpen, closePanel, openPreviewPanel, openTaskPanel,
     recentSuggestions,
   }
 }

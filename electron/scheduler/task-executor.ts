@@ -5,6 +5,7 @@ import type { Database } from '../db/database'
 import { appendFileSync } from 'fs'
 import { join } from 'path'
 import { app } from 'electron'
+import { debugLog } from '../utils/debug-log'
 
 const PREVIEW_LOG_FILE = join(app.getPath('userData'), 'preview-debug.log')
 const MIN_CONFIDENCE_THRESHOLD = 50
@@ -54,21 +55,26 @@ export class TaskExecutor {
     dryRun?: boolean,
     paymentMode?: string,
   ): Promise<{ success: boolean; itemResults: ItemResult[]; error?: string }> {
+    debugLog('TaskExecutor', `execute called: taskId=${taskId}, parsedItems=${JSON.stringify(parsedItems)}, paymentMode=${paymentMode}, dryRun=${dryRun}`)
     const itemResults: ItemResult[] = []
 
     for (const item of parsedItems) {
       const result: ItemResult = { name: item.name, quantity: item.quantity, status: 'failed' }
       const candidateOrders = this.findCandidateOrders(item, platform.name, result, onProgress, instruction)
+      debugLog('TaskExecutor', `candidateOrders count for "${item.name}": ${candidateOrders.length}`)
 
       if (candidateOrders.length === 0) {
         result.error = '未找到历史订单'
         itemResults.push(result)
+        debugLog('TaskExecutor', `No candidate orders found for item: "${item.name}"`)
         continue
       }
 
       const order = candidateOrders[0]
+      debugLog('TaskExecutor', `Selected candidate order: id=${order.id}, orderId=${order.orderId}, price=${order.price}, name="${order.productName}"`)
       await this.processPurchase(taskId, item, order, platform, result, onProgress, dryRun, paymentMode)
       itemResults.push(result)
+      debugLog('TaskExecutor', `Item result for "${item.name}": status=${result.status}, error=${result.error}`)
 
       if (platform.cleanup) {
         await platform.cleanup()
@@ -77,6 +83,7 @@ export class TaskExecutor {
 
     const successCount = itemResults.filter(r => r.status === 'success').length
     const pendingCount = itemResults.filter(r => r.status === 'pending').length
+    debugLog('TaskExecutor', `execute completed: successCount=${successCount}, pendingCount=${pendingCount}, results=${JSON.stringify(itemResults)}`)
     if (pendingCount > 0 && successCount === 0) {
       return { success: false, itemResults, error: `已找到替代商品，请选择：${itemResults.filter(r => r.status === 'pending').map(r => r.name).join('、')}` }
     }
@@ -108,10 +115,12 @@ export class TaskExecutor {
   ): Promise<void> {
     const isCartOnly = paymentMode === 'cart_only'
     const url = platform.getProductUrl(order)
+    debugLog('TaskExecutor', `processPurchase started: name="${item.name}", orderId=${order.orderId}, url=${url}, isCartOnly=${isCartOnly}`)
 
     onProgress(`正在为 "${item.name}" 执行再买一单（订单 ${order.orderId}）...`)
     try {
       const cartResult: AddToCartResult = await platform.addToCart(url, item.sku, order.orderId, isCartOnly)
+      debugLog('TaskExecutor', `addToCart returned: ${JSON.stringify(cartResult)}`)
       if (!cartResult.success) {
         await this.handleSearchFallback(taskId, item, order, platform, cartResult, result, onProgress, dryRun, paymentMode)
       } else if (isCartOnly) {
@@ -123,6 +132,7 @@ export class TaskExecutor {
       }
     } catch (e) {
       const errMsg = String(e)
+      debugLog('TaskExecutor', `processPurchase catch exception: ${errMsg}`)
       if (errMsg.includes('Object has been destroyed') || errMsg.includes('destroyed')) {
         result.error = '操作窗口已关闭'
       } else if (errMsg.includes('timeout') || errMsg.includes('Timeout') || errMsg.includes('超时')) {
@@ -185,8 +195,10 @@ export class TaskExecutor {
     dryRun?: boolean,
     paymentMode?: string,
   ): Promise<void> {
+    debugLog('TaskExecutor', `handleCheckoutAndPay started: item="${item.name}", directToPay=${directToPay}, dryRun=${dryRun}, paymentMode=${paymentMode}`)
     onProgress(`正在结算 "${item.name}"${item.quantity > 1 ? `（x${item.quantity}）` : ''}...`)
     const checkoutResult = await platform.checkout(directToPay, item.quantity)
+    debugLog('TaskExecutor', `platform.checkout returned: ${JSON.stringify(checkoutResult)}`)
     if (!checkoutResult.success) {
       result.error = checkoutResult.error || '结算失败'
       return
@@ -197,8 +209,10 @@ export class TaskExecutor {
     if (currentPrice && currentPrice > 0 && lastPrice > 0 && paymentMode !== 'checkout_only' && paymentMode !== 'cart_only') {
       const priceIncreaseRate = (currentPrice - lastPrice * item.quantity) / (lastPrice * item.quantity)
       const protectionThreshold = parseFloat(this.db.getSetting('price_protection_threshold') || '0.15')
+      debugLog('TaskExecutor', `Price safety check: priceIncreaseRate=${priceIncreaseRate.toFixed(4)}, threshold=${protectionThreshold}`)
       if (priceIncreaseRate >= protectionThreshold) {
         onProgress(`❌ 资金拦截："${item.name}" 当前价 (¥${currentPrice.toFixed(2)}) 较上次 (¥${(lastPrice * item.quantity).toFixed(2)}) 暴涨了 ${(priceIncreaseRate * 100).toFixed(0)}%，已紧急熔断拦截！`)
+        debugLog('TaskExecutor', `Price protection triggered, intercepting checkout. Price rose by ${(priceIncreaseRate * 100).toFixed(2)}%`)
         const confirmationId = this.db.createPendingConfirmation({
           taskId,
           productName: item.name,
@@ -224,13 +238,19 @@ export class TaskExecutor {
       }
     }
 
-    const totalAmount = order.price * item.quantity
+    const totalAmount = currentPrice || (order.price * item.quantity)
+
     if (paymentMode === 'checkout_only') {
-      onProgress(`已到达结算页面，请在弹出的窗口中确认金额并完成支付`)
-      const payWindowResult = await platform.showPaymentWindow()
+      onProgress(`已到达确认订单页面，请在弹出的窗口中确认金额并完成支付...`)
+      debugLog('TaskExecutor', `paymentMode is checkout_only, showing manual payment window`)
+      const payWindowResult = await platform.showPaymentWindow(
+        `已到达结算页面 - 请确认金额并完成支付`
+      )
+      debugLog('TaskExecutor', `showPaymentWindow finished: paid=${payWindowResult.paid}`)
       if (payWindowResult.paid) {
         result.matchedProduct = order.productName
         result.status = 'success'
+        result.currentPrice = currentPrice
       } else {
         result.error = '支付未完成'
       }
@@ -239,18 +259,22 @@ export class TaskExecutor {
         ? `正在支付 "${item.name}"（¥${totalAmount.toFixed(2)}）...`
         : `正在支付 "${item.name}"...`
       )
+      debugLog('TaskExecutor', `paymentMode is auto_pay / other, initiating platform.pay for totalAmount=${totalAmount}`)
       const payResult = await platform.pay(totalAmount, dryRun, paymentMode)
+      debugLog('TaskExecutor', `platform.pay finished: ${JSON.stringify(payResult)}`)
       if (!payResult.success) {
         result.error = payResult.error || '支付失败'
       } else {
         result.matchedProduct = order.productName
         result.status = 'success'
+        result.currentPrice = currentPrice
       }
     }
   }
 
   private findCandidateOrders(item: ParsedShoppingItem, platformName: string, result: ItemResult, onProgress: (msg: string) => void, instruction?: string): Order[] {
     const searchPlatform = item.platform || platformName
+    const cleanKeyword = instruction ? this.cleanInstructionKeyword(instruction) : ''
 
     if (item.orderRef) {
       onProgress(`正在通过 LLM 匹配结果查找订单 #${item.orderRef}...`)
@@ -259,36 +283,56 @@ export class TaskExecutor {
         if ((order as any).unavailable) {
           onProgress(`LLM 匹配的订单 #${item.orderRef} 已被排除匹配，尝试其他方式...`)
         } else if (!item.platform || order.platform === searchPlatform) {
-          const topKeywordScore = this.computeMatchScore(order, item.name)
-          if (topKeywordScore < KEYWORD_MATCH_THRESHOLD && item.matchedOrders && item.matchedOrders.length > 1) {
-            onProgress(`LLM 首选匹配 (${order.productName}) 与"${item.name}"关键词不匹配，尝试其他 LLM 候选...`)
+          const isInvalidMatch = cleanKeyword && this.computeMatchScore(order, cleanKeyword) < KEYWORD_MATCH_THRESHOLD
+          
+          if (isInvalidMatch || (this.computeMatchScore(order, item.name) < KEYWORD_MATCH_THRESHOLD && item.matchedOrders && item.matchedOrders.length > 1)) {
+            if (isInvalidMatch) {
+              onProgress(`LLM 首选匹配 (${order.productName}) 与用户原始意图 "${cleanKeyword}" 不匹配，尝试其他候选...`)
+            } else {
+              onProgress(`LLM 首选匹配 (${order.productName}) 与"${item.name}"关键词不匹配，尝试其他 LLM 候选...`)
+            }
+            
             let bestAltOrder: Order | null = null
             let bestAltScore = 0
-            for (const match of item.matchedOrders) {
-              if (match.orderRef === item.orderRef) continue
-              if (match.confidence < MIN_CONFIDENCE_THRESHOLD) continue
-              const altOrder = this.db.getOrderById(match.orderRef)
-              if (!altOrder || (altOrder as any).unavailable) continue
-              if (item.platform && altOrder.platform !== searchPlatform) continue
-              const altScore = this.computeMatchScore(altOrder, item.name)
-              if (altScore > bestAltScore) {
-                bestAltScore = altScore
-                bestAltOrder = altOrder
+            if (item.matchedOrders) {
+              for (const match of item.matchedOrders) {
+                if (match.orderRef === item.orderRef) continue
+                if (match.confidence < MIN_CONFIDENCE_THRESHOLD) continue
+                const altOrder = this.db.getOrderById(match.orderRef)
+                if (!altOrder || (altOrder as any).unavailable) continue
+                if (item.platform && altOrder.platform !== searchPlatform) continue
+                
+                if (cleanKeyword && this.computeMatchScore(altOrder, cleanKeyword) < KEYWORD_MATCH_THRESHOLD) {
+                  continue
+                }
+                
+                const altScore = this.computeMatchScore(altOrder, item.name)
+                if (altScore > bestAltScore) {
+                  bestAltScore = altScore
+                  bestAltOrder = altOrder
+                }
               }
             }
             if (bestAltOrder && bestAltScore >= KEYWORD_MATCH_THRESHOLD) {
               result.matchedProduct = bestAltOrder.productName
               result.matchMethod = 'llm_direct'
               result.orderId = bestAltOrder.id
-              onProgress(`LLM 候选匹配: ${bestAltOrder.productName}（关键词匹配更优）`)
+              onProgress(`LLM 候选匹配: ${bestAltOrder.productName}（意图匹配更优）`)
               return [bestAltOrder]
             }
+            
+            if (isInvalidMatch) {
+              onProgress(`LLM 所有候选均与用户意图 "${cleanKeyword}" 不符，熔断此 LLM 匹配，尝试本地搜索兜底...`)
+            }
           }
-          result.matchedProduct = order.productName
-          result.matchMethod = 'llm_direct'
-          result.orderId = order.id
-          onProgress(`LLM 精确匹配: ${order.productName}`)
-          return [order]
+          
+          if (!isInvalidMatch) {
+            result.matchedProduct = order.productName
+            result.matchMethod = 'llm_direct'
+            result.orderId = order.id
+            onProgress(`LLM 精确匹配: ${order.productName}`)
+            return [order]
+          }
         }
       }
       onProgress(`LLM 匹配的订单 #${item.orderRef} 不存在或平台不匹配，尝试其他方式...`)
@@ -354,6 +398,13 @@ export class TaskExecutor {
     }
 
     return { order: null, matchMethod: null }
+  }
+
+  private cleanInstructionKeyword(instruction: string): string {
+    if (!instruction) return ''
+    return instruction
+      .replace(/^(买|我要买|帮我买|想买|再买|购|购买|帮我购买|自动购买|模拟购买)(一双|一个|一只|一件|一箱|两箱|三箱|瓶|包|盒|个|只|双|件|袋|包)?/g, '')
+      .trim()
   }
 
   private computeMatchScore(order: Order, keyword: string): number {
@@ -451,6 +502,8 @@ export class TaskExecutor {
       const candidates: CandidateOrder[] = []
       let excludedCount = 0
       let filteredByConfidenceCount = 0
+      const cleanKeyword = instruction ? this.cleanInstructionKeyword(instruction) : ''
+
       for (const match of item.matchedOrders.slice(0, MAX_CANDIDATES)) {
         if (match.confidence < MIN_CONFIDENCE_THRESHOLD) {
           filteredByConfidenceCount++
@@ -464,6 +517,11 @@ export class TaskExecutor {
           excludedCount++
           continue
         }
+        
+        if (cleanKeyword && this.computeMatchScore(order, cleanKeyword) < KEYWORD_MATCH_THRESHOLD) {
+          continue
+        }
+
         candidates.push({
           id: order.id,
           productName: order.productName,

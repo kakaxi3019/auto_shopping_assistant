@@ -277,7 +277,16 @@ export class TaobaoPlatform implements PlatformAdapter {
   }
 
   async openSearchPage(keyword: string): Promise<string | null> {
-    await this.cookieManager.syncCookiesToElectron(this.browserManager.getContext(), this.auth)
+    const domains = ['.taobao.com', '.tmall.com', '.alipay.com']
+    for (const domain of domains) {
+      const cookies = await session.defaultSession.cookies.get({ domain })
+      for (const c of cookies) {
+        try {
+          await session.defaultSession.cookies.remove(`https://${c.domain.replace(/^\./, '')}${c.path}`, c.name)
+        } catch {}
+      }
+    }
+    await this.cookieManager.syncCookiesToElectron(this.browserManager.getContext(), this.auth, true)
     return this.searchService.openSearchPage(keyword)
   }
 

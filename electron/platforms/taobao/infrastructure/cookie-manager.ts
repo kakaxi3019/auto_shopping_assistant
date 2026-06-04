@@ -42,29 +42,35 @@ export class CookieManager {
     this.lastCookieToElectronSyncTime = 0
   }
 
-  async syncCookiesToElectron(context: BrowserContext | null, auth: TaobaoAuth): Promise<void> {
-    if (this.pendingSyncTimer) {
+  async syncCookiesToElectron(context: BrowserContext | null, auth: TaobaoAuth, force: boolean = false): Promise<void> {
+    if (force) {
+      this.pendingSyncTimer = null
+      this.pendingSyncResolves = []
+      this.lastCookieToElectronSyncTime = 0
+    } else {
+      if (this.pendingSyncTimer) {
+        await new Promise<void>(resolve => {
+          this.pendingSyncResolves.push(resolve)
+        })
+        return
+      }
+
       await new Promise<void>(resolve => {
-        this.pendingSyncResolves.push(resolve)
+        this.pendingSyncTimer = setTimeout(() => {
+          this.pendingSyncTimer = null
+          resolve()
+        }, 1500)
       })
-      return
+
+      const resolves = this.pendingSyncResolves
+      this.pendingSyncResolves = []
+      for (const r of resolves) {
+        r()
+      }
+
+      const now = Date.now()
+      if (now - this.lastCookieToElectronSyncTime < 1500) return
     }
-
-    await new Promise<void>(resolve => {
-      this.pendingSyncTimer = setTimeout(() => {
-        this.pendingSyncTimer = null
-        resolve()
-      }, 1500)
-    })
-
-    const resolves = this.pendingSyncResolves
-    this.pendingSyncResolves = []
-    for (const r of resolves) {
-      r()
-    }
-
-    const now = Date.now()
-    if (now - this.lastCookieToElectronSyncTime < 1500) return
 
     try {
       let sourceCookies: { name: string; value: string; domain: string; path: string; secure: boolean; httpOnly?: boolean; sameSite?: string; expires?: number }[] = []
@@ -256,10 +262,12 @@ export class CookieManager {
     }
   }
 
-  async syncCookiesFromElectron(context: BrowserContext | null, auth: TaobaoAuth): Promise<void> {
+  async syncCookiesFromElectron(context: BrowserContext | null, auth: TaobaoAuth, force: boolean = false): Promise<void> {
     if (this.cookieSyncInProgress) return
-    const now = Date.now()
-    if (now - this.lastCookieSyncTime < 1000) return
+    if (!force) {
+      const now = Date.now()
+      if (now - this.lastCookieSyncTime < 1000) return
+    }
 
     this.cookieSyncInProgress = true
     try {

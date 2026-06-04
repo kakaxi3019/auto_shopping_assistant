@@ -158,13 +158,16 @@ export class WindowManager {
   }
 
   async closeShopWindow(cookieSyncFn?: () => Promise<void>): Promise<void> {
-    if (this.shopWindow && !this.shopWindow.isDestroyed()) {
+    const win = this.shopWindow
+    this.shopWindow = null
+    if (win && !win.isDestroyed()) {
       try {
         if (cookieSyncFn) await cookieSyncFn()
       } catch { /* ignore */ }
-      this.shopWindow.close()
+      if (!win.isDestroyed()) {
+        try { win.close() } catch { /* ignore */ }
+      }
     }
-    this.shopWindow = null
   }
 
   closeLoginWindow() {

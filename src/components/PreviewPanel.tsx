@@ -213,14 +213,29 @@ export default function PreviewPanel({ preview, onConfirm, onCancel, onUpdateIte
     const hasMore = candidates.length > DEFAULT_VISIBLE_COUNT
     const totalCount = item.totalMatchCount || candidates.length
 
+    const currentRef = item.orderRef
+    const currentCandidate = candidates.find(c => c.id === currentRef) || candidates[0]
+    let currentScore = currentCandidate?.matchScore || 0
+    if (currentCandidate && currentCandidate.matchScore === undefined) {
+      if (item.matchMethod === 'exact') currentScore = 95
+      else if (item.matchMethod === 'llm_direct') currentScore = 90
+      else if (item.matchMethod === 'fuzzy') currentScore = 75
+    }
+    const isHighConfidence = item.matched && currentScore >= 90
+    const isMediumConfidence = item.matched && currentScore >= 70 && currentScore < 90
+
     return (
       <div
         key={index}
-        className={`rounded-lg border p-3 transition-colors ${
+        className={`rounded-lg border p-3 transition-all duration-200 ${
           item.matched
-            ? ambiguityLevel === 'high' && hasCandidates
-              ? 'border-amber-200 bg-amber-50/30'
-              : 'border-green-200 bg-green-50/40'
+            ? isHighConfidence
+              ? 'border-emerald-300 bg-gradient-to-br from-emerald-50/50 via-green-50/20 to-white shadow-sm shadow-emerald-500/5 hover:shadow-md'
+              : isMediumConfidence
+                ? 'border-blue-200 bg-gradient-to-br from-blue-50/30 via-indigo-50/10 to-white shadow-sm shadow-blue-500/5 hover:shadow-md'
+                : ambiguityLevel === 'high' && hasCandidates
+                  ? 'border-amber-200 bg-amber-50/30'
+                  : 'border-green-200 bg-green-50/40'
             : 'border-gray-200 bg-gray-50/40'
         }`}
       >
@@ -259,10 +274,29 @@ export default function PreviewPanel({ preview, onConfirm, onCancel, onUpdateIte
 
             {item.matched ? (
               <div className="mt-1">
-                <p className="text-sm font-medium text-gray-900 truncate">
-                  {item.matchedProduct}
+                <p className={`text-sm truncate flex items-center gap-1 ${
+                  isHighConfidence ? 'font-semibold text-gray-900' : 'font-medium text-gray-900'
+                }`}>
+                  {isHighConfidence && <span className="text-emerald-600 text-xs select-none">🏆 首选</span>}
+                  {isMediumConfidence && <span className="text-blue-500 text-xs select-none">✨</span>}
+                  <span>{item.matchedProduct}</span>
                 </p>
                 <div className="flex items-center flex-wrap gap-1.5 mt-1">
+                  {currentScore > 0 && (
+                    isHighConfidence ? (
+                      <span className="inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full text-[10px] font-bold bg-gradient-to-r from-emerald-500 to-teal-600 text-white shadow-sm shadow-emerald-500/20">
+                        🔥 极高匹配 {currentScore}%
+                      </span>
+                    ) : isMediumConfidence ? (
+                      <span className="inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-gradient-to-r from-blue-500 to-indigo-500 text-white shadow-sm shadow-blue-500/20">
+                        ✨ 高度相关 {currentScore}%
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium bg-gray-100 text-gray-700 border border-gray-200">
+                        相似 {currentScore}%
+                      </span>
+                    )
+                  )}
                   {platformInfo && (
                     <span className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-xs font-medium ${platformInfo.bg} ${platformInfo.color}`}>
                       {platformInfo.icon} {platformInfo.label}
@@ -306,6 +340,19 @@ export default function PreviewPanel({ preview, onConfirm, onCancel, onUpdateIte
                           const dateStr = purchaseDate && !isNaN(purchaseDate.getTime())
                             ? `${purchaseDate.getFullYear()}/${purchaseDate.getMonth() + 1}/${purchaseDate.getDate()}`
                             : ''
+                          let candidateScore = candidate.matchScore || 0
+                          if (candidate.matchScore === undefined) {
+                            if (isSelected) {
+                              if (item.matchMethod === 'exact') candidateScore = 95
+                              else if (item.matchMethod === 'llm_direct') candidateScore = 90
+                              else if (item.matchMethod === 'fuzzy') candidateScore = 75
+                            } else {
+                              candidateScore = 60
+                            }
+                          }
+                          const isCandidateHigh = candidateScore >= 90
+                          const isCandidateMedium = candidateScore >= 70 && candidateScore < 90
+
                           return (
                             <button
                               key={candidate.id}
@@ -322,9 +369,11 @@ export default function PreviewPanel({ preview, onConfirm, onCancel, onUpdateIte
                                   platform: candidate.platform,
                                 })
                               }}
-                              className={`w-full text-left px-2 py-1.5 rounded-md transition-colors flex items-center gap-2 ${
+                              className={`w-full text-left px-2 py-1.5 rounded-md transition-all duration-150 flex items-center gap-2 ${
                                 isSelected
-                                  ? 'bg-blue-50 border border-blue-200'
+                                  ? isCandidateHigh
+                                    ? 'bg-emerald-50/60 border border-emerald-300 ring-1 ring-emerald-500/10'
+                                    : 'bg-blue-50 border border-blue-200'
                                   : 'bg-white border border-gray-100 hover:border-blue-200 hover:bg-blue-50/50'
                               }`}
                             >
@@ -339,12 +388,16 @@ export default function PreviewPanel({ preview, onConfirm, onCancel, onUpdateIte
                                 />
                               )}
                               <div className="min-w-0 flex-1">
-                                <p className={`text-xs font-medium truncate ${isSelected ? 'text-blue-700' : 'text-gray-800'}`}>
+                                <p className={`text-xs truncate ${
+                                  isSelected
+                                    ? isCandidateHigh ? 'text-emerald-700 font-semibold' : 'text-blue-700 font-medium'
+                                    : 'text-gray-800 font-medium'
+                                }`}>
                                   {candidate.productName}
                                 </p>
                                 <div className="flex items-center gap-2 mt-0.5">
                                   {candidate.price > 0 && (
-                                    <span className="text-xs text-gray-400">¥{candidate.price.toFixed(2)}</span>
+                                    <span className="text-xs text-gray-500 font-medium">¥{candidate.price.toFixed(2)}</span>
                                   )}
                                   {candidatePlatformInfo && (
                                     <span className={`inline-flex items-center gap-0.5 px-1 py-0.5 rounded text-xs font-medium ${candidatePlatformInfo.bg} ${candidatePlatformInfo.color}`}>
@@ -359,9 +412,28 @@ export default function PreviewPanel({ preview, onConfirm, onCancel, onUpdateIte
                                   )}
                                 </div>
                               </div>
-                              {isSelected && (
-                                <span className="text-xs text-blue-500 flex-shrink-0">✓</span>
-                              )}
+                              <div className="flex items-center gap-1.5 flex-shrink-0">
+                                {candidateScore > 0 && (
+                                  isCandidateHigh ? (
+                                    <span className="text-[9px] font-bold text-emerald-600 bg-emerald-50 px-1 py-0.5 rounded border border-emerald-200 select-none">
+                                      🔥 {candidateScore}%
+                                    </span>
+                                  ) : isCandidateMedium ? (
+                                    <span className="text-[9px] font-semibold text-blue-600 bg-blue-50 px-1 py-0.5 rounded border border-blue-200 select-none">
+                                      ✨ {candidateScore}%
+                                    </span>
+                                  ) : (
+                                    <span className="text-[9px] text-gray-500 bg-gray-50 px-1 py-0.5 rounded border border-gray-100 select-none">
+                                      {candidateScore}%
+                                    </span>
+                                  )
+                                )}
+                                {isSelected && (
+                                  <span className={`text-xs flex-shrink-0 ${
+                                    isCandidateHigh ? 'text-emerald-600 font-bold' : 'text-blue-500'
+                                  }`}>✓</span>
+                                )}
+                              </div>
                             </button>
                           )
                         })}

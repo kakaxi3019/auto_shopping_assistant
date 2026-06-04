@@ -6,7 +6,7 @@ import type { CookieManager } from '../infrastructure/cookie-manager'
 import type { InteractionService } from './interaction.service'
 import type { VerificationService } from './verification.service'
 import type { TaobaoAuth } from '../taobao.auth'
-import { setUserAgent, humanDelay, humanClickAt, humanClickElement, execJS, injectOverlayBanner, injectCenterToast, rand, clickInShopWindow } from '../utils/page-helper'
+import { setUserAgent, debugLog, humanDelay, humanClickAt, humanClickElement, execJS, injectOverlayBanner, injectCenterToast, rand, clickInShopWindow } from '../utils/page-helper'
 import { APP_ICON, TIMEOUTS, WINDOW_SIZES, KEYWORDS } from '../utils/constants'
 import { isCheckoutOrPayPage, isLoginPage, isIdentityVerifyPage, isBuyPage, isCartPage, isProductDetailPage } from '../utils/url-helper'
 import { TAOBAO_SELECTORS } from '../taobao.selectors'
@@ -52,8 +52,10 @@ export class PaymentService {
   }
 
   async pay(totalAmount?: number, dryRun?: boolean, paymentMode?: string): Promise<PayResult> {
+    debugLog(`[Taobao-Payment] pay invoked: totalAmount=${totalAmount}, dryRun=${dryRun}, paymentMode=${paymentMode}`)
     if (dryRun) {
       this.emitStatus(`测试模式：跳过实际支付（预计金额 ¥${totalAmount?.toFixed(2)}）`)
+      debugLog('[Taobao-Payment] dryRun is true, skipping actual payment')
       const shopWin = this.windowManager.getShopWindow()
       if (shopWin && !shopWin.isDestroyed()) {
         await this.windowManager.closeShopWindow(async () => {
@@ -65,6 +67,7 @@ export class PaymentService {
 
     const shopWindow = this.windowManager.getShopWindow()
     if (!shopWindow || shopWindow.isDestroyed()) {
+      debugLog('[Taobao-Payment] pay failed: no available payment window')
       return { success: false, error: '没有可用的支付窗口' }
     }
 
@@ -72,6 +75,7 @@ export class PaymentService {
     const exceedsLimit = payFreeLimit > 0 && totalAmount !== undefined && totalAmount > payFreeLimit
 
     if (exceedsLimit) {
+      debugLog(`[Taobao-Payment] totalAmount ¥${totalAmount} exceeds limit ¥${payFreeLimit}. User confirmation required.`)
       shopWindow.setSize(WINDOW_SIZES.CONFIRMATION.width, WINDOW_SIZES.CONFIRMATION.height)
       shopWindow.setTitle(`金额超过免密支付上限 - 需要手动确认付款`)
       const mainWindow = this.windowManager.getMainWindow()
@@ -87,6 +91,7 @@ export class PaymentService {
         bannerMsg,
       )
       if (confirmed) {
+        debugLog('[Taobao-Payment] user confirmed payment completion.')
         await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth)
         await this.windowManager.closeShopWindow(async () => {
           await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth)
@@ -94,6 +99,7 @@ export class PaymentService {
         this.emitStatus('支付完成')
         return { success: true }
       }
+      debugLog('[Taobao-Payment] user cancelled or payment incomplete.')
       return { success: false, error: '支付未完成' }
     }
 
@@ -103,11 +109,13 @@ export class PaymentService {
     )
 
     try {
+      debugLog('[Taobao-Payment] clicking submit order button in shop window')
       const payResult = await clickInShopWindow(
         shopWindow,
         TAOBAO_SELECTORS.CHECKOUT.SUBMIT_ORDER_SELECTORS as unknown as string[],
         ['免密支付', '立即支付', '确认支付', '提交订单', '确认订单', '去支付', '立即付款']
       )
+      debugLog(`[Taobao-Payment] submit order click result: ${JSON.stringify(payResult)}`)
       if (payResult.clicked) {
         await humanDelay(3000)
 
@@ -115,6 +123,7 @@ export class PaymentService {
         if (currentShopWindow && !currentShopWindow.isDestroyed()) {
           const currentUrl = currentShopWindow.webContents.getURL()
           if (isIdentityVerifyPage(currentUrl) || currentUrl.includes('nocaptcha') || currentUrl.includes('slider')) {
+            debugLog(`[Taobao-Payment] identity verification page / slide slider detected: ${currentUrl}`)
             await currentShopWindow.webContents.executeJavaScript(`
               (function() {
                 try {

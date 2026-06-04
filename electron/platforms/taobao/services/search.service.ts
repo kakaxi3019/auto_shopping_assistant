@@ -2,7 +2,9 @@ import type { SearchResult } from '../../../../shared/types/platform.types'
 import { CookieManager } from '../infrastructure/cookie-manager'
 import { WindowManager } from '../infrastructure/window-manager'
 import { TaobaoAuth } from '../taobao.auth'
-import { setUserAgent } from '../utils/page-helper'
+import { CHROME_UA } from '../utils/constants'
+import { isLoginPage } from '../utils/url-helper'
+import { attachAntiDetectStealth, injectHumanSim, injectOverlayBanner, injectCenterToast } from '../utils/page-helper'
 
 export class SearchService {
   private windowManager: WindowManager
@@ -21,10 +23,14 @@ export class SearchService {
   }
 
   async searchProduct(keyword: string): Promise<SearchResult[]> {
-    await this.cookieManager.syncCookiesToElectron(null, this.auth)
-
     const searchWindow = this.windowManager.createSearchWindow()
-    setUserAgent(searchWindow)
+    searchWindow.webContents.setMaxListeners(20)
+    searchWindow.webContents.setUserAgent(CHROME_UA)
+    injectHumanSim(searchWindow)
+    await Promise.race([
+      attachAntiDetectStealth(searchWindow),
+      new Promise<void>(resolve => setTimeout(resolve, 3000))
+    ])
 
     try {
       const encodedKeyword = encodeURIComponent(keyword)
@@ -225,7 +231,13 @@ export class SearchService {
 
   async openSearchPage(keyword: string): Promise<string | null> {
     const searchWindow = this.windowManager.createSearchWindow()
-    setUserAgent(searchWindow)
+    searchWindow.webContents.setMaxListeners(20)
+    searchWindow.webContents.setUserAgent(CHROME_UA)
+    injectHumanSim(searchWindow)
+    await Promise.race([
+      attachAntiDetectStealth(searchWindow),
+      new Promise<void>(resolve => setTimeout(resolve, 3000))
+    ])
 
     const encodedKeyword = encodeURIComponent(keyword)
     const searchUrl = `https://s.taobao.com/search?page=1&q=${encodedKeyword}&tab=all`
@@ -266,23 +278,20 @@ export class SearchService {
         safeResolve(null)
       })
 
-      searchWindow.webContents.once('did-finish-load', () => {
-        const bannerJs = `
-          (function() {
-            var existing = document.querySelector('[data-hint]');
-            if (existing) return;
-            var hint = document.createElement('div');
-            hint.setAttribute('data-hint', '1');
-            hint.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:2147483647;padding:10px 20px;background:rgba(37,99,235,0.9);color:#fff;font-size:14px;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;text-align:center;box-shadow:0 2px 8px rgba(0,0,0,0.15);line-height:1.5;pointer-events:none;';
-            hint.textContent = '🔐 自动购物助手：请在搜索结果中找到对应商品并点击进入商品详情页';
-            document.documentElement.appendChild(hint);
-          })();
-        `
-        searchWindow.webContents.executeJavaScript(bannerJs).catch(() => {})
-        searchWindow.show()
+      searchWindow.webContents.on('did-finish-load', () => {
+        if (resolved || searchWindow.isDestroyed()) return
+        const currentUrl = searchWindow.webContents.getURL()
+        if (isLoginPage(currentUrl)) {
+          injectOverlayBanner(searchWindow, '⚠️ 搜索页面需要登录，请在弹出的窗口中完成登录后继续操作')
+          injectCenterToast(searchWindow, '请先完成登录')
+        } else {
+          injectOverlayBanner(searchWindow, '🛒 自动购物助手：请在搜索结果中找到对应商品并点击进入商品详情页')
+          injectCenterToast(searchWindow, '请找到对应商品并点击进入')
+        }
       })
 
       searchWindow.loadURL(searchUrl)
+      searchWindow.show()
     })
   }
 }

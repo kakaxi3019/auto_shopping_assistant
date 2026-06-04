@@ -144,10 +144,10 @@ export class InteractionService {
       }, InteractionService.CONFIRMATION_TIMEOUT_MS)
 
       if (disposable) {
-        this.emitStatus(statusMessage.replace('弹出的窗口', '弹出的窗口（关闭后无法恢复）'))
+        this.emitStatus(statusMessage.replace('弹出的窗口', '弹出的窗口（关闭后无法恢复）') + (scene ? `|SCENE:${scene}|` : ''))
       } else {
         const reopenTag = `|REOPEN:${id}|弹出的窗口|REOPEN_END|`
-        this.emitStatus(`${statusMessage.replace('弹出的窗口', reopenTag)}`)
+        this.emitStatus(`${statusMessage.replace('弹出的窗口', reopenTag)}${scene ? `|SCENE:${scene}|` : ''}`)
       }
     })
   }
