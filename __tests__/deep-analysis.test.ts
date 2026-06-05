@@ -17,7 +17,7 @@ describe('task-executor.ts deep analysis', () => {
     expect(content).toContain('private async handleCheckoutAndPay(')
 
     const handleCheckoutAndPay = content.indexOf('private async handleCheckoutAndPay(')
-    const checkoutBody = content.substring(handleCheckoutAndPay, handleCheckoutAndPay + 2000)
+    const checkoutBody = content.substring(handleCheckoutAndPay, handleCheckoutAndPay + 2500)
     expect(checkoutBody).toContain('createPendingConfirmation')
     expect(checkoutBody).toContain('taskId')
   })
@@ -26,7 +26,7 @@ describe('task-executor.ts deep analysis', () => {
     const content = fs.readFileSync(path.join(projectRoot, 'electron/scheduler/task-executor.ts'), 'utf-8')
 
     const handleCheckoutAndPay = content.indexOf('private async handleCheckoutAndPay(')
-    const checkoutBody = content.substring(handleCheckoutAndPay, handleCheckoutAndPay + 2000)
+    const checkoutBody = content.substring(handleCheckoutAndPay, handleCheckoutAndPay + 2500)
 
     expect(checkoutBody).toContain('priceIncreaseRate >= protectionThreshold')
     expect(checkoutBody).toContain('createPendingConfirmation')

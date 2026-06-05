@@ -89,6 +89,7 @@ export class PaymentService {
         `订单金额 ¥${totalAmount!.toFixed(2)} 超过免密支付上限 ¥${payFreeLimit.toFixed(2)}，为保障资金安全需要您手动确认付款。请在弹出的窗口中完成支付，然后点击"已完成"`,
         `金额超过免密支付上限 - 需要手动确认付款`,
         bannerMsg,
+        'payment',
       )
       if (confirmed) {
         debugLog('[Taobao-Payment] user confirmed payment completion.')
@@ -148,6 +149,7 @@ export class PaymentService {
               '淘宝检测到异常操作，要求进行安全验证（滑块验证）。请在弹出的窗口中拖动滑块完成验证，然后点击"已完成"，系统将继续自动完成后续流程',
               '淘宝安全验证 - 需要手动操作',
               verifyBanner,
+              'verification',
             )
             if (verified) {
               await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth)
@@ -205,6 +207,7 @@ export class PaymentService {
               '淘宝检测到异常操作，要求进行验证码验证。请在弹出的窗口中完成验证（滑块或验证码），然后点击"已完成"，系统将继续自动完成后续流程',
               '淘宝安全验证 - 需要手动操作',
               captchaBanner,
+              'verification',
             )
             if (verified) {
               await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth)
@@ -291,6 +294,7 @@ export class PaymentService {
                 '系统等待支付结果超过60秒未能自动检测到。请在弹出的窗口中确认是否已完成支付，然后点击"已完成"',
                 '支付结果确认 - 需要手动确认',
                 '📋 自动支付超时：系统等待支付结果超过60秒未能自动检测到。请在下方确认是否已完成支付，然后点击"已完成"',
+                'payment',
               )
               if (confirmed) {
                 await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth)
@@ -317,6 +321,7 @@ export class PaymentService {
             '订单已提交成功，当前支付模式为手动支付，需要您手动完成支付。请在弹出的窗口中完成支付，然后点击"已完成"',
             '请完成支付 - 需要手动操作',
             '📋 订单已提交成功，当前支付模式为手动支付，请在下方完成支付后点击"已完成"',
+            'payment',
           )
           if (confirmed) {
             await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth)

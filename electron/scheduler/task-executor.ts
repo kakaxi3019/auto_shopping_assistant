@@ -11,6 +11,13 @@ const PREVIEW_LOG_FILE = join(app.getPath('userData'), 'preview-debug.log')
 const MIN_CONFIDENCE_THRESHOLD = 50
 const KEYWORD_MATCH_THRESHOLD = 35
 
+const PRODUCT_TYPE_SUFFIXES = [
+  '鞋', '裤', '裙', '衫', '帽', '袜', '套', '壳', '膜', '包', 
+  '架', '桌', '椅', '柜', '箱', '垫', '罩', '巾', '布', '带', 
+  '绳', '夹', '扣', '钉', '灯', '糖', '粉', '酱', '油', '醋',
+  '耳机', '键盘', '鼠标', '杯', '玩具', '线', '片', '卡', '贴'
+]
+
 function previewLog(msg: string) {
   const ts = new Date().toISOString()
   const line = `[${ts}] ${msg}\n`
@@ -119,7 +126,8 @@ export class TaskExecutor {
 
     onProgress(`正在为 "${item.name}" 执行再买一单（订单 ${order.orderId}）...`)
     try {
-      const cartResult: AddToCartResult = await platform.addToCart(url, item.sku, order.orderId, isCartOnly)
+      const skuToUse = item.sku || order.sku
+      const cartResult: AddToCartResult = await platform.addToCart(url, skuToUse, order.orderId, isCartOnly)
       debugLog('TaskExecutor', `addToCart returned: ${JSON.stringify(cartResult)}`)
       if (!cartResult.success) {
         await this.handleSearchFallback(taskId, item, order, platform, cartResult, result, onProgress, dryRun, paymentMode)
@@ -129,6 +137,28 @@ export class TaskExecutor {
         result.status = 'success'
       } else {
         await this.handleCheckoutAndPay(taskId, item, order, platform, cartResult.directToPay ?? false, url, result, onProgress, dryRun, paymentMode)
+      }
+
+      // 成功购买（非仅加购模式）后，将新订单同步/保存至本地历史订单库中
+      if (result.status === 'success' && !isCartOnly) {
+        if (dryRun) {
+          onProgress('测试模式：购买已模拟完成，跳过添加历史订单。')
+        } else {
+          const autoSave = this.db.getSetting('auto_save_orders') === 'true'
+          if (autoSave) {
+            onProgress('付款成功！正在后台静默同步平台最新订单以更新本地历史记录...')
+            try {
+              // fetchOrderHistory(1) 只同步第一页最新订单，既快速又有效
+              await platform.fetchOrderHistory(1)
+              onProgress('本地历史订单库已成功同步并更新')
+            } catch (syncError) {
+              debugLog('TaskExecutor', `Silent order sync failed: ${syncError}`)
+              onProgress('后台订单同步失败，您可以通过"同步订单"按钮手动更新')
+            }
+          } else {
+            onProgress('付款成功！当前设置为“手动保存订单历史”，已跳过自动同步更新。')
+          }
+        }
       }
     } catch (e) {
       const errMsg = String(e)
@@ -165,6 +195,7 @@ export class TaskExecutor {
       if (searchUrl) {
         const purchaseResult = await platform.purchaseFromUrl(searchUrl)
         if (purchaseResult.success) {
+          (result as any).productUrl = searchUrl
           if (isCartOnly) {
             onProgress(`已将商品加入购物车`)
             result.matchedProduct = order.productName
@@ -276,66 +307,50 @@ export class TaskExecutor {
     const searchPlatform = item.platform || platformName
     const cleanKeyword = instruction ? this.cleanInstructionKeyword(instruction) : ''
 
-    if (item.orderRef) {
-      onProgress(`正在通过 LLM 匹配结果查找订单 #${item.orderRef}...`)
-      const order = this.db.getOrderById(item.orderRef)
-      if (order) {
-        if ((order as any).unavailable) {
-          onProgress(`LLM 匹配的订单 #${item.orderRef} 已被排除匹配，尝试其他方式...`)
-        } else if (!item.platform || order.platform === searchPlatform) {
-          const isInvalidMatch = cleanKeyword && this.computeMatchScore(order, cleanKeyword) < KEYWORD_MATCH_THRESHOLD
+    if ((item.matchedOrders && item.matchedOrders.length > 0) || item.orderRef) {
+      onProgress(`正在评估 LLM 匹配结果的候选订单...`)
+      const candidateOrders: Order[] = []
+      const seenIds = new Set<number>()
+
+      if (item.matchedOrders) {
+        for (const match of item.matchedOrders) {
+          if (match.confidence < MIN_CONFIDENCE_THRESHOLD) continue
+          const order = this.db.getOrderById(match.orderRef)
+          if (!order || (order as any).unavailable) continue
+          if (item.platform && order.platform !== searchPlatform) continue
           
-          if (isInvalidMatch || (this.computeMatchScore(order, item.name) < KEYWORD_MATCH_THRESHOLD && item.matchedOrders && item.matchedOrders.length > 1)) {
-            if (isInvalidMatch) {
-              onProgress(`LLM 首选匹配 (${order.productName}) 与用户原始意图 "${cleanKeyword}" 不匹配，尝试其他候选...`)
-            } else {
-              onProgress(`LLM 首选匹配 (${order.productName}) 与"${item.name}"关键词不匹配，尝试其他 LLM 候选...`)
-            }
-            
-            let bestAltOrder: Order | null = null
-            let bestAltScore = 0
-            if (item.matchedOrders) {
-              for (const match of item.matchedOrders) {
-                if (match.orderRef === item.orderRef) continue
-                if (match.confidence < MIN_CONFIDENCE_THRESHOLD) continue
-                const altOrder = this.db.getOrderById(match.orderRef)
-                if (!altOrder || (altOrder as any).unavailable) continue
-                if (item.platform && altOrder.platform !== searchPlatform) continue
-                
-                if (cleanKeyword && this.computeMatchScore(altOrder, cleanKeyword) < KEYWORD_MATCH_THRESHOLD) {
-                  continue
-                }
-                
-                const altScore = this.computeMatchScore(altOrder, item.name)
-                if (altScore > bestAltScore) {
-                  bestAltScore = altScore
-                  bestAltOrder = altOrder
-                }
-              }
-            }
-            if (bestAltOrder && bestAltScore >= KEYWORD_MATCH_THRESHOLD) {
-              result.matchedProduct = bestAltOrder.productName
-              result.matchMethod = 'llm_direct'
-              result.orderId = bestAltOrder.id
-              onProgress(`LLM 候选匹配: ${bestAltOrder.productName}（意图匹配更优）`)
-              return [bestAltOrder]
-            }
-            
-            if (isInvalidMatch) {
-              onProgress(`LLM 所有候选均与用户意图 "${cleanKeyword}" 不符，熔断此 LLM 匹配，尝试本地搜索兜底...`)
-            }
+          if (cleanKeyword && this.computeMatchScore(order, cleanKeyword) < KEYWORD_MATCH_THRESHOLD) {
+            continue
           }
-          
-          if (!isInvalidMatch) {
-            result.matchedProduct = order.productName
-            result.matchMethod = 'llm_direct'
-            result.orderId = order.id
-            onProgress(`LLM 精确匹配: ${order.productName}`)
-            return [order]
+          if (!seenIds.has(order.id)) {
+            seenIds.add(order.id)
+            candidateOrders.push(order)
           }
         }
       }
-      onProgress(`LLM 匹配的订单 #${item.orderRef} 不存在或平台不匹配，尝试其他方式...`)
+
+      if (item.orderRef && !seenIds.has(item.orderRef)) {
+        const order = this.db.getOrderById(item.orderRef)
+        if (order && !(order as any).unavailable && (!item.platform || order.platform === searchPlatform)) {
+          if (!cleanKeyword || this.computeMatchScore(order, cleanKeyword) >= KEYWORD_MATCH_THRESHOLD) {
+            seenIds.add(order.id)
+            candidateOrders.push(order)
+          }
+        }
+      }
+
+      if (candidateOrders.length > 0) {
+        const sorted = this.sortCandidatesByUserPreference(candidateOrders)
+        const bestOrder = sorted[0]
+        if (bestOrder) {
+          result.matchedProduct = bestOrder.productName
+          result.matchMethod = 'llm_direct'
+          result.orderId = bestOrder.id
+          onProgress(`LLM 智能匹配优先: ${bestOrder.productName}`)
+          return sorted
+        }
+      }
+      onProgress(`LLM 候选匹配订单不存在、已被排除或与意图不符，尝试其他方式...`)
     }
 
     const hasExcluded = this.db.hasExcludedOrders(item.name)
@@ -347,22 +362,30 @@ export class TaskExecutor {
     onProgress(`正在查找 "${item.name}" 的历史订单...`)
     const exactOrders = this.db.searchOrders(item.name, searchPlatform, true)
     if (exactOrders.length > 0) {
-      result.matchMethod = 'exact'
-      result.matchedProduct = exactOrders[0].productName
-      result.orderId = exactOrders[0].id
-      result.unavailable = !!exactOrders[0].unavailable
-      onProgress(`精确匹配: ${exactOrders.length} 条订单`)
-      return exactOrders
+      const sorted = this.sortCandidatesByUserPreference(exactOrders)
+      if (sorted && sorted.length > 0) {
+        const bestOrder = sorted[0]
+        result.matchMethod = 'exact'
+        result.matchedProduct = bestOrder.productName
+        result.orderId = bestOrder.id
+        result.unavailable = !!bestOrder.unavailable
+        onProgress(`精确匹配: ${sorted.length} 条订单`)
+        return sorted
+      }
     }
 
     const { orders, usedKeyword } = this.db.searchOrdersFuzzy(item.name, searchPlatform, true)
     if (orders.length > 0) {
-      result.matchMethod = 'fuzzy'
-      result.matchedProduct = orders[0].productName
-      result.orderId = orders[0].id
-      result.unavailable = !!orders[0].unavailable
-      onProgress(`模糊匹配(关键词"${usedKeyword}"): ${orders.length} 条订单`)
-      return orders
+      const sorted = this.sortCandidatesByUserPreference(orders)
+      if (sorted && sorted.length > 0) {
+        const bestOrder = sorted[0]
+        result.matchMethod = 'fuzzy'
+        result.matchedProduct = bestOrder.productName
+        result.orderId = bestOrder.id
+        result.unavailable = !!bestOrder.unavailable
+        onProgress(`模糊匹配(关键词"${usedKeyword}"): ${sorted.length} 条订单`)
+        return sorted
+      }
     }
 
     return []
@@ -373,9 +396,11 @@ export class TaskExecutor {
 
     if (item.orderRef) {
       const order = this.db.getOrderById(item.orderRef)
-      if (order && (order as any).unavailable) {
-      } else if (order && (!item.platform || order.platform === searchPlatform)) {
-        return { order, matchMethod: 'llm_direct' }
+      if (order && !(order as any).unavailable && (!item.platform || order.platform === searchPlatform)) {
+        const cleanKeyword = _instruction ? this.cleanInstructionKeyword(_instruction) : ''
+        if (!cleanKeyword || this.computeMatchScore(order, cleanKeyword) >= KEYWORD_MATCH_THRESHOLD) {
+          return { order, matchMethod: 'llm_direct' }
+        }
       }
     }
 
@@ -384,7 +409,12 @@ export class TaskExecutor {
       exactOrders = this.db.searchOrders(item.name, undefined, true)
     }
     if (exactOrders.length > 0) {
-      return { order: exactOrders[0], matchMethod: 'exact' }
+      const cleanKeyword = _instruction ? this.cleanInstructionKeyword(_instruction) : ''
+      for (const order of exactOrders) {
+        if (!cleanKeyword || this.computeMatchScore(order, cleanKeyword) >= KEYWORD_MATCH_THRESHOLD) {
+          return { order, matchMethod: 'exact' }
+        }
+      }
     }
 
     if (item.name.length >= 2) {
@@ -393,7 +423,12 @@ export class TaskExecutor {
         fuzzyResult = this.db.searchOrdersFuzzy(item.name, undefined, true)
       }
       if (fuzzyResult.orders.length > 0) {
-        return { order: fuzzyResult.orders[0], matchMethod: 'fuzzy' }
+        const cleanKeyword = _instruction ? this.cleanInstructionKeyword(_instruction) : ''
+        for (const order of fuzzyResult.orders) {
+          if (!cleanKeyword || this.computeMatchScore(order, cleanKeyword) >= KEYWORD_MATCH_THRESHOLD) {
+            return { order, matchMethod: 'fuzzy' }
+          }
+        }
       }
     }
 
@@ -412,6 +447,14 @@ export class TaskExecutor {
     const kw = keyword.toLowerCase()
     if (name === kw) return 100
 
+    const kwType = PRODUCT_TYPE_SUFFIXES.find(s => kw.includes(s))
+    if (kwType) {
+      const nameHasOtherType = PRODUCT_TYPE_SUFFIXES.some(s => s !== kwType && name.includes(s) && !kw.includes(s))
+      if (nameHasOtherType) {
+        return 10
+      }
+    }
+
     if (name.includes(kw)) {
       // Check if the keyword is an independent term or part of a compound word
       // e.g. "篮球" in "篮球鞋" is compound (本体不是篮球), but "篮球" in "安踏静音篮球" is independent
@@ -424,10 +467,9 @@ export class TaskExecutor {
       if (compoundSuffixMatch) {
         const suffix = compoundSuffixMatch[0]
         // Common product-type suffixes that indicate a different product category
-        const productTypeSuffixes = ['鞋', '裤', '裙', '衫', '帽', '袜', '套', '壳', '膜', '包', '架', '桌', '椅', '柜', '箱', '垫', '罩', '巾', '布', '带', '绳', '夹', '扣', '钉', '灯', '糖', '粉', '酱', '油', '醋']
         const protectionSuffixes = ['护踝', '护膝', '护腕', '护肘', '护具', '护齿', '护指', '头盔', '防护', '扭伤', '损伤', '运动']
         const modifierSuffixes = ['长裤', '短裤', '长袖', '短袖', '休闲']
-        const isSuffixProductType = productTypeSuffixes.some(s => suffix.startsWith(s))
+        const isSuffixProductType = PRODUCT_TYPE_SUFFIXES.some(s => suffix.startsWith(s))
         const isSuffixProtection = protectionSuffixes.some(s => suffix.startsWith(s))
         const isSuffixModifier = modifierSuffixes.some(s => suffix.startsWith(s))
 
@@ -464,13 +506,18 @@ export class TaskExecutor {
       }
       if (bestSubLen > 0 && bestSubLen >= len) break
     }
+    let baseScore = 30
     if (bestSubLen > 0) {
       const ratio = bestSubLen / kw.length
-      if (ratio < 0.5) return 30 + ratio * 10
-      if (ratio < 0.75) return 40 + (ratio - 0.5) * 80
-      return 60 + ratio * 30
+      if (ratio < 0.5) baseScore = 30 + ratio * 10
+      else if (ratio < 0.75) baseScore = 40 + (ratio - 0.5) * 80
+      else baseScore = 60 + ratio * 30
     }
-    return 30
+
+    if (kwType && name.includes(kwType)) {
+      baseScore = Math.min(100, baseScore + 25)
+    }
+    return baseScore
   }
 
   private computeAmbiguityLevel(candidates: CandidateOrder[]): AmbiguityLevel {
@@ -504,6 +551,7 @@ export class TaskExecutor {
       let filteredByConfidenceCount = 0
       const cleanKeyword = instruction ? this.cleanInstructionKeyword(instruction) : ''
 
+      const seenOrderIds = new Set<number>()
       for (const match of item.matchedOrders.slice(0, MAX_CANDIDATES)) {
         if (match.confidence < MIN_CONFIDENCE_THRESHOLD) {
           filteredByConfidenceCount++
@@ -513,13 +561,21 @@ export class TaskExecutor {
         if (!order) {
           continue
         }
+        if (seenOrderIds.has(order.id)) {
+          continue
+        }
+        seenOrderIds.add(order.id)
         if ((order as any).unavailable) {
           excludedCount++
           continue
         }
         
-        if (cleanKeyword && this.computeMatchScore(order, cleanKeyword) < KEYWORD_MATCH_THRESHOLD) {
-          continue
+        // 对于大模型给出的高置信度推荐（>= 80分），系统选择信任其决策而豁免关键词硬过滤，
+        // 只有在置信度较低（低于 80分）时，才需要通过本地 computeMatchScore 规则校验来防御小模型的幻觉。
+        if (match.confidence < 80) {
+          if (cleanKeyword && this.computeMatchScore(order, cleanKeyword) < KEYWORD_MATCH_THRESHOLD) {
+            continue
+          }
         }
 
         candidates.push({
@@ -535,27 +591,9 @@ export class TaskExecutor {
       }
 
       if (candidates.length > 0) {
-        const keywordScores = candidates.map(c => {
-          const score = this.computeMatchScore({ productName: c.productName } as Order, item.name)
-          return score
-        })
-
-        const hasHighKeywordMatch = keywordScores.some(s => s >= KEYWORD_MATCH_THRESHOLD)
-        const firstLowKeyword = keywordScores[0] < KEYWORD_MATCH_THRESHOLD
-        if (hasHighKeywordMatch && firstLowKeyword) {
-          const indexed = candidates.map((c, i) => ({ candidate: c, keywordScore: keywordScores[i], llmScore: c.matchScore ?? 0 }))
-          indexed.sort((a, b) => {
-            const aHigh = a.keywordScore >= KEYWORD_MATCH_THRESHOLD
-            const bHigh = b.keywordScore >= KEYWORD_MATCH_THRESHOLD
-            if (aHigh && !bHigh) return -1
-            if (!aHigh && bHigh) return 1
-            return b.llmScore - a.llmScore
-          })
-          candidates.length = 0
-          for (const { candidate } of indexed) {
-            candidates.push(candidate)
-          }
-        }
+        const sorted = this.sortCandidatesByUserPreference(candidates)
+        candidates.length = 0
+        candidates.push(...sorted)
 
         const best = candidates[0]
         preview.matched = true
@@ -569,8 +607,6 @@ export class TaskExecutor {
         preview.candidates = candidates
         preview.totalMatchCount = candidates.length
         preview.ambiguityLevel = this.computeAmbiguityLevel(candidates)
-      } else if (excludedCount > 0) {
-      } else if (filteredByConfidenceCount > 0) {
       } else {
         const { order, matchMethod } = this.searchBestMatchOrder(item, platformName, instruction)
         if (order && matchMethod) {
@@ -595,9 +631,10 @@ export class TaskExecutor {
             shopName: o.shopName,
             matchScore: undefined,
           }))
-          preview.candidates = fallbackCandidates
+          const sorted = this.sortCandidatesByUserPreference(fallbackCandidates)
+          preview.candidates = sorted
           preview.totalMatchCount = candidateOrders.length
-          preview.ambiguityLevel = this.computeAmbiguityLevel(fallbackCandidates)
+          preview.ambiguityLevel = this.computeAmbiguityLevel(sorted)
         }
       }
     } else {
@@ -627,10 +664,11 @@ export class TaskExecutor {
             shopName: o.shopName,
             matchScore: undefined,
           }))
-          preview.candidates = candidates
+          const sorted = this.sortCandidatesByUserPreference(candidates)
+          preview.candidates = sorted
           preview.totalMatchCount = candidateOrders.length
-          if (!preview.matched && candidates.length > 0) {
-            const best = candidates[0]
+          if (!preview.matched && sorted.length > 0) {
+            const best = sorted[0]
             preview.matched = true
             preview.matchedProduct = best.productName
             preview.matchMethod = 'exact'
@@ -639,7 +677,7 @@ export class TaskExecutor {
             preview.orderRef = best.id
             preview.platform = best.platform
           }
-          preview.ambiguityLevel = this.computeAmbiguityLevel(candidates)
+          preview.ambiguityLevel = this.computeAmbiguityLevel(sorted)
         }
       }
     }
@@ -715,4 +753,61 @@ export class TaskExecutor {
 
     return result
   }
+
+  private sortCandidatesByUserPreference<T extends { productName: string; price: number; id: number }>(
+    candidates: T[],
+  ): T[] {
+    const validCandidates = (candidates || []).filter(c => c && typeof c.productName === 'string')
+    if (validCandidates.length <= 1) return validCandidates
+
+    const productNames = validCandidates.map(c => c.productName)
+    const stats = this.db.getProductStats(productNames)
+
+    const getStats = (productName: string) => {
+      return stats[productName] || { count: 1, lastPurchasedAt: '' }
+    }
+
+    const parseTime = (timeStr: string) => {
+      if (!timeStr) return 0
+      const ms = Date.parse(timeStr)
+      return isNaN(ms) ? 0 : ms
+    }
+
+    const TIME_THRESHOLD = 7 * 24 * 60 * 60 * 1000 // 7 days
+
+    return [...validCandidates].sort((a, b) => {
+      const statsA = getStats(a.productName)
+      const statsB = getStats(b.productName)
+
+      // 0. 核心置信度优先：大模型匹配置信度 (降序)
+      const scoreA = (a as any).matchScore ?? 0
+      const scoreB = (b as any).matchScore ?? 0
+      if (scoreA !== scoreB) {
+        return scoreB - scoreA
+      }
+
+      // 1. 第一权重：购买次数 (降序)
+      if (statsA.count !== statsB.count) {
+        return statsB.count - statsA.count
+      }
+
+      // 2. 第二权重：购买时间 (越近期购买的权重越大)
+      const timeA = parseTime(statsA.lastPurchasedAt)
+      const timeB = parseTime(statsB.lastPurchasedAt)
+      const timeDiff = Math.abs(timeA - timeB)
+
+      if (timeDiff > TIME_THRESHOLD) {
+        return timeB - timeA // 降序
+      }
+
+      // 3. 第三权重：价格 (低价格优先，升序)
+      if (a.price !== b.price) {
+        return a.price - b.price // 升序
+      }
+
+      // 兜底：如果都一样，按ID降序
+      return b.id - a.id
+    })
+  }
 }
+

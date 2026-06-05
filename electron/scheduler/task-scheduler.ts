@@ -159,13 +159,31 @@ export class TaskScheduler {
   }
 
   async previewTask(instruction: string, platformName = 'taobao'): Promise<TaskPreview> {
-    try { writeFileSync(SCHEDULER_LOG_FILE, '', 'utf-8') } catch {}
-    const parsedItems = await this.parser.parse(instruction)
+    const logFile = join(app.getPath('userData'), 'preview-debug.log')
+    const log = (msg: string) => {
+      const line = `[${new Date().toISOString()}] ${msg}\n`
+      console.log(msg)
+      try { appendFileSync(logFile, line, 'utf-8') } catch {}
+    }
 
-    const items = parsedItems.map(item =>
-      this.executor.previewCandidateOrders(item, platformName, instruction)
-    )
+    log(`>>> previewTask START: instruction="${instruction}", platformName="${platformName}"`)
+    
+    let parsedItems: ParsedShoppingItem[] = []
+    try {
+      parsedItems = await this.parser.parse(instruction)
+      log(`Parsed items: ${JSON.stringify(parsedItems)}`)
+    } catch (e) {
+      log(`Parsing failed: ${e}`)
+      throw e
+    }
 
+    const items = parsedItems.map(item => {
+      const res = this.executor.previewCandidateOrders(item, platformName, instruction)
+      log(`previewCandidateOrders for "${item.name}": matched=${res.matched}, matchedProduct="${res.matchedProduct}", candidatesCount=${res.candidates?.length || 0}`)
+      return res
+    })
+
+    log(`<<< previewTask END: returned items count=${items.length}`)
     return {
       instruction,
       items,

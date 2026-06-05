@@ -1,4 +1,4 @@
-﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿import { BrowserWindow } from 'electron'
+﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿import { BrowserWindow } from 'electron'
 import type { Page, BrowserContext } from 'playwright'
 import type { Database } from '../../../db/database'
 import type { AddToCartResult, Order } from '../../../../shared/types/platform.types'
@@ -9,7 +9,7 @@ import { VerificationService } from './verification.service'
 import { InteractionService } from './interaction.service'
 import { TaobaoAuth } from '../taobao.auth'
 import { setUserAgent, debugLog, humanDelay, humanClickAt, humanClickElement, execJS, injectOverlayBanner, injectCenterToast, rand, ListenerTracker, cleanupForCaptcha, resetCaptchaMode } from '../utils/page-helper'
-import { APP_ICON, WINDOW_SIZES, TIMEOUTS, KEYWORDS } from '../utils/constants'
+import { APP_ICON, WINDOW_SIZES, TIMEOUTS, KEYWORDS, ORDER_DETAIL_URL } from '../utils/constants'
 import { isCheckoutOrPayPage, isLoginPage, isIdentityVerifyPage, isBuyPage, isCartPage, isProductDetailPage, isOrderArchivePage, isOrderDetailPage, isErrorPage } from '../utils/url-helper'
 import { TAOBAO_SELECTORS } from '../taobao.selectors'
 import { HUMAN_SIM_JS } from '../utils/human-sim'
@@ -67,7 +67,7 @@ export class CartService {
     }
 
     try {
-      const result = await this.runInHiddenWindow(orderId, productUrl, cartOnly)
+      const result = await this.runInHiddenWindow(orderId, productUrl, cartOnly, sku)
       if (result) return result
 
       return { success: false, error: '再买一单操作未返回结果' }
@@ -828,14 +828,14 @@ export class CartService {
     }
   }
 
-  private async runInHiddenWindow(orderId: string, productUrl?: string, cartOnly?: boolean): Promise<AddToCartResult | null> {
+  private async runInHiddenWindow(orderId: string, productUrl?: string, cartOnly?: boolean, sku?: string): Promise<AddToCartResult | null> {
     const mainWindow = this.windowManager.getMainWindow()
     if (!mainWindow) {
       debugLog('[Taobao-Cart] runInHiddenWindow failed: mainWindow is null')
       return null
     }
     const bizOrderId = orderId.replace(/_\d+$/, '')
-    const detailUrl = `https://buyertrade.taobao.com/trade/detail/trade_item_detail.htm?bizOrderId=${bizOrderId}`
+    const detailUrl = `${ORDER_DETAIL_URL}${bizOrderId}`
     const detailUrlLoadOptions = { httpReferrer: 'https://buyertrade.taobao.com/trade/itemlist/list_bought_items.htm' }
     this.emitStatus('正在打开订单详情页...')
     debugLog(`[Taobao-Cart] runInHiddenWindow: detailUrl=${detailUrl}, cartOnly=${cartOnly}`)
@@ -933,13 +933,13 @@ export class CartService {
             await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth)
             this.emitStatus('已进入结算页面')
             newWindow.setSize(WINDOW_SIZES.CONFIRMATION.width, WINDOW_SIZES.CONFIRMATION.height)
-            newWindow.setTitle('请确认订单信息并提交')
+            newWindow.setTitle('自动结算中 - 请稍候')
             const mw = this.windowManager.getMainWindow()
             if (mw) {
               newWindow.setParentWindow(mw)
             }
-            injectOverlayBanner(newWindow, "💳 自动购物助手：请确认订单信息并提交")
-            injectCenterToast(newWindow, "请确认订单信息并提交")
+            injectOverlayBanner(newWindow, "💳 自动购物助手：已进入结算页面，系统正在自动为您提交订单，请稍候...")
+            injectCenterToast(newWindow, "正在自动结算，请稍候")
             newWindow.show()
             doResolve({ success: true, directToPay: true })
             return
@@ -988,7 +988,7 @@ export class CartService {
                 doResolve({ success: false, error: `商品不可购买（${popupOffShelf}）` })
                 return
               }
-              if (popupUrl.includes('openSku=true') || popupUrl.includes('sku_properties=') || popupUrl.includes('skuId=')) {
+              if (popupUrl.includes('openSku=true') || popupUrl.includes('sku_properties=') || popupUrl.includes('skuId=') || sku) {
                 this.emitStatus('正在选择商品规格...')
                 const skuClickCount = await execJS(newWindow, `
                   (function() {
@@ -996,52 +996,176 @@ export class CartService {
                     var skuProps = urlParams.get('sku_properties');
                     var skuId = urlParams.get('skuId');
                     var clicked = 0;
-                    if (skuProps) {
-                      var pairs = skuProps.split(';');
-                      for (var p = 0; p < pairs.length; p++) {
-                        var pair = pairs[p].split(':');
-                        if (pair.length !== 2) continue;
-                        var valueId = pair[1];
-                        var skuItems = document.querySelectorAll('[data-value], [data-sku-id], [class*="skuItem"], [class*="sku-item"], [class*="SkuItem"], [class*="valueItem"], [class*="ValueItem"]');
+                    
+                    var targetSkuText = ${JSON.stringify(sku || '')};
+                    if (targetSkuText) {
+                      var parts = targetSkuText.split(/[;；]/);
+                      for (var p = 0; p < parts.length; p++) {
+                        var part = parts[p].trim();
+                        if (!part) continue;
+                        var value = part;
+                        var colonIdx = part.indexOf(':');
+                        if (colonIdx === -1) colonIdx = part.indexOf('：');
+                        if (colonIdx !== -1) {
+                          value = part.substring(colonIdx + 1).trim();
+                        }
+                        if (!value) continue;
+                        var skuItems = document.querySelectorAll('[class*="skuItem"], [class*="sku-item"], [class*="SkuItem"], [data-sku], [class*="valueItem"], [class*="ValueItem"], [class*="sku"], [class*="Sku"], button, a');
+                        var bestMatch = null;
                         for (var i = 0; i < skuItems.length; i++) {
-                          var val = skuItems[i].getAttribute('data-value') || skuItems[i].getAttribute('data-sku-id') || '';
-                          if (val === valueId || val.endsWith(':' + valueId)) {
-                            _hs.click(skuItems[i]);
+                          var item = skuItems[i];
+                          var rect = item.getBoundingClientRect();
+                          if (rect.width <= 0 || rect.height <= 0) continue;
+                          var text = (item.textContent || item.innerText || '').trim().replace(/\\s+/g, '');
+                          var cleanValue = value.replace(/\\s+/g, '');
+                          if (text === cleanValue || text.includes(cleanValue) || cleanValue.includes(text)) {
+                            if (text === cleanValue) {
+                              bestMatch = item;
+                              break;
+                            }
+                            bestMatch = item;
+                          }
+                        }
+                        if (bestMatch) {
+                          var classList = bestMatch.className || '';
+                          var isAlreadySelected = classList.includes('selected') || classList.includes('active') || classList.includes('current') || bestMatch.getAttribute('aria-checked') === 'true';
+                          if (!isAlreadySelected) {
+                            _hs.click(bestMatch);
+                          }
+                          clicked++;
+                        }
+                      }
+                    }
+                    
+                    if (clicked === 0) {
+                      if (skuProps) {
+                        var pairs = skuProps.split(';');
+                        for (var p = 0; p < pairs.length; p++) {
+                          var pair = pairs[p].split(':');
+                          if (pair.length !== 2) continue;
+                          var valueId = pair[1];
+                          var skuItems = document.querySelectorAll('[data-value], [data-sku-id], [class*="skuItem"], [class*="sku-item"], [class*="SkuItem"], [class*="valueItem"], [class*="ValueItem"]');
+                          for (var i = 0; i < skuItems.length; i++) {
+                            var val = skuItems[i].getAttribute('data-value') || skuItems[i].getAttribute('data-sku-id') || '';
+                            if (val === valueId || val.endsWith(':' + valueId)) {
+                              _hs.click(skuItems[i]);
+                              clicked++;
+                              break;
+                            }
+                          }
+                        }
+                      }
+                      if (clicked === 0 && skuId) {
+                        var allSkuItems = document.querySelectorAll('[data-value], [data-sku-id], [class*="skuItem"], [class*="sku-item"], [class*="SkuItem"], [class*="valueItem"], [class*="ValueItem"], [class*="sku"], [class*="Sku"]');
+                        for (var j = 0; j < allSkuItems.length; j++) {
+                          var itemVal = allSkuItems[j].getAttribute('data-value') || allSkuItems[j].getAttribute('data-sku-id') || '';
+                          if (itemVal === skuId || itemVal.endsWith(':' + skuId)) {
+                            _hs.click(allSkuItems[j]);
                             clicked++;
                             break;
                           }
                         }
+                        if (clicked === 0) {
+                          var skuBtns = document.querySelectorAll('[class*="sku"], [class*="Sku"]');
+                          for (var k = 0; k < skuBtns.length; k++) {
+                            var rect = skuBtns[k].getBoundingClientRect();
+                            if (rect.width <= 0 || rect.height <= 0) continue;
+                            var onclick = skuBtns[k].getAttribute('onclick') || '';
+                            var dataAttrs = skuBtns[k].outerHTML.substring(0, 500);
+                            if (dataAttrs.includes(skuId)) {
+                              _hs.click(skuBtns[k]);
+                              clicked++;
+                              break;
+                            }
+                          }
+                        }
                       }
                     }
-                    if (clicked === 0 && skuId) {
-                      var allSkuItems = document.querySelectorAll('[data-value], [data-sku-id], [class*="skuItem"], [class*="sku-item"], [class*="SkuItem"], [class*="valueItem"], [class*="ValueItem"], [class*="sku"], [class*="Sku"]');
-                      for (var j = 0; j < allSkuItems.length; j++) {
-                        var itemVal = allSkuItems[j].getAttribute('data-value') || allSkuItems[j].getAttribute('data-sku-id') || '';
-                        if (itemVal === skuId || itemVal.endsWith(':' + skuId)) {
-                          _hs.click(allSkuItems[j]);
-                          clicked++;
+                    // Check if there are visible specs
+                    var hasSpecs = false;
+                    var skuItems = document.querySelectorAll('[class*="skuItem"], [class*="sku-item"], [class*="SkuItem"], [data-sku], [class*="valueItem"], [class*="ValueItem"], [class*="sku"], [class*="Sku"]');
+                    for (var i = 0; i < skuItems.length; i++) {
+                      var rect = skuItems[i].getBoundingClientRect();
+                      if (rect.width > 20 && rect.height > 20) {
+                        var text = (skuItems[i].textContent || '').trim();
+                        var isActionBtn = ['立即购买', '加入购物车', '确定', '确定购买', '关闭', '领券购买'].some(function(action) {
+                          return text.includes(action);
+                        });
+                        if (!isActionBtn && text.length > 0 && text.length < 30) {
+                          hasSpecs = true;
                           break;
                         }
                       }
-                      if (clicked === 0) {
-                        var skuBtns = document.querySelectorAll('[class*="sku"], [class*="Sku"]');
-                        for (var k = 0; k < skuBtns.length; k++) {
-                          var rect = skuBtns[k].getBoundingClientRect();
-                          if (rect.width <= 0 || rect.height <= 0) continue;
-                          var onclick = skuBtns[k].getAttribute('onclick') || '';
-                          var dataAttrs = skuBtns[k].outerHTML.substring(0, 500);
-                          if (dataAttrs.includes(skuId)) {
-                            _hs.click(skuBtns[k]);
-                            clicked++;
-                            break;
+                    }
+                    
+                    var hasSelectedSpec = false;
+                    if (hasSpecs) {
+                      for (var i = 0; i < skuItems.length; i++) {
+                        var item = skuItems[i];
+                        var rect = item.getBoundingClientRect();
+                        if (rect.width > 20 && rect.height > 20) {
+                          var classList = item.className || '';
+                          var isSelected = classList.includes('selected') || classList.includes('active') || classList.includes('current') || item.getAttribute('aria-checked') === 'true';
+                          if (isSelected) {
+                            var text = (item.textContent || '').trim();
+                            var isActionBtn = ['立即购买', '加入购物车', '确定', '确定购买', '关闭', '领券购买'].some(function(action) {
+                              return text.includes(action);
+                            });
+                            if (!isActionBtn) {
+                              hasSelectedSpec = true;
+                              break;
+                            }
                           }
                         }
                       }
                     }
-                    return { skuProps: skuProps, skuId: skuId, clicked: clicked };
+                    
+                    return { skuProps: skuProps, skuId: skuId, clicked: clicked, needManualSelect: hasSpecs && !hasSelectedSpec };
                   })()
                 `)
+                debugLog(`[Taobao-Cart] Specification selection matched ${skuClickCount?.clicked} items based on text "${sku || ''}" or URL parameters. needManualSelect=${skuClickCount?.needManualSelect}`)
                 await humanDelay(1000)
+
+                if (skuClickCount?.needManualSelect) {
+                  debugLog('[Taobao-Cart] specifications are visible but none selected. Triggering manual spec selection.')
+                  const actionText = cartOnly ? '点击加入购物车' : '点击购买'
+                  newWindow.setSize(WINDOW_SIZES.CONFIRMATION.width, WINDOW_SIZES.CONFIRMATION.height)
+                  newWindow.setTitle(`请选择商品规格 - 选择后${actionText}`)
+                  const mw = this.windowManager.getMainWindow()
+                  if (mw) {
+                    newWindow.setParentWindow(mw)
+                  }
+                  const bannerMsg = `⚠️ 自动购物助手：规格未选中，请在下方手动选择规格并点击“立即购买”或“加入购物车”`
+                  injectOverlayBanner(newWindow, bannerMsg)
+                  injectCenterToast(newWindow, `请手动选择规格后${actionText}`)
+                  newWindow.show()
+
+                  const confirmed = await this.interactionService.waitForUserConfirmation(
+                    newWindow,
+                    `自动选规格失败，请在弹出的窗口中手动选择规格（选中并点击“立即购买”后，系统将自动跳转并继续，无需手动点击面板上的已选好按钮）`,
+                    `请选择商品规格 - 选择后${actionText}`,
+                    bannerMsg,
+                    'add-to-cart',
+                  )
+
+                  if (confirmed) {
+                    const sw = this.windowManager.getShopWindow()
+                    if (sw && !sw.isDestroyed()) sw.hide()
+                    this.windowManager.setShopWindow(newWindow)
+                    await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth)
+                    const currentUrl = newWindow.webContents.getURL()
+                    if (isCartPage(currentUrl)) {
+                      this.emitStatus('已加入购物车')
+                      doResolve({ success: true, directToPay: false })
+                    } else {
+                      this.emitStatus('已进入结算页面')
+                      doResolve({ success: true, directToPay: true })
+                    }
+                  } else {
+                    doResolve({ success: false, error: '用户取消操作' })
+                  }
+                  return
+                }
 
                 this.emitStatus(cartOnly ? '正在点击加入购物车...' : '正在点击购买...')
                 const clickResult = await execJS(newWindow, `
@@ -1085,9 +1209,15 @@ export class CartService {
                   doResolve({ success: false, error: '该商品不支持加入购物车（未找到加购按钮）' })
                   return
                 }
-                await humanDelay(2000)
-
-                const currentPopupUrl = newWindow.webContents.getURL()
+                // 循环等待跳转到结算页或验证页，最多等待 5 秒，解决网络慢、跳转延迟导致的误判
+                let currentPopupUrl = newWindow.webContents.getURL()
+                for (let retry = 0; retry < 5; retry++) {
+                  currentPopupUrl = newWindow.webContents.getURL()
+                  if (isBuyPage(currentPopupUrl) || isIdentityVerifyPage(currentPopupUrl) || currentPopupUrl.includes('nocaptcha') || currentPopupUrl.includes('slider')) {
+                    break
+                  }
+                  await humanDelay(1000)
+                }
                 if (isIdentityVerifyPage(currentPopupUrl) || currentPopupUrl.includes('nocaptcha') || currentPopupUrl.includes('slider')) {
                   debugLog(`[Taobao-Cart] security identity/captcha page detected: ${currentPopupUrl}`)
                   cleanupForCaptcha(newWindow)
@@ -1124,17 +1254,17 @@ export class CartService {
                       this.emitStatus('验证完成，已进入结算页面')
                       doResolve({ success: true, directToPay: true })
                     } else if (isProductDetailPage(afterVerifyUrl)) {
-                      this.emitStatus('验证完成，请在弹出的窗口中选择规格并购买')
+                      this.emitStatus('验证完成！因页面刷新导致规格已重置，请在弹出窗口中手动重新选择规格并购买')
                       newWindow.setSize(WINDOW_SIZES.CONFIRMATION.width, WINDOW_SIZES.CONFIRMATION.height)
                       newWindow.setTitle('请选择规格并购买')
                       const mw = this.windowManager.getMainWindow()
                       if (mw) newWindow.setParentWindow(mw)
-                      injectOverlayBanner(newWindow, '🛒 自动购物助手：验证通过，请选择规格并点击"立即购买"或"加入购物车"')
-                      injectCenterToast(newWindow, '验证通过，请选择规格并购买')
+                      injectOverlayBanner(newWindow, '🛒 自动购物助手：验证通过！因页面重载导致规格重置，请手动选择规格并点击购买')
+                      injectCenterToast(newWindow, '验证通过，请手动选择规格并购买')
                       newWindow.show()
                       const confirmed = await this.interactionService.waitForUserConfirmation(
                         newWindow,
-                        '验证通过，已进入商品详情页，请在弹出的窗口中选择规格并购买，完成后点击"已完成"',
+                        '安全验证已通过！因风控拦截导致页面重新载入，原选中的规格状态已被重置。请在窗口中手动重新选择规格并点击购买，完成后点击"已完成"',
                         '选择规格并购买',
                         '🛒 验证通过，请选择规格并购买',
                         'add-to-cart',
@@ -1243,17 +1373,17 @@ export class CartService {
                       this.emitStatus('验证完成，已进入结算页面')
                       doResolve({ success: true, directToPay: true })
                     } else if (isProductDetailPage(afterVerifyUrl)) {
-                      this.emitStatus('验证完成，请在弹出的窗口中选择规格并购买')
+                      this.emitStatus('验证完成！因页面刷新导致规格已重置，请在弹出窗口中手动重新选择规格并购买')
                       newWindow.setSize(WINDOW_SIZES.CONFIRMATION.width, WINDOW_SIZES.CONFIRMATION.height)
                       newWindow.setTitle('请选择规格并购买')
                       const mw = this.windowManager.getMainWindow()
                       if (mw) newWindow.setParentWindow(mw)
-                      injectOverlayBanner(newWindow, '🛒 自动购物助手：验证通过，请选择规格并点击"立即购买"或"加入购物车"')
-                      injectCenterToast(newWindow, '验证通过，请选择规格并购买')
+                      injectOverlayBanner(newWindow, '🛒 自动购物助手：验证通过！因页面重载导致规格重置，请手动选择规格并点击购买')
+                      injectCenterToast(newWindow, '验证通过，请手动选择规格并购买')
                       newWindow.show()
                       const confirmed = await this.interactionService.waitForUserConfirmation(
                         newWindow,
-                        '验证通过，已进入商品详情页，请在弹出的窗口中选择规格并购买，完成后点击"已完成"',
+                        '安全验证已通过！因风控拦截导致页面重新载入，原选中的规格状态已被重置。请在窗口中手动重新选择规格并点击购买，完成后点击"已完成"',
                         '选择规格并购买',
                         '🛒 验证通过，请选择规格并购买',
                         'add-to-cart',
@@ -1306,6 +1436,7 @@ export class CartService {
                     `原商品规格信息已失效，请在弹出的窗口中重新选择规格后${actionText}，完成后点击"已完成"`,
                     `请选择商品规格 - 选择后${actionText}`,
                     bannerMsg,
+                    'add-to-cart',
                   )
 
                   if (confirmed) {
@@ -1328,7 +1459,7 @@ export class CartService {
                 }
                 let fallbackReason = '点击购买后页面未跳转到结算页'
                 if (pageDiag.visibleDialogs && pageDiag.visibleDialogs.length > 0) {
-                  fallbackReason = `点击购买后出现弹窗（${pageDiag.visibleDialogs.map((d: any) => d.cls?.substring(0, 20) || '未知').join(', ')}），页面未跳转到结算页`
+                  fallbackReason = '点击购买后页面出现提示弹窗，未跳转到结算页'
                 } else if (pageDiag.hint) {
                   fallbackReason = `页面提示"${pageDiag.hint}"，自动购买无法继续`
                 } else if (!pageDiag.hasBuyBtn) {
@@ -1351,6 +1482,7 @@ export class CartService {
                   `${fallbackReason}，请在弹出的窗口中手动完成购买操作，完成后点击"已完成"`,
                   '请手动完成购买操作',
                   fallbackBanner,
+                  'add-to-cart',
                 )
 
                 if (confirmed) {
@@ -1423,9 +1555,21 @@ export class CartService {
                     doResolve({ success: false, error: '该商品不支持加入购物车（未找到加购按钮）' })
                     return
                   }
-                  await humanDelay(2000)
+                  // 循环等待跳转到结算页或验证页，最多等待 5 秒，解决网络慢、跳转延迟导致的误判
+                  let afterClickUrl = newWindow.webContents.getURL()
+                  for (let retry = 0; retry < 5; retry++) {
+                    afterClickUrl = newWindow.webContents.getURL()
+                    if (isBuyPage(afterClickUrl) || isIdentityVerifyPage(afterClickUrl) || afterClickUrl.includes('nocaptcha') || afterClickUrl.includes('slider')) {
+                      break
+                    }
+                    await humanDelay(1000)
+                  }
 
-                  const afterClickUrl = newWindow.webContents.getURL()
+                  // 如果已经成功跳转到了结算页，直接处理结算并返回，不进入后面的耗时诊断和误判流程
+                  if (isBuyPage(afterClickUrl)) {
+                    await handlePopupUrl(afterClickUrl)
+                    return
+                  }
 
                   const afterClickDiag = await execJS(newWindow, `
                     (function() {
@@ -1472,6 +1616,7 @@ export class CartService {
                       `原商品规格信息已失效，请在弹出的窗口中重新选择规格后${actionText2}，完成后点击"已完成"`,
                       `请选择商品规格 - 选择后${actionText2}`,
                       bannerMsg2,
+                      'add-to-cart',
                     )
 
                     if (confirmed) {
@@ -1492,10 +1637,7 @@ export class CartService {
                     }
                     return
                   }
-                  if (isBuyPage(afterClickUrl)) {
-                    await handlePopupUrl(afterClickUrl)
-                    return
-                  }
+
                   let fallbackReason2 = '点击购买后页面未跳转到结算页'
                   if (afterClickDiag) {
                     if (afterClickDiag.visibleSkuPanels && afterClickDiag.visibleSkuPanels.length > 0) {
@@ -1522,6 +1664,7 @@ export class CartService {
                     `${fallbackReason2}，请在弹出的窗口中手动完成购买操作，完成后点击"已完成"`,
                     '请手动完成购买操作',
                     fallbackBanner2,
+                    'add-to-cart',
                   )
 
                   if (confirmed2) {

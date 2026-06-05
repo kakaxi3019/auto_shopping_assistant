@@ -255,9 +255,31 @@ export class SearchService {
         if (!searchWindow.isDestroyed()) searchWindow.close()
       }, 600000)
 
+      const isProductDetailUrl = (urlStr: string): boolean => {
+        if (!urlStr) return false
+        const lowerUrl = urlStr.toLowerCase()
+        const isTaobaoTmall = lowerUrl.includes('taobao.com') || lowerUrl.includes('tmall.com') || lowerUrl.includes('tmall.hk') || lowerUrl.includes('1688.com')
+        if (isTaobaoTmall) {
+          if (lowerUrl.includes('/item.htm') || 
+              lowerUrl.includes('/detail.htm') || 
+              lowerUrl.includes('/item_o.htm') || 
+              lowerUrl.includes('/offer/') ||
+              lowerUrl.includes('detail.1688.com')) {
+            return true
+          }
+          if (lowerUrl.includes('id=') && 
+              !lowerUrl.includes('search') && 
+              !lowerUrl.includes('list') && 
+              !lowerUrl.includes('cart')) {
+            return true
+          }
+        }
+        return false
+      }
+
       const handleUrl = (url: string) => {
         if (resolved) return
-        if (url.includes('item.taobao.com/item.htm') || url.includes('detail.tmall.com/item.htm') || url.includes('detail.1688.com/offer')) {
+        if (isProductDetailUrl(url)) {
           clearTimeout(timeout)
           safeResolve(url)
           if (!searchWindow.isDestroyed()) searchWindow.close()
@@ -268,7 +290,7 @@ export class SearchService {
       searchWindow.webContents.on('did-navigate-in-page', (_event: any, url: string) => handleUrl(url))
 
       searchWindow.webContents.setWindowOpenHandler(({ url: openUrl }: { url: string }) => {
-        if (openUrl.includes('item.taobao.com/item.htm') || openUrl.includes('detail.tmall.com/item.htm') || openUrl.includes('detail.1688.com/offer')) {
+        if (isProductDetailUrl(openUrl)) {
           handleUrl(openUrl)
         }
         return { action: 'allow' }

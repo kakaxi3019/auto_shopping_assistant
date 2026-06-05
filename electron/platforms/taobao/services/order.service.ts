@@ -116,16 +116,27 @@ export class OrderService {
 
         for (let i = 0; i < result.orders.length; i++) {
           const item = result.orders[i]
-          if (!item.productName) continue
+          
+          // 强化数据完整性校验：必须完整包含所有核心字段以供下次正常复购与匹配
+          const hasValidOrderId = !!(item.orderId && item.orderId.trim() !== '')
+          const hasValidProductName = !!(item.productName && item.productName.trim() !== '')
+          const hasValidProductUrl = !!(item.productUrl && (item.productUrl.startsWith('http') || item.productUrl.startsWith('//') || item.productUrl.startsWith('https')))
+          const hasValidPrice = typeof item.price === 'number' && item.price > 0
+          const hasValidSku = !!((item as any).sku && (item as any).sku.trim() !== '')
 
-          const totalSoFar = allOrders.length + i + 1
+          if (!hasValidOrderId || !hasValidProductName || !hasValidProductUrl || !hasValidPrice || !hasValidSku) {
+            debugLog('OrderService', `跳过不完整的新订单: ${JSON.stringify(item)}`)
+            continue
+          }
+
+          const totalSoFar = allOrders.length + 1
           this.emitStatus(`正在保存订单... (${totalSoFar})`)
 
           const orderId = this.db.upsertOrder({
             platform: 'taobao',
-            orderId: item.orderId || `tb_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+            orderId: item.orderId,
             productName: item.productName,
-            productUrl: item.productUrl || '',
+            productUrl: item.productUrl,
             price: item.price,
             imageUrl: item.imageUrl || '',
             purchasedAt: item.purchasedAt || new Date().toISOString(),

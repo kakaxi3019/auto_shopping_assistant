@@ -45,7 +45,13 @@ function formatPrice(price: number): string {
   return `¥${price.toFixed(2)}`
 }
 
-export default function OrderList({ onNavigateToTasks }: { onNavigateToTasks?: (filter?: string | number) => void }) {
+export default function OrderList({
+  onNavigateToTasks,
+  onScheduleBuy,
+}: {
+  onNavigateToTasks?: (filter?: string | number) => void
+  onScheduleBuy?: (info: { name: string; instruction: string; platform: string }) => void
+}) {
   const [selectedPlatform, setSelectedPlatform] = useState<string | null>(null)
   const [orders, setOrders] = useState<Order[]>([])
   const [orderCounts, setOrderCounts] = useState<Record<string, number>>({})
@@ -620,6 +626,22 @@ export default function OrderList({ onNavigateToTasks }: { onNavigateToTasks?: (
                           title="使用当前支付模式重新购买此商品"
                         >
                           {rebuying === order.id ? '执行中...' : '再买一单'}
+                        </button>
+                      )}
+                      {!manageMode && (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            onScheduleBuy?.({
+                              name: `定时购买: ${order.productName.substring(0, 15)}${order.productName.length > 15 ? '...' : ''}`,
+                              instruction: `买1个 ${order.productName}`,
+                              platform: order.platform,
+                            })
+                          }}
+                          className="text-sm text-indigo-500 hover:text-indigo-700 transition-colors"
+                          title="为此商品设置定时购买任务"
+                        >
+                          定时购买
                         </button>
                       )}
                       {!manageMode && (

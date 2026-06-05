@@ -1,6 +1,6 @@
 import { BrowserWindow } from 'electron'
 import { isDisposableUrl, isLoginPage, isIdentityVerifyPage, isCheckoutOrPayPage, isBuyPage, isCartPage } from '../utils/url-helper'
-import { setUserAgent, injectOverlayBanner, injectCenterToast } from '../utils/page-helper'
+import { setUserAgent, injectOverlayBanner, injectCenterToast, debugLog } from '../utils/page-helper'
 import { APP_ICON } from '../utils/constants'
 import { tryAutoLoginThenShow, showConfirmationWindow } from '../utils/window-helper'
 import type { CookieManager } from '../infrastructure/cookie-manager'
@@ -62,11 +62,27 @@ export class InteractionService {
     bannerMessage: string,
     scene?: 'verification' | 'add-to-cart' | 'payment',
   ): Promise<boolean> {
+    // 动态优化文案，将模糊的 "已完成" 替换为与主面板对应按钮一致的字样，避免误导用户
+    let friendlyStatus = statusMessage
+    let friendlyBanner = bannerMessage
+    if (scene === 'verification') {
+      friendlyStatus = friendlyStatus.replace(/"已完成"|“已完成”|已完成/g, '“我已完成验证”')
+      friendlyBanner = friendlyBanner.replace(/"已完成"|“已完成”|已完成/g, '“我已完成验证”')
+    } else if (scene === 'add-to-cart') {
+      friendlyStatus = friendlyStatus.replace(/"已完成"|“已完成”|已完成/g, '“我已选好规格并加购”')
+      friendlyBanner = friendlyBanner.replace(/"已完成"|“已完成”|已完成/g, '“我已选好规格并加购”')
+    } else if (scene === 'payment') {
+      friendlyStatus = friendlyStatus.replace(/"已完成"|“已完成”|已完成/g, '“我已完成支付”')
+      friendlyBanner = friendlyBanner.replace(/"已完成"|“已完成”|已完成/g, '“我已完成支付”')
+    }
+
     const id = `confirm_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
     const windowUrl = win.webContents.getURL()
     const disposable = this.isDisposableUrl(windowUrl)
     return new Promise<boolean>((resolve) => {
       let resolved = false
+      let cleanListeners: () => void = () => {}
+
       const safeResolve = (value: boolean) => {
         if (resolved) return
         resolved = true
@@ -77,6 +93,7 @@ export class InteractionService {
         if (this.pendingConfirmation?.id === id) {
           this.pendingConfirmation = null
         }
+        cleanListeners()
         resolve(value)
       }
 
@@ -86,51 +103,79 @@ export class InteractionService {
         window: win,
         windowUrl,
         windowTitle,
-        bannerMessage,
+        bannerMessage: friendlyBanner,
         scene,
       }
 
-      if (!win.isDestroyed()) {
-        const onNavigate = () => {
-          if (this.pendingConfirmation && this.pendingConfirmation.id === id && !win.isDestroyed()) {
-            const newUrl = win.webContents.getURL()
-            this.pendingConfirmation.windowUrl = newUrl
-            if (isBuyPage(newUrl) || newUrl.includes('alipay.com')) {
-              if (this.pendingConfirmation.scene !== 'payment') {
-                this.pendingConfirmation.scene = 'payment'
-                this.emitStatus(`已进入支付页面，请在窗口中完成支付|SCENE:payment|`)
-              }
+      const onNavigate = () => {
+        if (resolved || win.isDestroyed()) return
+        if (this.pendingConfirmation && this.pendingConfirmation.id === id) {
+          const newUrl = win.webContents.getURL()
+          this.pendingConfirmation.windowUrl = newUrl
+          if (this.pendingConfirmation.scene === 'add-to-cart') {
+            if (isBuyPage(newUrl) || isCartPage(newUrl)) {
+              debugLog(`[Taobao-Interaction] auto-detected navigation to buy/cart page in onNavigate: ${newUrl}. Auto-resolving confirmation.`)
+              safeResolve(true)
+              return
+            }
+          }
+          if (newUrl.includes('alipay.com') || newUrl.includes('cashier')) {
+            if (this.pendingConfirmation.scene !== 'payment') {
+              this.pendingConfirmation.scene = 'payment'
+              this.emitStatus(`已进入支付页面，请在窗口中完成支付|SCENE:payment|`)
             }
           }
         }
-        const onNavigateInPage = () => {
-          if (this.pendingConfirmation && this.pendingConfirmation.id === id && !win.isDestroyed()) {
-            const newUrl = win.webContents.getURL()
-            this.pendingConfirmation.windowUrl = newUrl
-            if (isBuyPage(newUrl) || newUrl.includes('alipay.com')) {
-              if (this.pendingConfirmation.scene !== 'payment') {
-                this.pendingConfirmation.scene = 'payment'
-                this.emitStatus(`已进入支付页面，请在窗口中完成支付|SCENE:payment|`)
-              }
+      }
+
+      const onNavigateInPage = () => {
+        if (resolved || win.isDestroyed()) return
+        if (this.pendingConfirmation && this.pendingConfirmation.id === id) {
+          const newUrl = win.webContents.getURL()
+          this.pendingConfirmation.windowUrl = newUrl
+          if (this.pendingConfirmation.scene === 'add-to-cart') {
+            if (isBuyPage(newUrl) || isCartPage(newUrl)) {
+              debugLog(`[Taobao-Interaction] auto-detected navigation to buy/cart page in onNavigateInPage: ${newUrl}. Auto-resolving confirmation.`)
+              safeResolve(true)
+              return
+            }
+          }
+          if (newUrl.includes('alipay.com') || newUrl.includes('cashier')) {
+            if (this.pendingConfirmation.scene !== 'payment') {
+              this.pendingConfirmation.scene = 'payment'
+              this.emitStatus(`已进入支付页面，请在窗口中完成支付|SCENE:payment|`)
             }
           }
         }
-        const onClosed = () => {
-          if (!resolved) {
-            const closedUrl = this.pendingConfirmation?.windowUrl || ''
-            const currentScene = this.pendingConfirmation?.scene || scene || 'add-to-cart'
-            if (this.isDisposableUrl(closedUrl)) {
-              this.emitStatus(`操作窗口已关闭，结算/支付页面无法恢复，任务已自动取消|SCENE:${currentScene}|`)
-              safeResolve(false)
-            } else {
-              this.emitStatus(`操作窗口已关闭|SCENE:${currentScene}|`)
-            }
+      }
+
+      const onClosed = () => {
+        if (!resolved) {
+          const closedUrl = this.pendingConfirmation?.windowUrl || ''
+          const currentScene = this.pendingConfirmation?.scene || scene || 'add-to-cart'
+          if (this.isDisposableUrl(closedUrl)) {
+            this.emitStatus(`操作窗口已关闭，结算/支付页面无法恢复，任务已自动取消|SCENE:${currentScene}|`)
+            safeResolve(false)
+          } else {
+            this.emitStatus(`操作窗口已关闭|SCENE:${currentScene}|`)
           }
-          if (!win.isDestroyed()) {
+        }
+        cleanListeners()
+      }
+
+      cleanListeners = () => {
+        if (!win.isDestroyed()) {
+          try {
             win.webContents.removeListener('did-navigate', onNavigate)
             win.webContents.removeListener('did-navigate-in-page', onNavigateInPage)
+            win.removeListener('closed', onClosed)
+          } catch (e) {
+            debugLog(`[Taobao-Interaction] error removing listeners: ${e}`)
           }
         }
+      }
+
+      if (!win.isDestroyed()) {
         win.webContents.on('did-navigate', onNavigate)
         win.webContents.on('did-navigate-in-page', onNavigateInPage)
         win.on('closed', onClosed)
@@ -144,10 +189,10 @@ export class InteractionService {
       }, InteractionService.CONFIRMATION_TIMEOUT_MS)
 
       if (disposable) {
-        this.emitStatus(statusMessage.replace('弹出的窗口', '弹出的窗口（关闭后无法恢复）') + (scene ? `|SCENE:${scene}|` : ''))
+        this.emitStatus(friendlyStatus.replace('弹出的窗口', '弹出的窗口（关闭后无法恢复）') + (scene ? `|SCENE:${scene}|` : ''))
       } else {
         const reopenTag = `|REOPEN:${id}|弹出的窗口|REOPEN_END|`
-        this.emitStatus(`${statusMessage.replace('弹出的窗口', reopenTag)}${scene ? `|SCENE:${scene}|` : ''}`)
+        this.emitStatus(`${friendlyStatus.replace('弹出的窗口', reopenTag)}${scene ? `|SCENE:${scene}|` : ''}`)
       }
     })
   }

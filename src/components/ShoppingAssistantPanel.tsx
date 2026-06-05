@@ -69,6 +69,7 @@ interface ShoppingAssistantPanelProps {
   onReopenWindow: () => Promise<boolean>
   onRetryItem: (taskId: number, itemName: string) => Promise<void>
   onCancelTask: (taskId: number) => void
+  onRematch?: (instruction: string) => Promise<void>
 }
 
 const matchMethodLabels: Record<string, { label: string; color: string; bg: string }> = {
@@ -264,6 +265,7 @@ export default function ShoppingAssistantPanel({
   onRejectAction,
   onReopenWindow,
   onRetryItem,
+  onRematch,
 }: ShoppingAssistantPanelProps) {
   const [closing, setClosing] = useState(false)
   const [paymentMode, setPaymentMode] = useState<string>('cart_only')
@@ -272,6 +274,15 @@ export default function ShoppingAssistantPanel({
   const [confirming, setConfirming] = useState(false)
   const [confirmActionStatus, setConfirmActionStatus] = useState<'idle' | 'loading' | 'success' | 'failed'>('idle')
   const [retryingItem, setRetryingItem] = useState<string | null>(null)
+  
+  const [showRematch, setShowRematch] = useState(false)
+  const [rematchInstruction, setRematchInstruction] = useState('')
+
+  useEffect(() => {
+    if (preview?.instruction) {
+      setRematchInstruction(preview.instruction)
+    }
+  }, [preview?.instruction])
   const [tick, setTick] = useState(0)
   const [candidatesMap, setCandidatesMap] = useState<Record<number, SearchResult[]>>({})
   const [originalPriceMap, setOriginalPriceMap] = useState<Record<number, number>>({})
@@ -286,6 +297,11 @@ export default function ShoppingAssistantPanel({
   const [editQuantity, setEditQuantity] = useState<number>(1)
   const [confirmingCancel, setConfirmingCancel] = useState(false)
   const logRef = useRef<HTMLDivElement>(null)
+  const [dismissedConfirmIds, setDismissedConfirmIds] = useState<Set<string>>(new Set())
+
+  useEffect(() => {
+    setDismissedConfirmIds(new Set())
+  }, [activeTaskId])
 
   useEffect(() => {
     api.getSetting('payment_mode').then((mode) => {
@@ -318,9 +334,18 @@ export default function ShoppingAssistantPanel({
     }
   }, [activeTask?.itemResults])
 
+  const lastConfirmationId = (() => {
+    if (!activeTask || !Array.isArray(activeTask.progressLog)) return null
+    const reversed = [...activeTask.progressLog].reverse()
+    const msg = reversed.find(m => typeof m === 'string' && m.includes('|REOPEN:'))
+    if (!msg) return null
+    const match = msg.match(/\|REOPEN:([^|]+)\|/)
+    return match ? match[1] : null
+  })()
+
   const hasPendingConfirmation = (activeTask?.status === 'running' || activeTask?.status === 'partial') &&
-    Array.isArray(activeTask?.progressLog) &&
-    activeTask.progressLog.some(msg => typeof msg === 'string' && msg.includes('|REOPEN:')) === true
+    lastConfirmationId !== null &&
+    !dismissedConfirmIds.has(lastConfirmationId)
 
   useEffect(() => {
     if (logRef.current) {
@@ -352,6 +377,16 @@ export default function ShoppingAssistantPanel({
       setClosing(false)
       onClose()
     }, 250)
+  }
+
+  const handleExecuteRematch = async () => {
+    if (!onRematch || !rematchInstruction.trim()) return
+    setShowRematch(false)
+    try {
+      await onRematch(rematchInstruction)
+    } catch (e) {
+      console.error('重新匹配失败:', e)
+    }
   }
 
   const handleRetry = async (itemName: string) => {
@@ -545,6 +580,13 @@ export default function ShoppingAssistantPanel({
     setConfirmActionStatus('loading')
     try {
       const result = await onConfirmAction()
+      if (result && lastConfirmationId) {
+        setDismissedConfirmIds(prev => {
+          const next = new Set(prev)
+          next.add(lastConfirmationId)
+          return next
+        })
+      }
       setConfirmActionStatus(result ? 'success' : 'failed')
     } catch {
       setConfirmActionStatus('failed')
@@ -555,7 +597,14 @@ export default function ShoppingAssistantPanel({
     setConfirmActionStatus('loading')
     try {
       const result = await onRejectAction()
-      setConfirmActionStatus(result ? 'success' : 'failed')
+      if (lastConfirmationId) {
+        setDismissedConfirmIds(prev => {
+          const next = new Set(prev)
+          next.add(lastConfirmationId)
+          return next
+        })
+      }
+      setConfirmActionStatus('success')
     } catch {
       setConfirmActionStatus('failed')
     }
@@ -610,6 +659,10 @@ export default function ShoppingAssistantPanel({
 
       const currentRef = item.orderRef
       const currentCandidate = candidates.find(c => c.id === currentRef) || candidates[0]
+      const purchaseDate = currentCandidate?.purchasedAt ? new Date(currentCandidate.purchasedAt.replace(' ', 'T')) : null
+      const dateStr = purchaseDate && !isNaN(purchaseDate.getTime())
+        ? `${purchaseDate.getFullYear()}/${purchaseDate.getMonth() + 1}/${purchaseDate.getDate()}`
+        : ''
       let currentScore = currentCandidate?.matchScore || 0
       if (currentCandidate && currentCandidate.matchScore === undefined) {
         const isDefaultSelection = candidates[0] && candidates[0].id === currentCandidate.id
@@ -705,7 +758,10 @@ export default function ShoppingAssistantPanel({
                       </span>
                     )}
                     {item.lastPrice !== undefined && item.lastPrice > 0 && (
-                      <span className="text-xs text-gray-500">上次 ¥{item.lastPrice.toFixed(2)}</span>
+                      <span className="text-xs text-gray-500">
+                        上次 ¥{item.lastPrice.toFixed(2)}
+                        {dateStr && ` (${dateStr})`}
+                      </span>
                     )}
                   </div>
                   {hasCandidates && (
@@ -931,12 +987,18 @@ export default function ShoppingAssistantPanel({
         </div>
 
         <div className="flex items-center justify-between pt-2">
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2">
             <button onClick={onCancelPreview} disabled={confirming}
               className="px-3 py-1.5 text-sm font-medium text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors">
               取消
             </button>
-            <label className="flex items-center gap-1.5 cursor-pointer">
+            {onRematch && (
+              <button onClick={() => setShowRematch(true)} disabled={confirming || previewLoading}
+                className="px-3 py-1.5 text-sm font-medium text-blue-600 bg-blue-50 border border-blue-100 rounded-lg hover:bg-blue-100 transition-colors flex items-center gap-1">
+                ✨ 重新匹配
+              </button>
+            )}
+            <label className="flex items-center gap-1.5 cursor-pointer ml-1">
               <input type="checkbox" checked={dryRun} onChange={(e) => setDryRun(e.target.checked)}
                 className="w-3.5 h-3.5 text-blue-600 border-gray-300 rounded focus:ring-blue-500" />
               <span className="text-xs text-gray-500">测试模式</span>
@@ -1024,6 +1086,7 @@ export default function ShoppingAssistantPanel({
           action: payMode === 'cart_only' ? '完成加购' : payMode === 'auto_pay' ? '完成规格选择' : '完成加购',
           reopenBtn: '🪟 重新打开商品页面',
           confirmBtn: payMode === 'cart_only' ? '✓ 我已完成加购' : payMode === 'auto_pay' ? '✓ 我已选好规格并加购' : '✓ 我已选好规格并加购',
+          failBtn: '✗ 商品无法购买',
           closedTitle: '商品页面已关闭',
           closedHint: cannotRestore
             ? '由于该商品结算页面已失效且无法恢复，当前任务已自动取消。请重新下单'
@@ -1597,6 +1660,42 @@ export default function ShoppingAssistantPanel({
           : mode === 'preview'
             ? renderPreviewContent()
             : renderProgressContent()}
+
+        {/* 重新匹配浮层 */}
+        {showRematch && (
+          <div className="absolute inset-0 bg-white/95 backdrop-blur-md z-30 flex flex-col justify-center p-6 animate-fade-in-backdrop">
+            <div className="space-y-4 max-w-full">
+              <div className="flex items-center gap-2">
+                <span className="text-xl">✨</span>
+                <h4 className="text-base font-bold text-gray-900">重新匹配商品</h4>
+              </div>
+              <p className="text-xs text-gray-500 leading-relaxed">
+                您可以直接修改指令，或者在此基础上添加额外的补充要求（如：“不要纯牛奶，要酸奶”、“选最便宜的款”），大模型将重新为您进行智能解析与匹配。
+              </p>
+              <textarea
+                value={rematchInstruction}
+                onChange={(e) => setRematchInstruction(e.target.value)}
+                className="w-full h-32 px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 resize-none font-medium text-gray-800"
+                placeholder="请输入新的指令或修改要求..."
+              />
+              <div className="flex items-center justify-end gap-2.5">
+                <button
+                  onClick={() => setShowRematch(false)}
+                  className="px-4 py-2 text-sm font-medium text-gray-500 bg-gray-100 hover:bg-gray-200/80 rounded-lg transition-colors"
+                >
+                  取消
+                </button>
+                <button
+                  onClick={handleExecuteRematch}
+                  disabled={!rematchInstruction.trim()}
+                  className="px-4 py-2 text-sm font-medium text-white bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 rounded-lg shadow-md shadow-blue-500/10 transition-all hover:scale-[1.02] active:scale-[0.98]"
+                >
+                  确认重新匹配
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </>
   )

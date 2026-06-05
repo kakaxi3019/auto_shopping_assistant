@@ -38,6 +38,7 @@ export default function Settings() {
   const [paymentSaved, setPaymentSaved] = useState(false)
   const [priceProtectionThreshold, setPriceProtectionThreshold] = useState('15')
   const [doNotDisturb, setDoNotDisturb] = useState(false)
+  const [autoSaveOrders, setAutoSaveOrders] = useState(false)
 
   const current = providerSettings[provider]
 
@@ -73,6 +74,9 @@ export default function Settings() {
 
     const dnd = await api.getSetting('do_not_disturb')
     if (dnd === 'true') setDoNotDisturb(true)
+
+    const autoSave = await api.getSetting('auto_save_orders')
+    if (autoSave === 'true') setAutoSaveOrders(true)
   }
 
   const updateCurrent = (field: keyof ProviderSettings, value: string) => {
@@ -167,6 +171,7 @@ export default function Settings() {
     await api.setSetting('payment_mode', paymentMode)
     await api.setSetting('price_protection_threshold', String(thresholdDecimal))
     await api.setSetting('do_not_disturb', doNotDisturb ? 'true' : 'false')
+    await api.setSetting('auto_save_orders', autoSaveOrders ? 'true' : 'false')
     setPaymentSaved(true)
     setTimeout(() => setPaymentSaved(false), 2000)
   }
@@ -497,6 +502,38 @@ export default function Settings() {
                   aria-hidden="true"
                   className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
                     doNotDisturb ? 'translate-x-5' : 'translate-x-0'
+                  }`}
+                />
+              </button>
+            </div>
+          </div>
+
+          <div className="border-t border-gray-100 pt-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="text-sm">💾</span>
+                  <label className="text-sm font-medium text-gray-700">
+                    自动同步最新订单
+                  </label>
+                </div>
+                <p className="text-sm text-gray-400 mt-1">
+                  开启后，购买成功时自动在后台同步并将订单保存至本地历史订单中
+                </p>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={autoSaveOrders}
+                onClick={() => setAutoSaveOrders(!autoSaveOrders)}
+                className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 ${
+                  autoSaveOrders ? 'bg-blue-600' : 'bg-gray-200'
+                }`}
+              >
+                <span
+                  aria-hidden="true"
+                  className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+                    autoSaveOrders ? 'translate-x-5' : 'translate-x-0'
                   }`}
                 />
               </button>

@@ -21,6 +21,7 @@ export default function App() {
   const [scrollToFilter, setScrollToFilter] = useState<string | number | null>(null)
   const mainRef = useRef<HTMLDivElement>(null)
   const [scrolledDown, setScrolledDown] = useState(false)
+  const [scheduledTaskDraft, setScheduledTaskDraft] = useState<{ name: string; instruction: string; platform?: string } | null>(null)
   const { tasks, loading, refresh, createTask, cancelTask, retryTaskItem,
     deleteTask, deleteTasks, clearHistory,
     preview, previewLoading, previewTask, confirmTask, cancelPreview,
@@ -95,13 +96,22 @@ export default function App() {
       case 'orders':
         return (
           <Suspense fallback={<div className="p-4 text-sm text-gray-500">加载中...</div>}>
-            <OrderList onNavigateToTasks={(filter) => { if (filter !== undefined) setScrollToFilter(filter); setPage('shopping') }} />
+            <OrderList
+              onNavigateToTasks={(filter) => { if (filter !== undefined) setScrollToFilter(filter); setPage('shopping') }}
+              onScheduleBuy={(info) => {
+                setScheduledTaskDraft(info)
+                setPage('scheduled')
+              }}
+            />
           </Suspense>
         )
       case 'scheduled':
         return (
           <Suspense fallback={<div className="p-4 text-sm text-gray-500">加载中...</div>}>
-            <ScheduledTasks />
+            <ScheduledTasks
+              initialDraft={scheduledTaskDraft}
+              onDraftHandled={() => setScheduledTaskDraft(null)}
+            />
           </Suspense>
         )
       case 'account':
@@ -147,6 +157,7 @@ export default function App() {
             onReopenWindow={async () => { const r = await api.reopenConfirmationWindow() as boolean; return r }}
             onRetryItem={retryTaskItem}
             onCancelTask={cancelTask}
+            onRematch={previewTask}
           />
         )}
         {(() => {

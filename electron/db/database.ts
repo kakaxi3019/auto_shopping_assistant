@@ -271,6 +271,29 @@ export class Database {
     })
   }
 
+  getProductStats(productNames: string[]): Record<string, { count: number; lastPurchasedAt: string }> {
+    if (productNames.length === 0) return {}
+    const placeholders = productNames.map(() => '?').join(',')
+    const sql = `
+      SELECT product_name, COUNT(*) as count, MAX(purchased_at) as last_purchased_at
+      FROM orders
+      WHERE product_name IN (${placeholders})
+      GROUP BY product_name
+    `
+    return this.withStmt(sql, (stmt) => {
+      stmt.bind(productNames)
+      const results: Record<string, { count: number; lastPurchasedAt: string }> = {}
+      while (stmt.step()) {
+        const row = stmt.getAsObject()
+        results[row.product_name as string] = {
+          count: Number(row.count),
+          lastPurchasedAt: String(row.last_purchased_at || ''),
+        }
+      }
+      return results
+    })
+  }
+
   searchOrders(keyword: string, platform?: string, excludeUnavailable = false, unavailableFilter?: 'all' | 'excluded' | 'active'): Order[] {
     const escaped = keyword.replace(/[%_\\]/g, '\\$&')
     let sql = "SELECT * FROM orders WHERE product_name LIKE ? ESCAPE '\\'"
@@ -311,7 +334,7 @@ export class Database {
     const MIN_FUZZY_LENGTH = 2
     const MAX_SUBSTRINGS = 10
     const MAX_FUZZY_RESULTS = 20
-    const MAX_KEYWORD_LENGTH = 10
+    const MAX_KEYWORD_LENGTH = 25
     const seen = new Set<string>()
     const allOrders: Order[] = []
     let usedKeyword = keyword

@@ -40,7 +40,13 @@ const PAYMENT_MODE_OPTIONS: { value: PaymentMode; label: string; icon: string; d
 
 const WEEKDAY_LABELS = ['周日', '周一', '周二', '周三', '周四', '周五', '周六']
 
-export default function ScheduledTasks() {
+export default function ScheduledTasks({
+  initialDraft,
+  onDraftHandled,
+}: {
+  initialDraft?: { name: string; instruction: string; platform?: string } | null
+  onDraftHandled?: () => void
+}) {
   const [tasks, setTasks] = useState<ScheduledTask[]>([])
   const [showForm, setShowForm] = useState(false)
   const [editingId, setEditingId] = useState<number | null>(null)
@@ -58,6 +64,18 @@ export default function ScheduledTasks() {
   useEffect(() => {
     loadTasks()
   }, [])
+
+  useEffect(() => {
+    if (initialDraft) {
+      setName(initialDraft.name)
+      setInstruction(initialDraft.instruction)
+      if (initialDraft.platform) {
+        setPlatform(initialDraft.platform)
+      }
+      setShowForm(true)
+      onDraftHandled?.()
+    }
+  }, [initialDraft, onDraftHandled])
 
   const loadTasks = async () => {
     const list = await api.listScheduledTasks()
