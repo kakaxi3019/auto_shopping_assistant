@@ -441,7 +441,7 @@ export default function ShoppingAssistantPanel({
     try {
       const taskPaymentMode = activeTask.paymentMode || 'auto_pay'
       const result = await api.purchaseCandidate(confirmationId, candidate.url, {
-        platform: activeTask.platform || 'taobao',
+        platform: activeTask.platform || '',
         productName: candidate.title,
         price: candidate.price,
         imageUrl: candidate.imageUrl,
@@ -470,7 +470,7 @@ export default function ShoppingAssistantPanel({
     setConfirmingPurchase(confirmationId)
     try {
       await api.confirmPurchaseFromSearch(confirmationId, {
-        platform: activeTask?.platform || 'taobao',
+        platform: activeTask?.platform || '',
         productName: candidate.title,
         price: candidate.price,
         imageUrl: candidate.imageUrl,

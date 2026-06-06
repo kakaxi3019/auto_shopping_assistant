@@ -404,6 +404,9 @@ const ORDER_API_JS_TEMPLATE = `async function(pageNum, beginTime, endTime) {
     text = utf8Text;
   }
   const data = JSON.parse(text);
+  if (data && data.rgv587_flag === 'sm' && data.url) {
+    return { rgv587_flag: 'sm', url: data.url };
+  }
   const orders = [];
 
   if (data.mainOrders) {

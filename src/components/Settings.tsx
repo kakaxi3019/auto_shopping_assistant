@@ -63,6 +63,7 @@ export default function Settings() {
     }
 
     setProviderSettings(loaded)
+    const activeProvider = (p === 'anthropic' || p === 'openai') ? p : provider
     if (p === 'anthropic' || p === 'openai') setProvider(p)
 
     const limit = await api.getSetting('pay_free_limit')
@@ -77,6 +78,29 @@ export default function Settings() {
 
     const autoSave = await api.getSetting('auto_save_orders')
     if (autoSave === 'true') setAutoSaveOrders(true)
+
+    // 加载完成后，如果当前选中的 provider 已经配置了 api key，主动拉取一次可用模型
+    const currentKeyVal = loaded[activeProvider].apiKey
+    if (currentKeyVal) {
+      setFetchingModels(true)
+      try {
+        const result = await api.fetchModels() as { success: boolean; models?: string[]; error?: string }
+        if (result.success && result.models && result.models.length > 0) {
+          const modelsList = result.models
+          setAvailableModels(modelsList)
+          if (!loaded[activeProvider].model || !modelsList.includes(loaded[activeProvider].model)) {
+            const defaultModel = modelsList[0]
+            loaded[activeProvider].model = defaultModel
+            setProviderSettings({ ...loaded })
+            await api.setSetting(SETTING_KEYS[activeProvider].model, defaultModel)
+          }
+        }
+      } catch {
+        // ignore
+      } finally {
+        setFetchingModels(false)
+      }
+    }
   }
 
   const updateCurrent = (field: keyof ProviderSettings, value: string) => {
@@ -85,7 +109,9 @@ export default function Settings() {
       [provider]: { ...prev[provider], [field]: value },
     }))
     setVerifyResult(null)
-    setAvailableModels([])
+    if (field !== 'model') {
+      setAvailableModels([])
+    }
   }
 
   const handleProviderChange = async (newProvider: LlmProvider) => {
@@ -93,37 +119,79 @@ export default function Settings() {
     setVerifyResult(null)
     setAvailableModels([])
     await api.setSetting('llm_provider', newProvider)
+
+    // 如果已经配置了 API Key，切换时静默加载可用模型以直接展示下拉框
+    const savedSettings = providerSettings[newProvider]
+    if (savedSettings.apiKey) {
+      setFetchingModels(true)
+      try {
+        const result = await api.fetchModels() as { success: boolean; models?: string[]; error?: string }
+        if (result.success && result.models && result.models.length > 0) {
+          const modelsList = result.models
+          setAvailableModels(modelsList)
+          if (!savedSettings.model || !modelsList.includes(savedSettings.model)) {
+            const defaultModel = modelsList[0]
+            setProviderSettings(prev => ({
+              ...prev,
+              [newProvider]: { ...prev[newProvider], model: defaultModel }
+            }))
+            await api.setSetting(SETTING_KEYS[newProvider].model, defaultModel)
+          }
+        }
+      } catch {
+        // ignore
+      } finally {
+        setFetchingModels(false)
+      }
+    }
   }
 
-  const handleSave = async () => {
-    const keys = SETTING_KEYS[provider]
-    await api.setSetting(keys.apiKey, current.apiKey)
-    await api.setSetting(keys.baseUrl, current.baseUrl)
-    await api.setSetting(keys.model, current.model)
-    setSaved(true)
-    setVerifyResult(null)
-    setTimeout(() => setSaved(false), 2000)
-  }
-
-  const handleVerify = async () => {
+  const handleSaveAndVerify = async () => {
     if (!current.apiKey) {
       setVerifyResult({ success: false, message: '请先填写 API Key' })
       return
     }
 
+    let modelToSave = current.model
+    if (!modelToSave && availableModels.length > 0) {
+      modelToSave = availableModels[0]
+      updateCurrent('model', modelToSave)
+    }
+
     const keys = SETTING_KEYS[provider]
+    // 1. 保存当前基础设置到数据库中
     await api.setSetting('llm_provider', provider)
     await api.setSetting(keys.apiKey, current.apiKey)
     await api.setSetting(keys.baseUrl, current.baseUrl)
-    await api.setSetting(keys.model, current.model)
+    await api.setSetting(keys.model, modelToSave)
 
     setVerifying(true)
     setVerifyResult(null)
+    setSaved(false)
+
     try {
+      // 2. 验证连接
       const result = await api.verifyLlm() as { success: boolean; error?: string }
       if (result.success) {
-        setVerifyResult({ success: true, message: '连接成功，配置有效！' })
-        handleFetchModels()
+        setVerifyResult({ success: true, message: '连接成功，配置已保存！' })
+        setSaved(true)
+        setTimeout(() => setSaved(false), 2000)
+
+        // 3. 验证成功后自动获取可用模型以更新下拉列表
+        setFetchingModels(true)
+        const modelsResult = await api.fetchModels() as { success: boolean; models?: string[]; error?: string }
+        if (modelsResult.success && modelsResult.models && modelsResult.models.length > 0) {
+          const models = modelsResult.models
+          setAvailableModels(models)
+          if (!models.includes(current.model)) {
+            const defaultModel = models[0]
+            setProviderSettings(prev => ({
+              ...prev,
+              [provider]: { ...prev[provider], model: defaultModel },
+            }))
+            await api.setSetting(keys.model, defaultModel)
+          }
+        }
       } else {
         setVerifyResult({ success: false, message: result.error || '验证失败' })
       }
@@ -131,31 +199,6 @@ export default function Settings() {
       setVerifyResult({ success: false, message: e instanceof Error ? e.message : '验证出错' })
     } finally {
       setVerifying(false)
-    }
-  }
-
-  const handleFetchModels = async () => {
-    if (!current.apiKey) return
-    setFetchingModels(true)
-    try {
-      const keys = SETTING_KEYS[provider]
-      await api.setSetting('llm_provider', provider)
-      await api.setSetting(keys.apiKey, current.apiKey)
-      await api.setSetting(keys.baseUrl, current.baseUrl)
-
-      const result = await api.fetchModels() as { success: boolean; models?: string[]; error?: string }
-      if (result.success && result.models) {
-        if (result.models.length > 0 && !result.models.includes(current.model)) {
-          setProviderSettings(prev => ({
-            ...prev,
-            [provider]: { ...prev[provider], model: result.models![0] },
-          }))
-        }
-        setAvailableModels(result.models)
-      }
-    } catch {
-      // ignore
-    } finally {
       setFetchingModels(false)
     }
   }
@@ -277,21 +320,20 @@ export default function Settings() {
               <label className="block text-sm font-medium text-gray-700">
                 模型
               </label>
-              {current.apiKey && (
-                <button
-                  onClick={handleFetchModels}
-                  disabled={fetchingModels}
-                  className="text-sm text-blue-600 hover:text-blue-700 disabled:opacity-50"
-                >
-                  {fetchingModels ? '获取中...' : availableModels.length > 0 ? '刷新模型列表' : '获取可用模型'}
-                </button>
+              {fetchingModels && (
+                <span className="text-xs text-blue-600 animate-pulse">正在获取可用模型...</span>
               )}
             </div>
             {availableModels.length > 0 ? (
               <select
                 value={current.model}
-                onChange={(e) => updateCurrent('model', e.target.value)}
-                className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white"
+                onChange={async (e) => {
+                  const newModel = e.target.value
+                  updateCurrent('model', newModel)
+                  const keys = SETTING_KEYS[provider]
+                  await api.setSetting(keys.model, newModel)
+                }}
+                className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white cursor-pointer"
               >
                 {availableModels.map(m => (
                   <option key={m} value={m}>{m}</option>
@@ -315,17 +357,28 @@ export default function Settings() {
 
           <div className="flex gap-3">
             <button
-              onClick={handleSave}
-              className="flex-1 px-4 py-2.5 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors"
-            >
-              {saved ? '已保存 ✓' : '保存设置'}
-            </button>
-            <button
-              onClick={handleVerify}
+              onClick={handleSaveAndVerify}
               disabled={verifying || !current.apiKey}
-              className="flex-1 px-4 py-2.5 bg-gray-100 text-gray-700 text-sm font-medium rounded-lg hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              className={`w-full px-4 py-2.5 text-white text-sm font-medium rounded-lg transition-colors flex items-center justify-center gap-2 ${
+                verifying 
+                  ? 'bg-blue-400 cursor-not-allowed' 
+                  : !current.apiKey 
+                    ? 'bg-gray-300 cursor-not-allowed' 
+                    : saved 
+                      ? 'bg-green-600 hover:bg-green-700' 
+                      : 'bg-blue-600 hover:bg-blue-700'
+              }`}
             >
-              {verifying ? '验证中...' : '验证连接'}
+              {verifying ? (
+                <>
+                  <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  正在保存并验证连接...
+                </>
+              ) : saved ? (
+                '已保存并验证成功 ✓'
+              ) : (
+                '保存并验证连接'
+              )}
             </button>
           </div>
 

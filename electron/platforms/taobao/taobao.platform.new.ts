@@ -326,8 +326,8 @@ export class TaobaoPlatform implements PlatformAdapter {
     this.emitStatus('已打开商品页面，请在弹出的窗口中选择规格并购买')
   }
 
-  async purchaseFromUrl(productUrl: string): Promise<AddToCartResult> {
-    return this.cartService.purchaseFromUrl(productUrl)
+  async purchaseFromUrl(productUrl: string, sku?: string): Promise<AddToCartResult> {
+    return this.cartService.purchaseFromUrl(productUrl, sku)
   }
 
   async checkout(directToPay?: boolean, quantity?: number): Promise<CheckoutResult> {

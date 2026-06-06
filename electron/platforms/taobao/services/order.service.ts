@@ -101,28 +101,28 @@ export class OrderService {
 
         const result = await hiddenWindow.webContents.executeJavaScript(
           `(${getOrderApiJs()})(${pageNum}, "${beginTime}", "${endTime}")`
-        ) as { orders: Array<{
-          productName: string
-          productUrl: string
-          price: number
-          imageUrl: string
-          orderId: string
-          purchasedAt: string
-        }>, hasNext: boolean, totalOrders: number, mainOrderCount: number }
+        ) as any
 
-        if (!result.orders || result.orders.length === 0) break
+        if (result && result.rgv587_flag === 'sm' && result.url) {
+          this.windowManager.createInteractionWindow(result.url)
+          throw new Error('淘宝需要人机安全验证，已为您弹出验证窗口，请在此窗口内完成滑动验证后重新同步。')
+        }
+
+        const ordersList = result?.orders || []
+        if (ordersList.length === 0) break
 
         if (result.totalOrders > 0) totalOrders = result.totalOrders
 
-        for (let i = 0; i < result.orders.length; i++) {
-          const item = result.orders[i]
+        for (let i = 0; i < ordersList.length; i++) {
+          const item = ordersList[i]
           
           // 强化数据完整性校验：必须完整包含所有核心字段以供下次正常复购与匹配
           const hasValidOrderId = !!(item.orderId && item.orderId.trim() !== '')
           const hasValidProductName = !!(item.productName && item.productName.trim() !== '')
           const hasValidProductUrl = !!(item.productUrl && (item.productUrl.startsWith('http') || item.productUrl.startsWith('//') || item.productUrl.startsWith('https')))
           const hasValidPrice = typeof item.price === 'number' && item.price > 0
-          const hasValidSku = !!((item as any).sku && (item as any).sku.trim() !== '')
+          // 允许 sku 存在但为空字符串（单规格商品无 sku 信息）
+          const hasValidSku = typeof (item as any).sku === 'string'
 
           if (!hasValidOrderId || !hasValidProductName || !hasValidProductUrl || !hasValidPrice || !hasValidSku) {
             debugLog('OrderService', `跳过不完整的新订单: ${JSON.stringify(item)}`)

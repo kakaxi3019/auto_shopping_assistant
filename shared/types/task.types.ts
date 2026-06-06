@@ -51,4 +51,5 @@ export interface PendingConfirmation {
   createdAt: string
   resolvedAt: string | null
   orderId: number | null
+  platform?: string
 }

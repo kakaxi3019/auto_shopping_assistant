@@ -1,4 +1,4 @@
-﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿import { BrowserWindow } from 'electron'
+﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿import { BrowserWindow } from 'electron'
 import type { Page, BrowserContext } from 'playwright'
 import type { Database } from '../../../db/database'
 import type { AddToCartResult, Order } from '../../../../shared/types/platform.types'
@@ -465,7 +465,7 @@ export class CartService {
     this.emitStatus('已打开商品页面，请在弹出的窗口中选择规格并购买')
   }
 
-  async purchaseFromUrl(productUrl: string): Promise<AddToCartResult> {
+  async purchaseFromUrl(productUrl: string, sku?: string): Promise<AddToCartResult> {
     this.emitStatus('正在打开商品页面...')
 
     if (!productUrl) {
@@ -700,30 +700,109 @@ export class CartService {
 
             if (pageStatus.hasBuyButton) {
               this.emitStatus('正在选择商品规格...')
-              await execJS(sw!, `
+              // 如果传入了 sku 规格，则执行精准规格点击逻辑
+              const skuClickCount = await execJS(sw!, `
                 (function() {
-                  var skuItems = document.querySelectorAll('[class*="skuItem"], [class*="sku-item"], [class*="SkuItem"], [data-sku], [class*="skuInfo"] [class*="item"], [class*="valueItem"], [class*="ValueItem"]');
+                  var urlParams = new URLSearchParams(window.location.search);
+                  var skuProps = urlParams.get('sku_properties');
+                  var skuId = urlParams.get('skuId');
                   var clicked = 0;
-                  for (var i = 0; i < skuItems.length; i++) {
-                    var item = skuItems[i];
-                    var rect = item.getBoundingClientRect();
-                    if (rect.width <= 0 || rect.height <= 0) continue;
-                    var parent = item.parentElement;
-                    var siblings = parent ? parent.querySelectorAll('[class*="skuItem"], [class*="sku-item"], [class*="SkuItem"], [data-sku], [class*="valueItem"], [class*="ValueItem"]') : [];
-                    var isAlreadySelected = false;
-                    var classList = item.className || '';
-                    if (classList.includes('selected') || classList.includes('active') || classList.includes('current')) isAlreadySelected = true;
-                    if (!isAlreadySelected && siblings.length > 0) {
-                      var isFirst = true;
-                      for (var j = 0; j < siblings.length; j++) {
-                        var sRect = siblings[j].getBoundingClientRect();
-                        if (sRect.width > 0 && sRect.height > 0) {
-                          if (siblings[j] !== item) { isFirst = false; break; }
+                  
+                  var targetSkuText = ${JSON.stringify(sku || '')};
+                  if (targetSkuText) {
+                    var parts = targetSkuText.split(/[;；]/);
+                    for (var p = 0; p < parts.length; p++) {
+                      var part = parts[p].trim();
+                      if (!part) continue;
+                      var value = part;
+                      var colonIdx = part.indexOf(':');
+                      if (colonIdx === -1) colonIdx = part.indexOf('：');
+                      if (colonIdx !== -1) {
+                        value = part.substring(colonIdx + 1).trim();
+                      }
+                      if (!value) continue;
+                      var skuItems = document.querySelectorAll('[class*="skuItem"], [class*="sku-item"], [class*="SkuItem"], [data-sku], [class*="valueItem"], [class*="ValueItem"], [class*="sku"], [class*="Sku"]');
+                      var bestMatch = null;
+                      for (var i = 0; i < skuItems.length; i++) {
+                        var item = skuItems[i];
+                        var rect = item.getBoundingClientRect();
+                        if (rect.width <= 0 || rect.height <= 0) continue;
+                        var text = (item.textContent || item.innerText || '').trim().replace(/\\s+/g, '');
+                        var cleanValue = value.replace(/\\s+/g, '');
+                        if (text === cleanValue || text.includes(cleanValue) || cleanValue.includes(text)) {
+                          if (text === cleanValue) {
+                            bestMatch = item;
+                            break;
+                          }
+                          bestMatch = item;
                         }
                       }
-                      if (isFirst || siblings.length === 1) {
-                        _hs.click(item);
+                      if (bestMatch) {
+                        var classList = bestMatch.className || '';
+                        var isAlreadySelected = classList.includes('selected') || classList.includes('active') || classList.includes('current') || bestMatch.getAttribute('aria-checked') === 'true';
+                        if (!isAlreadySelected) {
+                          _hs.click(bestMatch);
+                        }
                         clicked++;
+                      }
+                    }
+                  }
+                  
+                  if (clicked === 0) {
+                    if (skuProps) {
+                      var pairs = skuProps.split(';');
+                      for (var p = 0; p < pairs.length; p++) {
+                        var pair = pairs[p].split(':');
+                        if (pair.length !== 2) continue;
+                        var valueId = pair[1];
+                        var skuItems = document.querySelectorAll('[data-value], [data-sku-id], [class*="skuItem"], [class*="sku-item"], [class*="SkuItem"], [class*="valueItem"], [class*="ValueItem"]');
+                        for (var i = 0; i < skuItems.length; i++) {
+                          var val = skuItems[i].getAttribute('data-value') || skuItems[i].getAttribute('data-sku-id') || '';
+                          if (val === valueId || val.endsWith(':' + valueId)) {
+                            _hs.click(skuItems[i]);
+                            clicked++;
+                            break;
+                          }
+                        }
+                      }
+                    }
+                    if (clicked === 0 && skuId) {
+                      var allSkuItems = document.querySelectorAll('[data-value], [data-sku-id], [class*="skuItem"], [class*="sku-item"], [class*="SkuItem"], [class*="valueItem"], [class*="ValueItem"], [class*="sku"], [class*="Sku"]');
+                      for (var j = 0; j < allSkuItems.length; j++) {
+                        var itemVal = allSkuItems[j].getAttribute('data-value') || allSkuItems[j].getAttribute('data-sku-id') || '';
+                        if (itemVal === skuId || itemVal.endsWith(':' + skuId)) {
+                          _hs.click(allSkuItems[j]);
+                          clicked++;
+                          break;
+                        }
+                      }
+                    }
+                  }
+                  
+                  // 如果没有传入 sku 或上述精确匹配未成功，退回到默认点击每一组第一个规格的启发式逻辑
+                  if (clicked === 0) {
+                    var skuItems = document.querySelectorAll('[class*="skuItem"], [class*="sku-item"], [class*="SkuItem"], [data-sku], [class*="skuInfo"] [class*="item"], [class*="valueItem"], [class*="ValueItem"]');
+                    for (var i = 0; i < skuItems.length; i++) {
+                      var item = skuItems[i];
+                      var rect = item.getBoundingClientRect();
+                      if (rect.width <= 0 || rect.height <= 0) continue;
+                      var parent = item.parentElement;
+                      var siblings = parent ? parent.querySelectorAll('[class*="skuItem"], [class*="sku-item"], [class*="SkuItem"], [data-sku], [class*="valueItem"], [class*="ValueItem"]') : [];
+                      var isAlreadySelected = false;
+                      var classList = item.className || '';
+                      if (classList.includes('selected') || classList.includes('active') || classList.includes('current')) isAlreadySelected = true;
+                      if (!isAlreadySelected && siblings.length > 0) {
+                        var isFirst = true;
+                        for (var j = 0; j < siblings.length; j++) {
+                          var sRect = siblings[j].getBoundingClientRect();
+                          if (sRect.width > 0 && sRect.height > 0) {
+                            if (siblings[j] !== item) { isFirst = false; break; }
+                          }
+                        }
+                        if (isFirst || siblings.length === 1) {
+                          _hs.click(item);
+                          clicked++;
+                        }
                       }
                     }
                   }
@@ -873,7 +952,7 @@ export class CartService {
       await new Promise<void>((warmupResolve) => {
         let done = false
         const onDone = () => { if (!done) { done = true; warmupResolve() } }
-        setTimeout(onDone, 8000)
+        setTimeout(onDone, 15000)
         if (newShopWindow.isDestroyed()) { onDone(); return }
         newShopWindow.webContents.once('did-finish-load', onDone)
         newShopWindow.loadURL('https://www.taobao.com/')
@@ -1010,7 +1089,7 @@ export class CartService {
                           value = part.substring(colonIdx + 1).trim();
                         }
                         if (!value) continue;
-                        var skuItems = document.querySelectorAll('[class*="skuItem"], [class*="sku-item"], [class*="SkuItem"], [data-sku], [class*="valueItem"], [class*="ValueItem"], [class*="sku"], [class*="Sku"], button, a');
+                        var skuItems = document.querySelectorAll('[class*="skuItem"], [class*="sku-item"], [class*="SkuItem"], [data-sku], [class*="valueItem"], [class*="ValueItem"], [class*="sku"], [class*="Sku"]');
                         var bestMatch = null;
                         for (var i = 0; i < skuItems.length; i++) {
                           var item = skuItems[i];

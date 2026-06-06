@@ -1,5 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { api } from '../lib/api'
+import { PLATFORM_CONFIGS } from '@shared/platforms'
+import PlatformLogo from './PlatformLogo'
 
 interface Order {
   id: number
@@ -14,18 +16,7 @@ interface Order {
   unavailable: number
 }
 
-interface PlatformInfo {
-  key: string
-  name: string
-  icon: string
-  color: string
-  bgColor: string
-  borderColor: string
-}
-
-const PLATFORMS: PlatformInfo[] = [
-  { key: 'taobao', name: '淘宝', icon: '🛒', color: 'text-orange-600', bgColor: 'bg-orange-50', borderColor: 'border-orange-100' },
-]
+const PLATFORMS = PLATFORM_CONFIGS
 
 const PAGE_SIZE = 20
 
@@ -317,9 +308,7 @@ export default function OrderList({
               className={`bg-white rounded-xl border ${p.borderColor} shadow-sm p-6 hover:shadow-md transition-all text-left group`}
             >
               <div className="flex items-center gap-4">
-                <div className={`w-12 h-12 ${p.bgColor} rounded-xl flex items-center justify-center text-2xl`}>
-                  {p.icon}
-                </div>
+                <PlatformLogo platformKey={p.key} size="md" />
                 <div>
                   <h3 className={`font-medium ${p.color}`}>{p.name}</h3>
                   <p className="text-sm text-gray-400 mt-0.5">
@@ -364,7 +353,7 @@ export default function OrderList({
           </svg>
         </button>
         <div className="flex items-center gap-3">
-          <span className="text-xl">{platform?.icon}</span>
+          {platform && <PlatformLogo platformKey={platform.key} size="sm" />}
           <h2 className="text-lg font-semibold text-gray-800">{platform?.name} 历史订单</h2>
         </div>
         <span className="text-sm text-gray-400 ml-1">{total} 条</span>

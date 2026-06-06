@@ -21,6 +21,7 @@ interface PendingConfirmation {
   createdAt: string
   resolvedAt: string | null
   orderId: number | null
+  platform?: string
 }
 
 type FilterStatus = 'pending' | 'resolved' | 'dismissed' | 'all'
@@ -177,9 +178,10 @@ export default function ConfirmationPanel() {
 
   const handleConfirmPurchase = async (confirmationId: number, candidate: SearchResult) => {
     setConfirmingPurchase(confirmationId)
+    const item = items.find(i => i.id === confirmationId)
     try {
       await api.confirmPurchaseFromSearch(confirmationId, {
-        platform: 'taobao',
+        platform: item?.platform || '',
         productName: candidate.title,
         price: candidate.price,
         imageUrl: candidate.imageUrl,

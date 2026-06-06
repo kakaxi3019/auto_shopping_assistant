@@ -132,7 +132,7 @@ export function useTasks() {
             status: update.status,
             instruction: '',
             parsedItems: '[]',
-            platform: (update as any).platform || 'taobao',
+            platform: (update as any).platform || '',
             createdAt: new Date().toISOString(),
             completedAt: null,
             error: update.error || null,
@@ -187,10 +187,42 @@ export function useTasks() {
     setPreview({
       instruction,
       items: [],
-      platform: 'taobao'
+      platform: ''
     })
     setPanelOpen(true)
     try {
+      // 1. 检查是否至少登录了一个平台
+      const platforms = ['taobao', 'jd', 'pdd']
+      const loginStates = await Promise.all(
+        platforms.map(async (p) => {
+          try {
+            const status = await api.getAccountStatus(p) as { loggedIn: boolean }
+            return !!status?.loggedIn
+          } catch {
+            return false
+          }
+        })
+      )
+      if (!loginStates.some(loggedIn => loggedIn)) {
+        throw new Error('请先在“平台账号”中登录至少一个购物平台账号。')
+      }
+
+      // 2. 检查是否至少导入过一个历史订单
+      const orderCounts = await Promise.all(
+        platforms.map(async (p) => {
+          try {
+            const count = await api.getOrderCount(p) as number
+            return count || 0
+          } catch {
+            return 0
+          }
+        })
+      )
+      const totalOrders = orderCounts.reduce((sum, c) => sum + c, 0)
+      if (totalOrders === 0) {
+        throw new Error('请先在“平台账号”中同步至少一个平台的历史订单。')
+      }
+
       const result = await api.previewTask(instruction) as TaskPreview & { error?: string }
       if (result && result.error) {
         throw new Error(result.error)
@@ -212,11 +244,8 @@ export function useTasks() {
       }
     } catch (e) {
       setPreview(null)
-      // 只有在面板依然开着时才处理关闭与对外抛出错误
-      if (panelOpenRef.current) {
-        setPanelOpen(false)
-        throw e
-      }
+      setPanelOpen(false)
+      throw e
     } finally {
       setPreviewLoading(false)
     }
@@ -228,14 +257,15 @@ export function useTasks() {
     if (matchedItems.length === 0) {
       throw new Error('没有匹配的商品可以购买')
     }
+    const resolvedPlatform = platform || matchedItems.find(i => i.platform)?.platform || 'taobao'
     const confirmItems = matchedItems.map(item => ({
       name: item.matchedProduct || item.name,
       quantity: item.quantity,
       sku: item.sku,
       orderRef: item.orderRef,
     }))
-    console.log('[useTasks] confirmTask calling api.confirmTask...', { confirmItemsCount: confirmItems.length })
-    const result = await api.confirmTask(instruction, confirmItems, platform, dryRun, paymentMode) as { taskId?: number; error?: string }
+    console.log('[useTasks] confirmTask calling api.confirmTask...', { confirmItemsCount: confirmItems.length, resolvedPlatform })
+    const result = await api.confirmTask(instruction, confirmItems, resolvedPlatform, dryRun, paymentMode) as { taskId?: number; error?: string }
     console.log('[useTasks] confirmTask api result:', result)
     if (result && result.error) {
       throw new Error(result.error)

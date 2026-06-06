@@ -36,7 +36,7 @@ export class TaskScheduler {
     this.executor = new TaskExecutor(db)
   }
 
-  getPlatform(platformName = 'taobao') {
+  getPlatform(platformName = '') {
     return this.registry.get(platformName) || null
   }
 
@@ -158,7 +158,7 @@ export class TaskScheduler {
     }
   }
 
-  async previewTask(instruction: string, platformName = 'taobao'): Promise<TaskPreview> {
+  async previewTask(instruction: string, platformName = ''): Promise<TaskPreview> {
     const logFile = join(app.getPath('userData'), 'preview-debug.log')
     const log = (msg: string) => {
       const line = `[${new Date().toISOString()}] ${msg}\n`
@@ -191,21 +191,23 @@ export class TaskScheduler {
     }
   }
 
-  async confirmTask(instruction: string, items: ParsedShoppingItem[], platformName = 'taobao', dryRun?: boolean, paymentMode?: PaymentMode, source: 'manual' | 'scheduled' = 'manual', repeatType?: string, dayOfWeek?: number | null, dayOfMonth?: number | null): Promise<number> {
-    const taskId = this.db.createTask(instruction, JSON.stringify(items), platformName, paymentMode || 'cart_only', source, repeatType, dayOfWeek, dayOfMonth)
-    this.executeTask(taskId, items, platformName, instruction, dryRun, paymentMode)
+  async confirmTask(instruction: string, items: ParsedShoppingItem[], platformName = '', dryRun?: boolean, paymentMode?: PaymentMode, source: 'manual' | 'scheduled' = 'manual', repeatType?: string, dayOfWeek?: number | null, dayOfMonth?: number | null): Promise<number> {
+    const finalPlatform = platformName || items.find(i => i.platform)?.platform || 'taobao'
+    const taskId = this.db.createTask(instruction, JSON.stringify(items), finalPlatform, paymentMode || 'cart_only', source, repeatType, dayOfWeek, dayOfMonth)
+    this.executeTask(taskId, items, finalPlatform, instruction, dryRun, paymentMode)
     return taskId
   }
 
-  async createTask(instruction: string, platformName = 'taobao'): Promise<number> {
+  async createTask(instruction: string, platformName = ''): Promise<number> {
     // Parse instruction with LLM
     const parsedItems = await this.parser.parse(instruction)
+    const finalPlatform = platformName || parsedItems.find(i => i.platform)?.platform || 'taobao'
 
     // Create task in DB
-    const taskId = this.db.createTask(instruction, JSON.stringify(parsedItems), platformName)
+    const taskId = this.db.createTask(instruction, JSON.stringify(parsedItems), finalPlatform)
 
     // Execute async
-    this.executeTask(taskId, parsedItems, platformName, instruction)
+    this.executeTask(taskId, parsedItems, finalPlatform, instruction)
 
     return taskId
   }
@@ -287,7 +289,7 @@ export class TaskScheduler {
     this.db.dismissPendingConfirmationsForTask(taskId)
 
     const task = this.db.getTaskById(taskId)
-    const platformName = task?.platform || 'taobao'
+    const platformName = task?.platform || ''
     const platform = this.registry.get(platformName)
     if (platform?.resolveConfirmation) {
       platform.resolveConfirmation(false).catch(() => {})
@@ -314,7 +316,7 @@ export class TaskScheduler {
     const item = parsedItems.find(p => p.name === itemName)
     if (!item) return { success: false, error: `商品 "${itemName}" 不在任务中` }
 
-    const platformName = task.platform || 'taobao'
+    const platformName = task.platform || ''
     const platform = this.registry.get(platformName)
     if (!platform) return { success: false, error: `平台 "${platformName}" 不支持` }
 

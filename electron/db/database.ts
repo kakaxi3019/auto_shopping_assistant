@@ -538,7 +538,7 @@ export class Database {
     return row[0]?.values[0]?.[0] as number
   }
 
-  createTask(instruction: string, parsedItems: string, platform = 'taobao', paymentMode = 'cart_only', source = 'manual', repeatType?: string, dayOfWeek?: number | null, dayOfMonth?: number | null): number {
+  createTask(instruction: string, parsedItems: string, platform = '', paymentMode = 'cart_only', source = 'manual', repeatType?: string, dayOfWeek?: number | null, dayOfMonth?: number | null): number {
     this.db.run('INSERT INTO tasks (instruction, parsed_items, platform, payment_mode, source, repeat_type, day_of_week, day_of_month, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime(\'now\', \'localtime\'))', [instruction, parsedItems, platform, paymentMode, source, repeatType || null, dayOfWeek ?? null, dayOfMonth ?? null])
     this.scheduleSave()
     const row = this.db.exec('SELECT last_insert_rowid() as id')
@@ -650,8 +650,9 @@ export class Database {
         if (row.encrypted === 1 && typeof row.value === 'string' && safeStorage.isEncryptionAvailable()) {
           try {
             return safeStorage.decryptString(Buffer.from(row.value, 'base64'))
-          } catch {
-            return row.value as string
+          } catch (e) {
+            console.error(`[DB] Failed to decrypt setting for key "${key}", treating as null:`, e)
+            return null
           }
         }
         return row.value as string
@@ -697,7 +698,7 @@ export class Database {
     this.db.run(
       `INSERT INTO scheduled_tasks (name, instruction, repeat_type, scheduled_time, day_of_week, day_of_month, next_run_at, payment_mode, platform)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [task.name, task.instruction, task.repeatType, task.scheduledTime, task.dayOfWeek ?? null, task.dayOfMonth ?? null, task.scheduledTime, task.paymentMode || '', task.platform || 'taobao']
+      [task.name, task.instruction, task.repeatType, task.scheduledTime, task.dayOfWeek ?? null, task.dayOfMonth ?? null, task.scheduledTime, task.paymentMode || '', task.platform || '']
     )
     this.scheduleSave()
     const row = this.db.exec('SELECT last_insert_rowid() as id')
@@ -787,13 +788,13 @@ export class Database {
   }
 
   getPendingConfirmations(status?: string): PendingConfirmation[] {
-    let sql = 'SELECT * FROM pending_confirmations'
+    let sql = 'SELECT pc.*, t.platform FROM pending_confirmations pc LEFT JOIN tasks t ON pc.task_id = t.id'
     let params: unknown[] = []
     if (status) {
-      sql += ' WHERE status = ?'
+      sql += ' WHERE pc.status = ?'
       params = [status]
     }
-    sql += ' ORDER BY created_at DESC'
+    sql += ' ORDER BY pc.created_at DESC'
     return this.withStmt(sql, (stmt) => {
       if (params.length) stmt.bind(params)
       const results: PendingConfirmation[] = []
@@ -805,7 +806,7 @@ export class Database {
   }
 
   getPendingConfirmationById(id: number): PendingConfirmation | null {
-    return this.withStmt('SELECT * FROM pending_confirmations WHERE id = ?', (stmt) => {
+    return this.withStmt('SELECT pc.*, t.platform FROM pending_confirmations pc LEFT JOIN tasks t ON pc.task_id = t.id WHERE pc.id = ?', (stmt) => {
       stmt.bind([id])
       if (stmt.step()) {
         return toCamelCase(stmt.getAsObject()) as unknown as PendingConfirmation

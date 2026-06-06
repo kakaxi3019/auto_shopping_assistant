@@ -2,6 +2,7 @@ import { ipcMain, BrowserWindow, shell } from 'electron'
 import type { ParsedShoppingItem, PaymentMode } from '../../shared/types/platform.types'
 import type { Database } from '../db/database'
 import type { TaskScheduler } from '../scheduler/task-scheduler'
+import { getPlatformConfig } from '../../shared/platforms'
 
 export function registerIpcHandlers(db: Database, scheduler: TaskScheduler) {
   let mainWindow: BrowserWindow | null = null
@@ -10,8 +11,8 @@ export function registerIpcHandlers(db: Database, scheduler: TaskScheduler) {
     mainWindow = win
   }
 
-  const emitSyncStatus = (status: string, error?: string) => {
-    mainWindow?.webContents.send('sync:status-update', { status, error })
+  const emitSyncStatus = (platform: string, status: string, error?: string) => {
+    mainWindow?.webContents.send('sync:status-update', { platform, status, error })
   }
 
   const checkAndUpdateTaskAfterConfirmation = (confirmationId: number) => {
@@ -73,7 +74,7 @@ export function registerIpcHandlers(db: Database, scheduler: TaskScheduler) {
 
   ipcMain.handle('task:confirm', async (_event, instruction: string, items: ParsedShoppingItem[], platform?: string, dryRun?: boolean, paymentMode?: PaymentMode) => {
     try {
-      const taskId = await scheduler.confirmTask(instruction, items, platform || 'taobao', dryRun, paymentMode)
+      const taskId = await scheduler.confirmTask(instruction, items, platform || '', dryRun, paymentMode)
       return { taskId }
     } catch (e) {
       console.error(`[IPC] task:confirm error:`, e)
@@ -99,7 +100,7 @@ export function registerIpcHandlers(db: Database, scheduler: TaskScheduler) {
   })
 
   ipcMain.handle('task:confirm-action', async (_event, platformName: string) => {
-    const platform = scheduler.getRegistry().get(platformName || 'taobao')
+    const platform = scheduler.getRegistry().get(platformName || '')
     if (platform?.resolveConfirmation) {
       await platform.resolveConfirmation(true)
       return true
@@ -108,7 +109,7 @@ export function registerIpcHandlers(db: Database, scheduler: TaskScheduler) {
   })
 
   ipcMain.handle('task:reject-action', async (_event, platformName: string) => {
-    const platform = scheduler.getRegistry().get(platformName || 'taobao')
+    const platform = scheduler.getRegistry().get(platformName || '')
     if (platform?.resolveConfirmation) {
       await platform.resolveConfirmation(false)
       return true
@@ -117,7 +118,7 @@ export function registerIpcHandlers(db: Database, scheduler: TaskScheduler) {
   })
 
   ipcMain.handle('task:reopen-confirmation-window', async (_event, platformName: string) => {
-    const platform = scheduler.getRegistry().get(platformName || 'taobao')
+    const platform = scheduler.getRegistry().get(platformName || '')
     if (platform?.reopenConfirmationWindow) {
       await platform.reopenConfirmationWindow()
       return true
@@ -163,7 +164,7 @@ export function registerIpcHandlers(db: Database, scheduler: TaskScheduler) {
 
   ipcMain.handle('window:open-interaction', async (_event, url: string, platformName?: string) => {
     try {
-      const platform = scheduler.getPlatform(platformName || 'taobao') as any
+      const platform = scheduler.getPlatform(platformName || '') as any
       if (platform && typeof platform.openInteractionWindow === 'function') {
         return await platform.openInteractionWindow(url)
       }
@@ -173,20 +174,14 @@ export function registerIpcHandlers(db: Database, scheduler: TaskScheduler) {
     }
   })
 
-  const PLATFORM_SEARCH_URLS: Record<string, (keyword: string) => string> = {
-    taobao: (kw) => `https://s.taobao.com/search?q=${encodeURIComponent(kw)}`,
-    jd: (kw) => `https://search.jd.com/Search?keyword=${encodeURIComponent(kw)}`,
-    pdd: (kw) => `https://mobile.yangkeduo.com/search_result.html?search_key=${encodeURIComponent(kw)}`,
-  }
-
   ipcMain.handle('platform:open-search-in-browser', async (_event, keyword: string, platformName?: string) => {
     try {
       const platform = platformName || 'taobao'
-      const urlBuilder = PLATFORM_SEARCH_URLS[platform]
-      if (!urlBuilder) {
+      const config = getPlatformConfig(platform)
+      if (!config) {
         return { success: false, error: `不支持的平台: ${platform}` }
       }
-      const url = urlBuilder(keyword)
+      const url = config.searchUrlTemplate.replace('${keyword}', encodeURIComponent(keyword))
       const platformAdapter = scheduler.getPlatform(platform) as any
       if (platformAdapter && typeof platformAdapter.openInteractionWindow === 'function') {
         return await platformAdapter.openInteractionWindow(url, `🔍 自动购物助手：请在搜索结果中找到"${keyword}"并手动购买`)
@@ -242,22 +237,22 @@ export function registerIpcHandlers(db: Database, scheduler: TaskScheduler) {
       if (!adapter) return { success: false, error: '平台不存在' }
 
       const unsubscribe = adapter.onStatusChange((status) => {
-        emitSyncStatus(status)
+        emitSyncStatus(platform, status)
       })
 
       try {
         const orders = await adapter.fetchOrderHistory(1, timeRange)
         const actualCount = db.getOrderCount(platform)
-        db.setSetting('last_sync_time', new Date().toISOString())
-        db.setSetting('last_sync_count', String(actualCount))
-        emitSyncStatus(`同步完成，共 ${actualCount} 条订单已保存到本地数据库`)
+        db.setSetting(`last_sync_time_${platform}`, new Date().toISOString())
+        db.setSetting(`last_sync_count_${platform}`, String(actualCount))
+        emitSyncStatus(platform, `同步完成，共 ${actualCount} 条订单已保存到本地数据库`)
         return { success: true, count: actualCount }
       } finally {
         unsubscribe()
       }
     } catch (e) {
       const errorMsg = e instanceof Error ? e.message : String(e)
-      emitSyncStatus('同步失败', errorMsg)
+      emitSyncStatus(platform, '同步失败', errorMsg)
       return { success: false, error: errorMsg }
     }
   })
@@ -406,10 +401,27 @@ export function registerIpcHandlers(db: Database, scheduler: TaskScheduler) {
 
   ipcMain.handle('pending:purchase-candidate', async (_event, confirmationId: number, productUrl: string, candidate: { platform: string; productName: string; price: number; imageUrl: string; productUrl: string; shopName?: string }, paymentMode: PaymentMode) => {
     try {
-      const platform = scheduler.getPlatform()
-      if (!platform) return { success: false, error: '平台未初始化' }
+      const platform = scheduler.getPlatform(candidate.platform)
+      if (!platform) return { success: false, error: `平台 "${candidate.platform}" 未初始化` }
 
-      const purchaseResult = await platform.purchaseFromUrl(productUrl)
+      let sku: string | undefined = undefined
+      try {
+        const confirmation = db.getPendingConfirmationById(confirmationId)
+        if (confirmation && confirmation.taskId) {
+          const task = db.getTaskById(confirmation.taskId)
+          if (task && task.parsedItems) {
+            const parsedItems = JSON.parse(task.parsedItems)
+            const item = parsedItems.find((p: any) => p && p.name === confirmation.productName)
+            if (item && item.sku) {
+              sku = item.sku
+            }
+          }
+        }
+      } catch (e) {
+        console.error('[Handlers] Failed to extract SKU for candidate purchase:', e)
+      }
+
+      const purchaseResult = await platform.purchaseFromUrl(productUrl, sku)
       if (!purchaseResult.success) {
         await platform.openProductPage(productUrl)
         return { success: true, stage: 'opened', autoPurchaseFailed: purchaseResult.error }

@@ -47,7 +47,7 @@ export class ScheduledTaskRunner {
     const dayOfWeek = task.dayOfWeek as number | null
     const dayOfMonth = task.dayOfMonth as number | null
     const taskPaymentMode = (task.paymentMode as string) || ''
-    const platformName = (task.platform as string) || 'taobao'
+    const platformName = (task.platform as string) || ''
 
     console.log(`[ScheduledTaskRunner] Executing scheduled task #${id}: ${instruction}`)
     this.db.markScheduledTaskRun(id)

@@ -336,7 +336,7 @@ export default function TaskCard({ task, onCancel, onRetryItem, onReExecute, onD
     setConfirmingPurchase(confirmationId)
     try {
       await api.confirmPurchaseFromSearch(confirmationId, {
-        platform: task.platform || 'taobao',
+        platform: task.platform || '',
         productName: candidate.title,
         price: candidate.price,
         imageUrl: candidate.imageUrl,
@@ -358,7 +358,7 @@ export default function TaskCard({ task, onCancel, onRetryItem, onReExecute, onD
     try {
       const taskPaymentMode = task.paymentMode || 'auto_pay'
       const result = await api.purchaseCandidate(confirmationId, candidate.url, {
-        platform: task.platform || 'taobao',
+        platform: task.platform || '',
         productName: candidate.title,
         price: candidate.price,
         imageUrl: candidate.imageUrl,

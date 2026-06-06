@@ -1,7 +1,10 @@
 import { useState, useEffect } from 'react'
 import { api } from '../lib/api'
+import { PLATFORM_CONFIGS, getPlatformConfig, type PlatformConfig } from '@shared/platforms'
+import PlatformLogo from './PlatformLogo'
 
 interface SyncStatusData {
+  platform: string
   status: string
   error?: string
 }
@@ -40,7 +43,7 @@ function getSyncStepIndex(status: string): number {
   return 0
 }
 
-export default function AccountManager() {
+function PlatformCard({ platform }: { platform: PlatformConfig }) {
   const [loggedIn, setLoggedIn] = useState<boolean | null>(null)
   const [syncing, setSyncing] = useState(false)
   const [syncResult, setSyncResult] = useState('')
@@ -56,22 +59,26 @@ export default function AccountManager() {
   useEffect(() => {
     checkStatus()
     loadSyncInfo()
+  }, [platform.key])
 
+  useEffect(() => {
     const unsubscribe = api.onSyncStatusUpdate((data) => {
       const statusData = data as SyncStatusData
-      if (statusData.error) {
-        setSyncStatus(`❌ ${statusData.status}: ${statusData.error}`)
-      } else {
-        setSyncStatus(statusData.status)
+      if (statusData.platform === platform.key) {
+        if (statusData.error) {
+          setSyncStatus(`❌ ${statusData.status}: ${statusData.error}`)
+        } else {
+          setSyncStatus(statusData.status)
+        }
       }
     })
 
     return unsubscribe
-  }, [])
+  }, [platform.key])
 
   const checkStatus = async () => {
     try {
-      const result = await api.getAccountStatus('taobao')
+      const result = await api.getAccountStatus(platform.key)
       setLoggedIn(result.loggedIn)
       setCookieAge(result.cookieAge ?? null)
     } catch {
@@ -82,8 +89,8 @@ export default function AccountManager() {
   const loadSyncInfo = async () => {
     try {
       const [time, count] = await Promise.all([
-        api.getSetting('last_sync_time'),
-        api.getOrderCount('taobao'),
+        api.getSetting(`last_sync_time_${platform.key}`),
+        api.getOrderCount(platform.key),
       ])
       setLastSyncTime(time)
       setOrderCount(count)
@@ -94,7 +101,7 @@ export default function AccountManager() {
     setLoggingIn(true)
     setLoginError('')
     try {
-      const result = await api.login('taobao')
+      const result = await api.login(platform.key)
       if (result.success) {
         setLoggedIn(true)
         setLoginError('')
@@ -111,7 +118,7 @@ export default function AccountManager() {
 
   const handleLogout = async () => {
     try {
-      await api.logout('taobao')
+      await api.logout(platform.key)
       setLoggedIn(false)
       setCookieAge(null)
       setSyncResult('')
@@ -139,9 +146,9 @@ export default function AccountManager() {
     }
 
     try {
-      const result = await api.syncOrders('taobao', timeRange)
+      const result = await api.syncOrders(platform.key, timeRange)
       if (result.success) {
-        setSyncResult(`✅ 同步成功：共 ${result.count} 条订单已保存到本地数据库`)
+        setSyncResult(`✅ 同步成功：共 ${result.count} 条订单已保存`)
         loadSyncInfo()
       } else {
         setSyncResult(`❌ 同步失败: ${result.error}`)
@@ -155,7 +162,7 @@ export default function AccountManager() {
 
   const handleClearOrders = async () => {
     try {
-      const result = await api.clearOrders('taobao')
+      const result = await api.clearOrders(platform.key)
       if (result.success) {
         setSyncResult(`已清除 ${result.count} 条订单数据`)
         setOrderCount(0)
@@ -169,80 +176,108 @@ export default function AccountManager() {
 
   const currentStep = getSyncStepIndex(syncStatus)
 
-  return (
-    <div>
-      <h2 className="text-lg font-semibold text-gray-800 mb-6">账号管理</h2>
+  // 映射登录按钮的背景色
+  const getLoginBtnClass = () => {
+    if (platform.key === 'taobao') return 'bg-orange-500 hover:bg-orange-600 focus:ring-orange-200'
+    if (platform.key === 'jd') return 'bg-red-500 hover:bg-red-600 focus:ring-red-200'
+    return 'bg-pink-500 hover:bg-pink-600 focus:ring-pink-200'
+  }
 
-      <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-6 max-w-lg">
-        <div className="flex items-center gap-4 mb-6">
-          <div className="w-12 h-12 bg-orange-100 rounded-xl flex items-center justify-center text-2xl" aria-hidden="true">
-            🛒
+  return (
+    <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-6 flex flex-col justify-between hover:border-gray-200 hover:shadow-md transition-all h-full">
+      <div>
+        {/* 头部：包含平台信息和 Cookie 有效期占位 */}
+        <div className="flex items-center justify-between mb-6 h-12">
+          <div className="flex items-center gap-4">
+            <PlatformLogo platformKey={platform.key} size="md" />
+            <div>
+              <h3 className="font-semibold text-gray-900 text-lg">{platform.name}</h3>
+              <p className="text-sm text-gray-500">
+                状态：
+                <span className={loggedIn ? 'text-green-600 font-medium' : 'text-gray-400'}>
+                  {loggedIn === null ? '检查中...' : loggedIn ? '已登录' : '未登录'}
+                </span>
+              </p>
+            </div>
           </div>
-          <div>
-            <h3 className="font-medium text-gray-900">淘宝</h3>
-            <p className="text-sm text-gray-500">
-              状态：
-              <span className={loggedIn ? 'text-green-600' : 'text-gray-400'}>
-                {loggedIn === null ? '检查中...' : loggedIn ? '已登录' : '未登录'}
-              </span>
-              {loggedIn && cookieAge && (
-                <span className="text-gray-400 ml-2">({cookieAge})</span>
-              )}
-            </p>
+          <div className="h-7 flex items-center">
+            {loggedIn && cookieAge ? (
+              <span className="text-xs bg-gray-50 text-gray-400 px-2.5 py-1 rounded-full border border-gray-100">{cookieAge}</span>
+            ) : (
+              <span className="text-xs px-2.5 py-1 invisible">Placeholder</span>
+            )}
           </div>
         </div>
 
-        <div className="space-y-3">
-          {loggedIn === null ? (
-            <div className="w-full px-4 py-2.5 bg-gray-50 text-gray-400 text-sm font-medium rounded-lg text-center">
-              检查登录状态...
-            </div>
-          ) : loggedIn ? (
-            <button
-              onClick={handleLogout}
-              className="w-full px-4 py-2.5 bg-red-50 text-red-600 text-sm font-medium rounded-lg hover:bg-red-100 transition-colors"
-            >
-              退出登录
-            </button>
-          ) : (
-            <button
-              onClick={handleLogin}
-              disabled={loggingIn}
-              className="w-full px-4 py-2.5 bg-orange-500 text-white text-sm font-medium rounded-lg hover:bg-orange-600 disabled:opacity-50 transition-colors"
-            >
-              {loggingIn ? '请在弹出的浏览器中扫码登录...' : '登录淘宝'}
-            </button>
-          )}
+        <div className="space-y-4">
+          {/* 登录按钮区：固定高度 */}
+          <div className="h-10">
+            {loggedIn === null ? (
+              <div className="w-full px-4 py-2 bg-gray-50 text-gray-400 text-sm font-medium rounded-lg text-center">
+                检查登录状态...
+              </div>
+            ) : loggedIn ? (
+              <button
+                onClick={handleLogout}
+                className="w-full px-4 py-2 bg-red-50 text-red-600 text-sm font-medium rounded-lg hover:bg-red-100 transition-colors focus:outline-none focus:ring-2 focus:ring-red-100"
+              >
+                退出登录
+              </button>
+            ) : (
+              <button
+                onClick={handleLogin}
+                disabled={loggingIn}
+                className={`w-full px-4 py-2 text-white text-sm font-medium rounded-lg disabled:opacity-50 transition-colors focus:outline-none focus:ring-2 ${getLoginBtnClass()}`}
+              >
+                {loggingIn ? '请在弹出的浏览器中登录...' : `登录${platform.name}`}
+              </button>
+            )}
+          </div>
 
-          {loginError && (
-            <p className="text-sm text-red-500 bg-red-50 rounded-md px-3 py-2">{loginError}</p>
-          )}
+          {/* 登录错误展示区：固定高度占位以防抖动 */}
+          <div className="h-6">
+            {loginError ? (
+              <p className="text-xs text-red-500 bg-red-50 rounded-md px-3 py-1 border border-red-100 truncate">{loginError}</p>
+            ) : (
+              <div className="invisible h-px" />
+            )}
+          </div>
 
-          <div className="border-t border-gray-100 pt-3 mt-3">
+          {/* 订单同步板块 */}
+          <div className="border-t border-gray-100 pt-4">
             <div className="flex items-center justify-between mb-3">
-              <span className="text-sm text-gray-600">历史订单</span>
-              <div className="flex items-center gap-3 text-sm text-gray-400">
-                {orderCount > 0 && <span>{orderCount} 条</span>}
-                {lastSyncTime && <span>上次同步: {formatTime(lastSyncTime)}</span>}
+              <span className="text-sm font-medium text-gray-700">订单同步</span>
+              <div className="flex flex-col items-end text-xs text-gray-400 h-8 justify-center leading-normal">
+                {orderCount > 0 ? (
+                  <span className="font-medium text-gray-500">{orderCount} 条本地订单</span>
+                ) : (
+                  <span className="text-gray-300">暂无本地订单</span>
+                )}
+                {lastSyncTime ? (
+                  <span>上次同步: {formatTime(lastSyncTime)}</span>
+                ) : (
+                  <span className="text-gray-300">从未同步</span>
+                )}
               </div>
             </div>
 
-            <div className="flex items-center gap-1.5 mb-3 flex-wrap">
+            {/* 同步时间区间选择按钮：使用 Grid 布局完美排列两行 */}
+            <div className="grid grid-cols-3 gap-1.5 mb-4">
               {[
                 { key: 'all', label: '全部' },
-                { key: 'week', label: '近一周' },
-                { key: 'month', label: '近一月' },
-                { key: 'quarter', label: '近三月' },
-                { key: 'halfYear', label: '近半年' },
-                { key: 'year', label: '近一年' },
+                { key: 'week', label: '一周' },
+                { key: 'month', label: '一月' },
+                { key: 'quarter', label: '三月' },
+                { key: 'halfYear', label: '半年' },
+                { key: 'year', label: '一年' },
               ].map((opt) => (
                 <button
                   key={opt.key}
                   onClick={() => setSyncTimeRange(opt.key)}
-                  className={`px-2.5 py-1 text-sm rounded-md transition-colors ${
+                  className={`px-2 py-1 text-xs rounded transition-colors text-center ${
                     syncTimeRange === opt.key
-                      ? 'bg-blue-100 text-blue-700 font-medium'
-                      : 'bg-gray-50 text-gray-500 hover:bg-gray-100'
+                      ? 'bg-blue-50 text-blue-600 border border-blue-200/50 font-medium'
+                      : 'bg-gray-50 text-gray-500 hover:bg-gray-100 border border-transparent'
                   }`}
                 >
                   {opt.label}
@@ -250,18 +285,19 @@ export default function AccountManager() {
               ))}
             </div>
 
-            <div className="flex gap-2">
+            {/* 同步操作按钮：固定高度 */}
+            <div className="h-10 flex gap-2">
               <button
                 onClick={handleSyncOrders}
                 disabled={syncing || !loggedIn}
-                className="flex-1 px-4 py-2.5 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors"
+                className="flex-1 px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 disabled:opacity-40 disabled:hover:bg-blue-600 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-100"
               >
                 {syncing ? '同步中...' : '同步历史订单'}
               </button>
               {syncing && (
                 <button
-                  onClick={() => api.cancelSync('taobao')}
-                  className="px-4 py-2.5 bg-gray-200 text-gray-700 text-sm font-medium rounded-lg hover:bg-gray-300 transition-colors"
+                  onClick={() => api.cancelSync(platform.key)}
+                  className="px-4 py-2 bg-gray-100 text-gray-700 text-sm font-medium rounded-lg hover:bg-gray-200 transition-colors focus:outline-none focus:ring-2 focus:ring-gray-100"
                 >
                   取消
                 </button>
@@ -269,17 +305,17 @@ export default function AccountManager() {
             </div>
 
             {syncing && syncStatus && (
-              <div className="mt-3 bg-blue-50 rounded-lg p-3">
+              <div className="mt-3 bg-blue-50/50 border border-blue-100/50 rounded-lg p-3">
                 <div className="flex items-center gap-2 mb-2">
-                  <div className="w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
-                  <span className="text-sm text-blue-700">{syncStatus}</span>
+                  <div className="w-3.5 h-3.5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+                  <span className="text-xs text-blue-700">{syncStatus}</span>
                 </div>
                 <div className="flex gap-1">
                   {SYNC_STEPS.map((step, i) => (
                     <div
                       key={i}
-                      className={`h-1.5 flex-1 rounded-full transition-colors ${
-                        i <= currentStep ? 'bg-blue-500' : 'bg-blue-200'
+                      className={`h-1 flex-1 rounded-full transition-colors ${
+                        i <= currentStep ? 'bg-blue-500' : 'bg-blue-100'
                       }`}
                       title={step.text}
                     />
@@ -289,52 +325,66 @@ export default function AccountManager() {
             )}
 
             {syncResult && !syncing && (
-              <p className={`text-sm rounded-md px-3 py-2 mt-2 ${
-                syncResult.startsWith('✅') ? 'text-green-700 bg-green-50' :
-                syncResult.startsWith('❌') ? 'text-red-500 bg-red-50' :
-                'text-gray-700 bg-gray-50'
+              <p className={`text-xs rounded-md px-3 py-2 mt-2 border ${
+                syncResult.startsWith('✅') ? 'text-green-700 bg-green-50 border-green-100' :
+                syncResult.startsWith('❌') ? 'text-red-600 bg-red-50 border-red-100' :
+                'text-gray-700 bg-gray-50 border-gray-100'
               }`}>
                 {syncResult}
               </p>
             )}
           </div>
-
-          {orderCount > 0 && !syncing && (
-            <div className="border-t border-gray-100 pt-3">
-              {showClearConfirm ? (
-                <div className="bg-red-50 rounded-lg p-3">
-                  <p className="text-sm text-red-700 mb-2">确定要清除所有 {orderCount} 条订单数据吗？此操作不可恢复。</p>
-                  <div className="flex gap-2">
-                    <button
-                      onClick={handleClearOrders}
-                      className="flex-1 px-3 py-1.5 bg-red-500 text-white text-sm rounded-md hover:bg-red-600 transition-colors"
-                    >
-                      确认清除
-                    </button>
-                    <button
-                      onClick={() => setShowClearConfirm(false)}
-                      className="flex-1 px-3 py-1.5 bg-white text-gray-600 text-sm rounded-md border border-gray-200 hover:bg-gray-50 transition-colors"
-                    >
-                      取消
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <button
-                  onClick={() => setShowClearConfirm(true)}
-                  className="w-full px-4 py-2 bg-red-50 text-red-600 text-sm rounded-lg hover:bg-red-100 transition-colors"
-                >
-                  清除同步数据
-                </button>
-              )}
-            </div>
-          )}
-
-          <div className="text-sm text-gray-400 mt-2 px-1">
-            💡 同步操作会在后台自动访问淘宝订单页面，抓取历史订单并保存到本地。
-            同步后即可输入"买牛奶"等指令复购之前买过的商品。
-          </div>
         </div>
+      </div>
+
+      {/* 清除本地订单常驻控制区，无订单时置灰，避免卡片底部出现高矮不一致 */}
+      <div className="border-t border-gray-100 pt-3 mt-4">
+        {showClearConfirm ? (
+          <div className="bg-red-50/50 border border-red-100 rounded-lg p-2.5 flex flex-col gap-2">
+            <p className="text-[11px] text-red-700 font-medium leading-relaxed">确认清除本地订单？清除后将无法自动复购。</p>
+            <div className="flex gap-2">
+              <button
+                onClick={handleClearOrders}
+                className="flex-1 py-1 bg-red-500 text-white text-xs font-medium rounded hover:bg-red-600 transition-colors"
+              >
+                确认清除
+              </button>
+              <button
+                onClick={() => setShowClearConfirm(false)}
+                className="flex-1 py-1 bg-white text-gray-600 text-xs font-medium rounded border border-gray-200 hover:bg-gray-50 transition-colors"
+              >
+                取消
+              </button>
+            </div>
+          </div>
+        ) : (
+          <button
+            onClick={() => orderCount > 0 && setShowClearConfirm(true)}
+            disabled={orderCount === 0 || syncing}
+            className="w-full py-2 bg-gray-50 text-gray-500 disabled:text-gray-300 disabled:bg-gray-50/30 text-xs font-medium rounded-lg hover:bg-gray-100 disabled:hover:bg-transparent transition-colors focus:outline-none focus:ring-2 focus:ring-gray-100"
+          >
+            {orderCount > 0 ? '清除同步数据' : '暂无本地订单数据'}
+          </button>
+        )}
+      </div>
+    </div>
+  )
+}
+
+export default function AccountManager() {
+  return (
+    <div className="max-w-6xl mx-auto">
+      <div className="mb-6">
+        <h2 className="text-xl font-bold text-gray-900 mb-1">多平台账号管理</h2>
+        <p className="text-sm text-gray-500">
+          通过同步各购物平台的历史订单，可以让 AI 自动在正确的平台上匹配并帮你完成一键“再买一单”或配置定时购买。
+        </p>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 items-stretch">
+        {PLATFORM_CONFIGS.map((config) => (
+          <PlatformCard key={config.key} platform={config} />
+        ))}
       </div>
     </div>
   )

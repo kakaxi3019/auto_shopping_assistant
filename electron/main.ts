@@ -13,6 +13,7 @@ import { Database } from './db/database'
 import { registerIpcHandlers } from './ipc/handlers'
 import { TaskScheduler } from './scheduler/task-scheduler'
 import { ScheduledTaskRunner } from './scheduler/scheduled-task-runner'
+import { PLATFORM_CONFIGS } from '../shared/platforms'
 
 const CHROME_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'
 
@@ -92,9 +93,38 @@ Menu.setApplicationMenu(null)
 app.whenReady().then(async () => {
   console.log('[Startup] App ready')
 
+  // 提前提取出平铺域名数组，优化性能并避免高频查询开销
+  const fakeUaDomains = new Set<string>()
+  try {
+    if (Array.isArray(PLATFORM_CONFIGS)) {
+      for (const p of PLATFORM_CONFIGS) {
+        if (p && Array.isArray(p.domains)) {
+          for (const d of p.domains) {
+            fakeUaDomains.add(d)
+          }
+        }
+      }
+    }
+  } catch (e) {
+    console.error('[Main] Failed to extract platform domains:', e)
+  }
+
+  // 兜底常用域名，确保即使配置读取异常也绝不丢失淘宝和关键平台的UA伪装
+  const fallbackDomains = ['taobao.com', 'tmall.com', 'jd.com', 'jd.hk', 'pinduoduo.com', 'yangkeduo.com']
+  for (const d of fallbackDomains) {
+    fakeUaDomains.add(d)
+  }
+
+  const fakeUaDomainsArray = Array.from(fakeUaDomains)
+
   session.defaultSession.webRequest.onBeforeSendHeaders((details, callback) => {
-    if (details.url.includes('taobao.com') || details.url.includes('tmall.com')) {
-      details.requestHeaders['User-Agent'] = CHROME_USER_AGENT
+    try {
+      const shouldAddUA = fakeUaDomainsArray.some(domain => details.url.includes(domain))
+      if (shouldAddUA) {
+        details.requestHeaders['User-Agent'] = CHROME_USER_AGENT
+      }
+    } catch (e) {
+      console.error('[Main] Error in onBeforeSendHeaders UA faking:', e)
     }
     callback({ requestHeaders: details.requestHeaders })
   })

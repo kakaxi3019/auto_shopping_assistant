@@ -1,5 +1,7 @@
 import { useState, useEffect } from 'react'
 import { api } from '../lib/api'
+import { PLATFORM_CONFIGS } from '@shared/platforms'
+import PlatformLogo from './PlatformLogo'
 
 type RepeatType = 'once' | 'daily' | 'weekly' | 'monthly'
 type PaymentMode = '' | 'cart_only' | 'checkout_only' | 'auto_pay'
@@ -21,7 +23,8 @@ interface ScheduledTask {
 }
 
 const PLATFORM_OPTIONS: { value: string; label: string; icon: string }[] = [
-  { value: 'taobao', label: '淘宝', icon: '🛒' },
+  { value: '', label: '自动选择', icon: '🤖' },
+  ...PLATFORM_CONFIGS.map(p => ({ value: p.key, label: p.name, icon: p.icon }))
 ]
 
 const REPEAT_LABELS: Record<RepeatType, string> = {
@@ -60,7 +63,7 @@ export default function ScheduledTasks({
   const [dayOfWeek, setDayOfWeek] = useState(1)
   const [dayOfMonth, setDayOfMonth] = useState(1)
   const [paymentMode, setPaymentMode] = useState<PaymentMode>('')
-  const [platform, setPlatform] = useState('taobao')
+  const [platform, setPlatform] = useState('')
   useEffect(() => {
     loadTasks()
   }, [])
@@ -90,7 +93,7 @@ export default function ScheduledTasks({
     setDayOfWeek(1)
     setDayOfMonth(1)
     setPaymentMode('')
-    setPlatform('taobao')
+    setPlatform('')
     setEditingId(null)
     setShowForm(false)
   }
@@ -107,7 +110,7 @@ export default function ScheduledTasks({
     setDayOfWeek(task.dayOfWeek ?? 1)
     setDayOfMonth(task.dayOfMonth ?? 1)
     setPaymentMode((task.paymentMode || '') as PaymentMode)
-    setPlatform(task.platform || 'taobao')
+    setPlatform(task.platform || '')
     setShowForm(true)
   }
 
@@ -347,13 +350,18 @@ export default function ScheduledTasks({
                 <button
                   key={opt.value}
                   onClick={() => setPlatform(opt.value)}
-                  className={`px-3 py-1.5 text-sm rounded-lg transition-colors ${
+                  className={`px-3 py-1.5 text-sm rounded-lg transition-colors flex items-center justify-center gap-1.5 ${
                     platform === opt.value
-                      ? 'bg-blue-600 text-white'
+                      ? 'bg-blue-600 text-white font-medium'
                       : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
                   }`}
                 >
-                  {opt.icon} {opt.label}
+                  {opt.value ? (
+                    <PlatformLogo platformKey={opt.value} size="sm" className="w-5 h-5 !rounded" />
+                  ) : (
+                    <span className="text-base">🤖</span>
+                  )}
+                  <span>{opt.label}</span>
                 </button>
               ))}
             </div>
@@ -515,9 +523,19 @@ export default function ScheduledTasks({
                         <span className="px-2 py-0.5 text-sm rounded-full bg-purple-50 text-purple-600 font-medium">
                           {getPaymentModeLabel(task.paymentMode)}
                         </span>
-                        {task.platform && task.platform !== 'taobao' && (
-                          <span className="px-2 py-0.5 text-sm rounded-full bg-orange-50 text-orange-600 font-medium">
-                            {PLATFORM_OPTIONS.find(p => p.value === task.platform)?.icon || '🏪'} {PLATFORM_OPTIONS.find(p => p.value === task.platform)?.label || task.platform}
+                        {task.platform ? (
+                          <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 text-xs rounded-full font-medium ${
+                            task.platform === 'taobao' ? 'bg-orange-50 text-orange-600 border border-orange-100' :
+                            task.platform === 'jd' ? 'bg-red-50 text-red-600 border border-red-100' :
+                            task.platform === 'pdd' ? 'bg-pink-50 text-pink-600 border border-pink-100' :
+                            'bg-gray-50 text-gray-600 border border-gray-100'
+                          }`}>
+                            <PlatformLogo platformKey={task.platform} size="sm" className="w-4 h-4 !rounded" />
+                            {PLATFORM_OPTIONS.find(p => p.value === task.platform)?.label || task.platform}
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 text-xs rounded-full bg-blue-50 text-blue-600 border border-blue-100 font-medium">
+                            🤖 自动选择
                           </span>
                         )}
                       </div>
