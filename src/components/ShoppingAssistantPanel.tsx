@@ -311,6 +311,14 @@ export default function ShoppingAssistantPanel({
     })
   }, [])
 
+  const hasJd = preview?.platform === 'jd' || preview?.items.some(i => i.matched && i.platform === 'jd')
+
+  useEffect(() => {
+    if (hasJd && paymentMode === 'cart_only') {
+      setPaymentMode('checkout_only')
+    }
+  }, [hasJd, paymentMode])
+
   const activeTask = activeTaskId ? tasks.find(t => t.id === activeTaskId) : null
   const mode: PanelMode = preview ? 'preview' : 'progress'
 
@@ -927,24 +935,46 @@ export default function ShoppingAssistantPanel({
           </button>
           {showPaymentMode && (
             <div className="grid grid-cols-3 gap-2 mt-2">
-              {Object.entries(paymentModeLabels).map(([key, info]) => (
-                <div key={key} onClick={() => setPaymentMode(key)}
-                  className={`px-2 py-2 rounded-lg border-2 cursor-pointer transition-all ${
-                    paymentMode === key
-                      ? key === 'auto_pay' ? 'border-blue-500 bg-blue-50' : key === 'checkout_only' ? 'border-amber-500 bg-amber-50' : 'border-green-500 bg-green-50'
-                      : 'border-gray-200 bg-white hover:border-gray-300'
-                  }`}>
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-xs">{info.icon}</span>
-                    <span className={`text-xs font-medium ${paymentMode === key ? (key === 'auto_pay' ? 'text-blue-700' : key === 'checkout_only' ? 'text-amber-700' : 'text-green-700') : 'text-gray-700'}`}>
-                      {info.label}
-                    </span>
+              {Object.entries(paymentModeLabels).map(([key, info]) => {
+                const isJdDisabled = key === 'cart_only' && hasJd
+                return (
+                  <div key={key} onClick={() => {
+                    if (isJdDisabled) return
+                    setPaymentMode(key)
+                  }}
+                    className={`px-2 py-2 rounded-lg border-2 cursor-pointer transition-all ${
+                      isJdDisabled
+                        ? 'border-gray-100 bg-gray-50/50 opacity-60 cursor-not-allowed'
+                        : paymentMode === key
+                          ? key === 'auto_pay' ? 'border-blue-500 bg-blue-50' : key === 'checkout_only' ? 'border-amber-500 bg-amber-50' : 'border-green-500 bg-green-50'
+                          : 'border-gray-200 bg-white hover:border-gray-300'
+                    }`}
+                    title={isJdDisabled ? '由于京东平台限制，不支持仅加购' : undefined}
+                  >
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-xs">{info.icon}</span>
+                      <span className={`text-xs font-medium ${
+                        isJdDisabled
+                          ? 'text-gray-400'
+                          : paymentMode === key
+                            ? (key === 'auto_pay' ? 'text-blue-700' : key === 'checkout_only' ? 'text-amber-700' : 'text-green-700')
+                            : 'text-gray-700'
+                      }`}>
+                        {info.label}
+                      </span>
+                    </div>
+                    <p className={`text-xs mt-0.5 ${
+                      isJdDisabled
+                        ? 'text-gray-400 text-[10px]'
+                        : paymentMode === key
+                          ? (key === 'auto_pay' ? 'text-blue-500' : key === 'checkout_only' ? 'text-amber-500' : 'text-green-500')
+                          : 'text-gray-400'
+                    }`}>
+                      {isJdDisabled ? '由于平台限制，不支持仅加购功能' : info.desc}
+                    </p>
                   </div>
-                  <p className={`text-xs mt-0.5 ${paymentMode === key ? (key === 'auto_pay' ? 'text-blue-500' : key === 'checkout_only' ? 'text-amber-500' : 'text-green-500') : 'text-gray-400'}`}>
-                    {info.desc}
-                  </p>
-                </div>
-              ))}
+                )
+              })}
             </div>
           )}
         </div>

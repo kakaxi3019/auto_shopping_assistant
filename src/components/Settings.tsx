@@ -20,7 +20,7 @@ const SETTING_KEYS: Record<LlmProvider, { apiKey: string; baseUrl: string; model
   anthropic: { apiKey: 'anthropic_api_key', baseUrl: 'anthropic_base_url', model: 'anthropic_model' },
 }
 
-export default function Settings() {
+export default function Settings({ activePage }: { activePage?: string }) {
   const [activeTab, setActiveTab] = useState<SettingsTab>('model')
   const [provider, setProvider] = useState<LlmProvider>('openai')
   const [providerSettings, setProviderSettings] = useState<Record<LlmProvider, ProviderSettings>>({
@@ -42,9 +42,7 @@ export default function Settings() {
 
   const current = providerSettings[provider]
 
-  useEffect(() => {
-    loadSettings()
-  }, [])
+
 
   const loadSettings = async () => {
     const p = await api.getSetting('llm_provider')
@@ -102,6 +100,16 @@ export default function Settings() {
       }
     }
   }
+
+  useEffect(() => {
+    loadSettings()
+  }, [])
+
+  useEffect(() => {
+    if (activePage === 'settings') {
+      loadSettings()
+    }
+  }, [activePage])
 
   const updateCurrent = (field: keyof ProviderSettings, value: string) => {
     setProviderSettings(prev => ({

@@ -25,13 +25,11 @@ interface SavedCookie {
   expires?: number
 }
 
-const SESSION_COOKIES = ['cookie2', 'sgcookie']
-
-export class TaobaoAuth {
+export class JdAuth {
   private cookiePath: string
 
   constructor() {
-    this.cookiePath = join(app.getPath('userData'), 'taobao-cookies.json')
+    this.cookiePath = join(app.getPath('userData'), 'jd-cookies.json')
   }
 
   saveElectronCookies(electronCookies: ElectronCookie[]) {
@@ -134,10 +132,12 @@ export class TaobaoAuth {
       const cookies: SavedCookie[] = JSON.parse(stat)
       if (!Array.isArray(cookies) || cookies.length === 0) return null
 
-      const keyCookies = cookies.filter(c => SESSION_COOKIES.includes(c.name) && c.expires && c.expires > 0)
-      if (keyCookies.length === 0) return null
+      // 对京东来说，pin (用户ID) 是比较稳定的 session/持久 cookie。
+      const keyCookies = cookies.filter(c => ['pin', 'unick'].includes(c.name) && c.expires && c.expires > 0)
+      const testCookies = keyCookies.length > 0 ? keyCookies : cookies.filter(c => c.expires && c.expires > 0)
+      if (testCookies.length === 0) return '长期有效'
 
-      const minExpiry = Math.min(...keyCookies.map(c => c.expires!))
+      const minExpiry = Math.min(...testCookies.map(c => c.expires!))
       const now = Date.now() / 1000
       const remaining = minExpiry - now
       if (remaining <= 0) return '已过期'

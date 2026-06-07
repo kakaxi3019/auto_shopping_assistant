@@ -1,5 +1,6 @@
 import type { PlatformAdapter } from '../../shared/types/platform.types'
 import { TaobaoPlatform } from './taobao/taobao.platform.new'
+import { JdPlatform } from './jd/jd.platform'
 import type { Database } from '../db/database'
 
 export class PlatformRegistry {
@@ -7,6 +8,7 @@ export class PlatformRegistry {
 
   constructor(db: Database) {
     this.register(new TaobaoPlatform(db))
+    this.register(new JdPlatform(db))
   }
 
   register(adapter: PlatformAdapter) {

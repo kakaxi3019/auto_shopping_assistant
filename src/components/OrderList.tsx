@@ -37,9 +37,11 @@ function formatPrice(price: number): string {
 }
 
 export default function OrderList({
+  activePage,
   onNavigateToTasks,
   onScheduleBuy,
 }: {
+  activePage?: string
   onNavigateToTasks?: (filter?: string | number) => void
   onScheduleBuy?: (info: { name: string; instruction: string; platform: string }) => void
 }) {
@@ -137,6 +139,15 @@ export default function OrderList({
   useEffect(() => {
     if (selectedPlatform) loadOrders()
   }, [selectedPlatform, loadOrders])
+
+  useEffect(() => {
+    if (activePage === 'orders') {
+      loadCounts()
+      if (selectedPlatform) {
+        loadOrders()
+      }
+    }
+  }, [activePage, selectedPlatform, loadCounts, loadOrders])
 
   useEffect(() => {
     if (!manageMode) {
@@ -599,7 +610,7 @@ export default function OrderList({
                         </span>
                       )}
                       <span className="text-sm text-gray-300">
-                        #{order.orderId}
+                        #{order.orderId.split('_')[0]}
                       </span>
                     </div>
 

@@ -83,52 +83,6 @@ export default function App() {
     return unsubNotification
   }, [])
 
-  const renderPage = () => {
-    switch (page) {
-      case 'shopping':
-        return (
-          <div className="space-y-6">
-            <ShoppingInput onSubmit={previewTask} disabled={!backendReady || previewLoading} recentTasks={recentSuggestions} previewOpen={panelOpen} />
-            <Dashboard tasks={tasks} onScrollToTasks={(filter) => { setScrollToFilter(filter !== undefined ? filter : ''); setPage('shopping') }} />
-            <TaskList tasks={tasks} loading={loading} onCancel={cancelTask} onRetryItem={retryTaskItem} onReExecute={handleReExecute} onDelete={deleteTask} onDeleteBatch={deleteTasks} onClearHistory={clearHistory} scrollToFilter={scrollToFilter} onScrollHandled={() => setScrollToFilter(null)} onOpenTaskPanel={openTaskPanel} />
-          </div>
-        )
-      case 'orders':
-        return (
-          <Suspense fallback={<div className="p-4 text-sm text-gray-500">加载中...</div>}>
-            <OrderList
-              onNavigateToTasks={(filter) => { if (filter !== undefined) setScrollToFilter(filter); setPage('shopping') }}
-              onScheduleBuy={(info) => {
-                setScheduledTaskDraft(info)
-                setPage('scheduled')
-              }}
-            />
-          </Suspense>
-        )
-      case 'scheduled':
-        return (
-          <Suspense fallback={<div className="p-4 text-sm text-gray-500">加载中...</div>}>
-            <ScheduledTasks
-              initialDraft={scheduledTaskDraft}
-              onDraftHandled={() => setScheduledTaskDraft(null)}
-            />
-          </Suspense>
-        )
-      case 'account':
-        return (
-          <Suspense fallback={<div className="p-4 text-sm text-gray-500">加载中...</div>}>
-            <AccountManager />
-          </Suspense>
-        )
-      case 'settings':
-        return (
-          <Suspense fallback={<div className="p-4 text-sm text-gray-500">加载中...</div>}>
-            <Settings />
-          </Suspense>
-        )
-    }
-  }
-
   return (
     <ErrorBoundary>
       <>
@@ -139,7 +93,47 @@ export default function App() {
               正在初始化服务，请稍候...
             </div>
           )}
-          {renderPage()}
+          
+          <div className={page === 'shopping' ? 'space-y-6' : 'hidden'}>
+            <ShoppingInput onSubmit={previewTask} disabled={!backendReady || previewLoading} recentTasks={recentSuggestions} previewOpen={panelOpen} />
+            <Dashboard tasks={tasks} onScrollToTasks={(filter) => { setScrollToFilter(filter !== undefined ? filter : ''); setPage('shopping') }} />
+            <TaskList tasks={tasks} loading={loading} onCancel={cancelTask} onRetryItem={retryTaskItem} onReExecute={handleReExecute} onDelete={deleteTask} onDeleteBatch={deleteTasks} onClearHistory={clearHistory} scrollToFilter={scrollToFilter} onScrollHandled={() => setScrollToFilter(null)} onOpenTaskPanel={openTaskPanel} />
+          </div>
+
+          <div className={page === 'orders' ? '' : 'hidden'}>
+            <Suspense fallback={<div className="p-4 text-sm text-gray-500">加载中...</div>}>
+              <OrderList
+                activePage={page}
+                onNavigateToTasks={(filter) => { if (filter !== undefined) setScrollToFilter(filter); setPage('shopping') }}
+                onScheduleBuy={(info) => {
+                  setScheduledTaskDraft(info)
+                  setPage('scheduled')
+                }}
+              />
+            </Suspense>
+          </div>
+
+          <div className={page === 'scheduled' ? '' : 'hidden'}>
+            <Suspense fallback={<div className="p-4 text-sm text-gray-500">加载中...</div>}>
+              <ScheduledTasks
+                activePage={page}
+                initialDraft={scheduledTaskDraft}
+                onDraftHandled={() => setScheduledTaskDraft(null)}
+              />
+            </Suspense>
+          </div>
+
+          <div className={page === 'account' ? '' : 'hidden'}>
+            <Suspense fallback={<div className="p-4 text-sm text-gray-500">加载中...</div>}>
+              <AccountManager activePage={page} />
+            </Suspense>
+          </div>
+
+          <div className={page === 'settings' ? '' : 'hidden'}>
+            <Suspense fallback={<div className="p-4 text-sm text-gray-500">加载中...</div>}>
+              <Settings activePage={page} />
+            </Suspense>
+          </div>
         </Layout>
         {panelOpen && (
           <ShoppingAssistantPanel

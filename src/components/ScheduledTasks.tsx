@@ -44,9 +44,11 @@ const PAYMENT_MODE_OPTIONS: { value: PaymentMode; label: string; icon: string; d
 const WEEKDAY_LABELS = ['周日', '周一', '周二', '周三', '周四', '周五', '周六']
 
 export default function ScheduledTasks({
+  activePage,
   initialDraft,
   onDraftHandled,
 }: {
+  activePage?: string
   initialDraft?: { name: string; instruction: string; platform?: string } | null
   onDraftHandled?: () => void
 }) {
@@ -64,9 +66,22 @@ export default function ScheduledTasks({
   const [dayOfMonth, setDayOfMonth] = useState(1)
   const [paymentMode, setPaymentMode] = useState<PaymentMode>('')
   const [platform, setPlatform] = useState('')
+
+
+  const loadTasks = async () => {
+    const list = await api.listScheduledTasks()
+    setTasks(list as ScheduledTask[])
+  }
+
   useEffect(() => {
     loadTasks()
   }, [])
+
+  useEffect(() => {
+    if (activePage === 'scheduled') {
+      loadTasks()
+    }
+  }, [activePage])
 
   useEffect(() => {
     if (initialDraft) {
@@ -79,11 +94,6 @@ export default function ScheduledTasks({
       onDraftHandled?.()
     }
   }, [initialDraft, onDraftHandled])
-
-  const loadTasks = async () => {
-    const list = await api.listScheduledTasks()
-    setTasks(list as ScheduledTask[])
-  }
 
   const resetForm = () => {
     setName('')

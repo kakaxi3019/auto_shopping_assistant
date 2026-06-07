@@ -63,6 +63,12 @@ export class TaskExecutor {
     paymentMode?: string,
   ): Promise<{ success: boolean; itemResults: ItemResult[]; error?: string }> {
     debugLog('TaskExecutor', `execute called: taskId=${taskId}, parsedItems=${JSON.stringify(parsedItems)}, paymentMode=${paymentMode}, dryRun=${dryRun}`)
+    
+    if ((platform.name === 'jd' || platform.name === 'pdd') && paymentMode === 'cart_only') {
+      onProgress('⚠️ 由于京东/拼多多平台限制，不支持仅加购功能，已自动切换为“确认金额后支付”模式。')
+      paymentMode = 'checkout_only'
+    }
+
     const itemResults: ItemResult[] = []
 
     for (const item of parsedItems) {
@@ -124,12 +130,24 @@ export class TaskExecutor {
     const url = platform.getProductUrl(order)
     debugLog('TaskExecutor', `processPurchase started: name="${item.name}", orderId=${order.orderId}, url=${url}, isCartOnly=${isCartOnly}`)
 
-    onProgress(`正在为 "${item.name}" 执行再买一单（订单 ${order.orderId}）...`)
+    onProgress(isCartOnly
+      ? `正在为 "${item.name}" 执行加入购物车（订单 ${order.orderId}）...`
+      : `正在为 "${item.name}" 执行再买一单（订单 ${order.orderId}）...`
+    )
     try {
       const skuToUse = item.sku || order.sku
       const cartResult: AddToCartResult = await platform.addToCart(url, skuToUse, order.orderId, isCartOnly)
       debugLog('TaskExecutor', `addToCart returned: ${JSON.stringify(cartResult)}`)
       if (!cartResult.success) {
+        const errorCategory = categorizeError(cartResult.error)
+        if (errorCategory === 'login_expired') {
+          result.error = cartResult.error || '登录已过期'
+          onProgress(isCartOnly
+            ? `❌ 加购失败：${result.error}，请先重新登录平台账号`
+            : `❌ 购买失败：${result.error}，请先重新登录平台账号`
+          )
+          return
+        }
         await this.handleSearchFallback(taskId, item, order, platform, cartResult, result, onProgress, dryRun, paymentMode)
       } else if (isCartOnly) {
         onProgress(`已将 "${item.name}" 加入购物车`)
@@ -185,11 +203,51 @@ export class TaskExecutor {
     paymentMode?: string,
   ): Promise<void> {
     const isCartOnly = paymentMode === 'cart_only'
-    const searchParts = [order.productName]
-    if (order.shopName) searchParts.push(order.shopName)
-    if (item.sku) searchParts.push(item.sku)
-    const searchKeyword = searchParts.join(' ')
-    onProgress(`再买一单失败（${cartResult.error}），正在打开搜索页面，请在搜索结果中找到对应商品并点击进入...`)
+    let cleanName = order.productName || ''
+    // 去除各种中英文/日文/特殊括号包裹的营销语/无用参数
+    cleanName = cleanName.replace(/【[^】]*】/g, ' ')
+    cleanName = cleanName.replace(/\[[^\]]*\]/g, ' ')
+    cleanName = cleanName.replace(/（[^）]*）/g, ' ')
+    cleanName = cleanName.replace(/\([^)]*\)/g, ' ')
+    cleanName = cleanName.replace(/\{[^}]*\}/g, ' ')
+    
+    // 去除特殊字符以防止风控触发
+    cleanName = cleanName.replace(/[\/\\|.+\-*&^%$#@!~`?:;\"'<>,\u3002\uff0c\uff1a\uff1b\uff1f\uff01\u3001\u201c\u201d\u2018\u2019]/g, ' ')
+    cleanName = cleanName.trim().replace(/\s+/g, ' ')
+    
+    // 限制核心品名最长为 20 个字符，防止触发平台的超长词安全频次拦截，提高召回率
+    if (cleanName.length > 20) {
+      cleanName = cleanName.substring(0, 20).trim()
+    }
+
+    const searchParts = [cleanName]
+    if (item.sku) {
+      let cleanSku = item.sku
+      cleanSku = cleanSku.replace(/【[^】]*】/g, ' ')
+      cleanSku = cleanSku.replace(/\[[^\]]*\]/g, ' ')
+      cleanSku = cleanSku.replace(/（[^）]*）/g, ' ')
+      cleanSku = cleanSku.replace(/\([^)]*\)/g, ' ')
+      cleanSku = cleanSku.replace(/\{[^}]*\}/g, ' ')
+      cleanSku = cleanSku.replace(/[\/\\|.+\-*&^%$#@!~`?:;\"'<>,\u3002\uff0c\uff1a\uff1b\uff1f\uff01\u3001\u201c\u201d\u2018\u2019]/g, ' ')
+      cleanSku = cleanSku.trim().replace(/\s+/g, ' ')
+      // 如果 SKU 和商品名称截断后不重复，且 SKU 足够短，则拼接到搜索词中
+      if (cleanSku && !cleanName.includes(cleanSku)) {
+        searchParts.push(cleanSku)
+      }
+    } else if (order.shopName) {
+      const cleanShop = order.shopName.replace(/(京东自营|官方旗舰店|旗舰店|专营店)/g, '').trim()
+      if (cleanShop) searchParts.push(cleanShop)
+    }
+    
+    let searchKeyword = searchParts.join(' ').trim().replace(/\s+/g, ' ')
+    // 限制总搜索词最长为 28 个字符
+    if (searchKeyword.length > 28) {
+      searchKeyword = searchKeyword.substring(0, 28).trim()
+    }
+    onProgress(isCartOnly
+      ? `加入购物车失败（${cartResult.error}），正在打开搜索页面，请在搜索结果中找到对应商品并点击进入...`
+      : `再买一单失败（${cartResult.error}），正在打开搜索页面，请在搜索结果中找到对应商品并点击进入...`
+    )
     try {
       const searchUrl = await platform.openSearchPage(searchKeyword)
       if (searchUrl) {
@@ -735,6 +793,11 @@ export class TaskExecutor {
     dryRun?: boolean,
     paymentMode?: string,
   ): Promise<ItemResult> {
+    if ((platform.name === 'jd' || platform.name === 'pdd') && paymentMode === 'cart_only') {
+      onProgress('⚠️ 由于京东/拼多多平台限制，不支持仅加购功能，已自动切换为“确认金额后支付”模式。')
+      paymentMode = 'checkout_only'
+    }
+
     const result: ItemResult = { name: item.name, quantity: item.quantity, status: 'failed' }
 
     const candidateOrders = this.findCandidateOrders(item, platform.name, result, onProgress, instruction)

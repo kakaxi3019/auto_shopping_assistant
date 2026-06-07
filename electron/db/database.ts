@@ -271,6 +271,16 @@ export class Database {
     })
   }
 
+  getOrderByPlatformAndOrderId(platform: string, orderId: string): Order | null {
+    return this.withStmt('SELECT * FROM orders WHERE platform = ? AND order_id = ?', (stmt) => {
+      stmt.bind([platform, orderId])
+      if (stmt.step()) {
+        return toCamelCase(stmt.getAsObject()) as unknown as Order
+      }
+      return null
+    })
+  }
+
   getProductStats(productNames: string[]): Record<string, { count: number; lastPurchasedAt: string }> {
     if (productNames.length === 0) return {}
     const placeholders = productNames.map(() => '?').join(',')

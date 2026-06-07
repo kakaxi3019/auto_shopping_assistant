@@ -43,7 +43,7 @@ function getSyncStepIndex(status: string): number {
   return 0
 }
 
-function PlatformCard({ platform }: { platform: PlatformConfig }) {
+function PlatformCard({ platform, activePage }: { platform: PlatformConfig; activePage?: string }) {
   const [loggedIn, setLoggedIn] = useState<boolean | null>(null)
   const [syncing, setSyncing] = useState(false)
   const [syncResult, setSyncResult] = useState('')
@@ -56,25 +56,7 @@ function PlatformCard({ platform }: { platform: PlatformConfig }) {
   const [cookieAge, setCookieAge] = useState<string | null>(null)
   const [syncTimeRange, setSyncTimeRange] = useState<string>('all')
 
-  useEffect(() => {
-    checkStatus()
-    loadSyncInfo()
-  }, [platform.key])
 
-  useEffect(() => {
-    const unsubscribe = api.onSyncStatusUpdate((data) => {
-      const statusData = data as SyncStatusData
-      if (statusData.platform === platform.key) {
-        if (statusData.error) {
-          setSyncStatus(`❌ ${statusData.status}: ${statusData.error}`)
-        } else {
-          setSyncStatus(statusData.status)
-        }
-      }
-    })
-
-    return unsubscribe
-  }, [platform.key])
 
   const checkStatus = async () => {
     try {
@@ -96,6 +78,33 @@ function PlatformCard({ platform }: { platform: PlatformConfig }) {
       setOrderCount(count)
     } catch { /* ignore */ }
   }
+
+  useEffect(() => {
+    checkStatus()
+    loadSyncInfo()
+  }, [platform.key])
+
+  useEffect(() => {
+    if (activePage === 'account') {
+      checkStatus()
+      loadSyncInfo()
+    }
+  }, [platform.key, activePage])
+
+  useEffect(() => {
+    const unsubscribe = api.onSyncStatusUpdate((data) => {
+      const statusData = data as SyncStatusData
+      if (statusData.platform === platform.key) {
+        if (statusData.error) {
+          setSyncStatus(`❌ ${statusData.status}: ${statusData.error}`)
+        } else {
+          setSyncStatus(statusData.status)
+        }
+      }
+    })
+
+    return unsubscribe
+  }, [platform.key])
 
   const handleLogin = async () => {
     setLoggingIn(true)
@@ -371,7 +380,7 @@ function PlatformCard({ platform }: { platform: PlatformConfig }) {
   )
 }
 
-export default function AccountManager() {
+export default function AccountManager({ activePage }: { activePage?: string }) {
   return (
     <div className="max-w-6xl mx-auto">
       <div className="mb-6">
@@ -383,7 +392,7 @@ export default function AccountManager() {
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 items-stretch">
         {PLATFORM_CONFIGS.map((config) => (
-          <PlatformCard key={config.key} platform={config} />
+          <PlatformCard key={config.key} platform={config} activePage={activePage} />
         ))}
       </div>
     </div>

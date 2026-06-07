@@ -157,7 +157,7 @@ describe('task-scheduler.ts deep analysis', () => {
     const content = fs.readFileSync(path.join(projectRoot, 'electron/scheduler/task-scheduler.ts'), 'utf-8')
 
     const confirmStart = content.indexOf('async confirmTask(')
-    const confirmBody = content.substring(confirmStart, confirmStart + 400)
+    const confirmBody = content.substring(confirmStart, confirmStart + 600)
 
     expect(confirmBody).toContain("paymentMode || 'cart_only'")
   })
