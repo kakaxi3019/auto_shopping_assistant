@@ -1091,12 +1091,9 @@ export default function ShoppingAssistantPanel({
           closedHint: cannotRestore
             ? '由于该商品结算页面已失效且无法恢复，当前任务已自动取消。请重新下单'
             : '如需继续购买，请点击"重新打开商品页面"；如商品无法购买，请点击"商品无法购买"取消当前任务',
-          openTitle: payMode === 'cart_only' ? '请在弹出的窗口中选择规格并加购' : payMode === 'auto_pay' ? '请在弹出的窗口中选择规格并加入购物车' : '请在弹出的窗口中选择规格',
-          openHint: payMode === 'cart_only'
-            ? '系统已打开商品页面，请在窗口中选择规格并加入购物车，随后点击下方按钮继续'
-            : payMode === 'auto_pay'
-              ? '系统已打开商品页面，请在窗口中选择规格并加入购物车，随后系统将自动为您提交并支付'
-              : '系统已打开商品页面，请在窗口中选择规格并加入购物车，系统将自动进入结算页继续',
+          openTitle: '请在弹出的窗口中操作',
+          openHint: '请在弹出的窗口中选择规格并点击购买按钮，系统将自动检测页面跳转并继续后续流程',
+          autoDetect: true,
         },
         'payment': {
           noun: '支付',
@@ -1182,7 +1179,8 @@ export default function ShoppingAssistantPanel({
                   {labels.reopenBtn}
                 </button>
               )}
-              {!isCannotRestore && (
+              {/* 窗口打开且系统自动检测时，隐藏确认按钮（用户在弹窗中操作即可） */}
+              {!isCannotRestore && !(labels as any).autoDetect && (
                 <button onClick={handleConfirmActionClick} disabled={confirmActionStatus !== 'idle'}
                   className="px-3 py-1.5 text-sm font-medium text-white bg-green-600 rounded-lg hover:bg-green-700 transition-colors">
                   {confirmActionStatus === 'loading' ? (

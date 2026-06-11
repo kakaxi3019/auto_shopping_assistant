@@ -71,22 +71,27 @@ export class PaymentService {
       return { success: false, error: '没有可用的支付窗口' }
     }
 
+    // 从页面读取真实应付金额，而非依赖传入的估算值
+    const realAmount = await this.readAmountFromPage(shopWindow)
+    const amountForCheck = realAmount ?? totalAmount
+    debugLog(`[Taobao-Payment] amount check: realAmount=${realAmount}, passedAmount=${totalAmount}, using=${amountForCheck}`)
+
     const payFreeLimit = parseFloat(this.db.getSetting('pay_free_limit') || '0') || 0
-    const exceedsLimit = payFreeLimit > 0 && totalAmount !== undefined && totalAmount > payFreeLimit
+    const exceedsLimit = payFreeLimit > 0 && amountForCheck !== undefined && amountForCheck > payFreeLimit
 
     if (exceedsLimit) {
-      debugLog(`[Taobao-Payment] totalAmount ¥${totalAmount} exceeds limit ¥${payFreeLimit}. User confirmation required.`)
+      debugLog(`[Taobao-Payment] amount ¥${amountForCheck} exceeds limit ¥${payFreeLimit}. User confirmation required.`)
       shopWindow.setSize(WINDOW_SIZES.CONFIRMATION.width, WINDOW_SIZES.CONFIRMATION.height)
       shopWindow.setTitle(`金额超过免密支付上限 - 需要手动确认付款`)
       const mainWindow = this.windowManager.getMainWindow()
       if (mainWindow) shopWindow.setParentWindow(mainWindow)
-      const bannerMsg = `⚠️ 自动支付已暂停：订单金额 ¥${totalAmount!.toFixed(2)} 超过免密支付上限 ¥${payFreeLimit.toFixed(2)}，为保障资金安全需要您手动确认。请在下方完成付款后点击"已完成"`
+      const bannerMsg = `⚠️ 自动支付已暂停：订单金额 ¥${amountForCheck!.toFixed(2)} 超过免密支付上限 ¥${payFreeLimit.toFixed(2)}，为保障资金安全需要您手动确认。请在下方完成付款后点击"已完成"`
       injectOverlayBanner(shopWindow, bannerMsg)
       injectCenterToast(shopWindow, "请完成付款后点击已完成")
       shopWindow.show()
       const confirmed = await this.interactionService.waitForUserConfirmation(
         shopWindow,
-        `订单金额 ¥${totalAmount!.toFixed(2)} 超过免密支付上限 ¥${payFreeLimit.toFixed(2)}，为保障资金安全需要您手动确认付款。请在弹出的窗口中完成支付，然后点击"已完成"`,
+        `订单金额 ¥${amountForCheck!.toFixed(2)} 超过免密支付上限 ¥${payFreeLimit.toFixed(2)}，为保障资金安全需要您手动确认付款。请在弹出的窗口中完成支付，然后点击"已完成"`,
         `金额超过免密支付上限 - 需要手动确认付款`,
         bannerMsg,
         'payment',
@@ -104,8 +109,8 @@ export class PaymentService {
       return { success: false, error: '支付未完成' }
     }
 
-    this.emitStatus(totalAmount !== undefined
-      ? `正在自动支付（¥${totalAmount.toFixed(2)}）...`
+    this.emitStatus(amountForCheck !== undefined
+      ? `正在自动支付（¥${amountForCheck.toFixed(2)}）...`
       : '正在自动支付...'
     )
 
@@ -346,17 +351,19 @@ export class PaymentService {
     }
   }
 
-  async showPaymentWindow(title?: string): Promise<{ paid: boolean }> {
+  async showPaymentWindow(title?: string, silent?: boolean): Promise<{ paid: boolean }> {
     const shopWindow = this.windowManager.getShopWindow()
     if (!shopWindow || shopWindow.isDestroyed()) return { paid: false }
     shopWindow.setSize(WINDOW_SIZES.CONFIRMATION.width, WINDOW_SIZES.CONFIRMATION.height)
-    shopWindow.setTitle(title || '金额超过免密支付上限 - 需要手动确认付款')
+    shopWindow.setTitle(title || '请完成支付')
     const mainWindow = this.windowManager.getMainWindow()
     if (mainWindow) {
       shopWindow.setParentWindow(mainWindow)
     }
-    injectOverlayBanner(shopWindow, title || '💰 自动支付已暂停：金额超过免密支付上限，为保障资金安全需要您手动确认。请在下方完成付款后关闭窗口')
-    injectCenterToast(shopWindow, "请完成付款后关闭窗口")
+    if (!silent) {
+      injectOverlayBanner(shopWindow, title || '💰 请在页面中完成支付后关闭窗口')
+      injectCenterToast(shopWindow, "请完成付款后关闭窗口")
+    }
     shopWindow.show()
 
     let paymentDetected = false
@@ -406,6 +413,64 @@ export class PaymentService {
     } catch { /* ignore */ }
 
     return { paid: paymentDetected }
+  }
+
+  private async readAmountFromPage(shopWindow: BrowserWindow): Promise<number | undefined> {
+    try {
+      const priceStr = await shopWindow.webContents.executeJavaScript(`
+        (function() {
+          // 优先从价格元素读取
+          var selectors = [
+            '[class*="realPrice"]', '[class*="real-price"]',
+            '[class*="totalPrice"]', '[class*="total-price"]',
+            '[class*="payPrice"]', '[class*="pay-price"]',
+            '[class*="amount"]', '[class*="Amount"]',
+            '[class*="sumPrice"]', '[class*="sum-price"]',
+            '[class*="orderPrice"]', '[class*="order-price"]',
+          ];
+          for (var i = 0; i < selectors.length; i++) {
+            var els = document.querySelectorAll(selectors[i]);
+            for (var j = 0; j < els.length; j++) {
+              var text = (els[j].textContent || '').trim();
+              var m = text.match(/¥?([\\d,]+\\.?\\d*)/);
+              if (m) {
+                var val = parseFloat(m[1].replace(/,/g, ''));
+                if (val > 0 && val < 999999) return String(val);
+              }
+            }
+          }
+          // 从页面文本匹配
+          var bodyText = document.body?.innerText || '';
+          var patterns = [
+            /实付[：:]\\s*¥?([\\d,]+\\.?\\d*)/,
+            /应付[：:]\\s*¥?([\\d,]+\\.?\\d*)/,
+            /合计[：:]\\s*¥?([\\d,]+\\.?\\d*)/,
+            /总计[：:]\\s*¥?([\\d,]+\\.?\\d*)/,
+            /付款[：:]\\s*¥?([\\d,]+\\.?\\d*)/,
+          ];
+          for (var k = 0; k < patterns.length; k++) {
+            var pm = bodyText.match(patterns[k]);
+            if (pm) {
+              var pv = parseFloat(pm[1].replace(/,/g, ''));
+              if (pv > 0 && pv < 999999) return String(pv);
+            }
+          }
+          return null;
+        })()
+      `)
+      if (priceStr) {
+        const val = parseFloat(priceStr)
+        if (!isNaN(val) && val > 0) {
+          debugLog(`[Taobao-Payment] readAmountFromPage: ¥${val}`)
+          return val
+        }
+      }
+      debugLog('[Taobao-Payment] readAmountFromPage: no price found')
+      return undefined
+    } catch (e) {
+      debugLog(`[Taobao-Payment] readAmountFromPage error: ${e}`)
+      return undefined
+    }
   }
 
 }

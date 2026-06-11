@@ -1,5 +1,5 @@
 import { BrowserWindow } from 'electron'
-import { APP_ICON, CHROME_UA } from '../utils/constants'
+import { APP_ICON, CHROME_UA, TAOBAO_PRELOAD } from '../utils/constants'
 import { setUserAgent } from '../utils/page-helper'
 
 export class WindowManager {
@@ -54,8 +54,9 @@ export class WindowManager {
       webPreferences: {
         contextIsolation: true,
         nodeIntegration: false,
-        sandbox: false,
+        sandbox: true,
         backgroundThrottling: false,
+        preload: TAOBAO_PRELOAD,
       },
     })
     setUserAgent(this.loginWindow)
@@ -72,8 +73,9 @@ export class WindowManager {
       webPreferences: {
         nodeIntegration: false,
         contextIsolation: true,
-        sandbox: false,
+        sandbox: true,
         backgroundThrottling: false,
+        preload: TAOBAO_PRELOAD,
       },
     })
     setUserAgent(this.shopWindow)
@@ -90,8 +92,9 @@ export class WindowManager {
       webPreferences: {
         nodeIntegration: false,
         contextIsolation: true,
-        sandbox: false,
+        sandbox: true,
         backgroundThrottling: false,
+        preload: TAOBAO_PRELOAD,
       },
     })
     setUserAgent(win)
@@ -113,8 +116,9 @@ export class WindowManager {
       webPreferences: {
         contextIsolation: true,
         nodeIntegration: false,
-        sandbox: false,
+        sandbox: true,
         backgroundThrottling: false,
+        preload: TAOBAO_PRELOAD,
       },
     })
     setUserAgent(win)
@@ -132,8 +136,9 @@ export class WindowManager {
       webPreferences: {
         contextIsolation: true,
         nodeIntegration: false,
-        sandbox: false,
+        sandbox: true,
         backgroundThrottling: false,
+        preload: TAOBAO_PRELOAD,
       },
     })
     return this.trackWindow(win)
@@ -148,8 +153,9 @@ export class WindowManager {
       webPreferences: {
         contextIsolation: true,
         nodeIntegration: false,
-        sandbox: false,
+        sandbox: true,
         backgroundThrottling: false,
+        preload: TAOBAO_PRELOAD,
       },
     })
     setUserAgent(win)

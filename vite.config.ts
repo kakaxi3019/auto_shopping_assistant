@@ -33,6 +33,17 @@ export default defineConfig({
           },
         },
       },
+      {
+        entry: 'electron/preload-taobao.ts',
+        onstart(args) {
+          args.reload()
+        },
+        vite: {
+          build: {
+            outDir: 'dist-electron',
+          },
+        },
+      },
     ]),
     renderer(),
   ],

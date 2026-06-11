@@ -127,9 +127,14 @@ export class TaskExecutor {
     onProgress(`正在为 "${item.name}" 执行再买一单（订单 ${order.orderId}）...`)
     try {
       const skuToUse = item.sku || order.sku
-      const cartResult: AddToCartResult = await platform.addToCart(url, skuToUse, order.orderId, isCartOnly)
+      const cartResult: AddToCartResult = await platform.addToCart(url, skuToUse, order.orderId, isCartOnly, order.skuId)
       debugLog('TaskExecutor', `addToCart returned: ${JSON.stringify(cartResult)}`)
       if (!cartResult.success) {
+        // 窗口被关闭通常是用户点击了停止，不应触发搜索降级打开新窗口
+        if (cartResult.error?.includes('操作窗口已关闭')) {
+          result.error = '已停止'
+          return
+        }
         await this.handleSearchFallback(taskId, item, order, platform, cartResult, result, onProgress, dryRun, paymentMode)
       } else if (isCartOnly) {
         onProgress(`已将 "${item.name}" 加入购物车`)
@@ -227,6 +232,24 @@ export class TaskExecutor {
     paymentMode?: string,
   ): Promise<void> {
     debugLog('TaskExecutor', `handleCheckoutAndPay started: item="${item.name}", directToPay=${directToPay}, dryRun=${dryRun}, paymentMode=${paymentMode}`)
+
+    // 用户已手动跳到支付/结算页（directToPay=true），跳过 checkout 流程，直接处理支付
+    if (directToPay) {
+      onProgress(`已到达支付页面，等待用户完成支付...`)
+      debugLog('TaskExecutor', `directToPay=true, skipping checkout, monitoring payment result`)
+      const payWindowResult = await platform.showPaymentWindow(
+        `订单已提交 - 请在页面中完成支付`,
+        true, // silent: 用户已在支付页，不注入额外 banner
+      )
+      if (payWindowResult.paid) {
+        result.matchedProduct = order.productName
+        result.status = 'success'
+      } else {
+        result.error = '支付未完成'
+      }
+      return
+    }
+
     onProgress(`正在结算 "${item.name}"${item.quantity > 1 ? `（x${item.quantity}）` : ''}...`)
     const checkoutResult = await platform.checkout(directToPay, item.quantity)
     debugLog('TaskExecutor', `platform.checkout returned: ${JSON.stringify(checkoutResult)}`)

@@ -1,5 +1,5 @@
 import { join } from 'path'
-import { app } from 'electron'
+import { app, safeStorage } from 'electron'
 import { existsSync, readFileSync, writeFileSync } from 'fs'
 import type { BrowserContext } from 'playwright'
 
@@ -34,8 +34,39 @@ export class TaobaoAuth {
     this.cookiePath = join(app.getPath('userData'), 'taobao-cookies.json')
   }
 
+  private saveRaw(cookies: SavedCookie[]) {
+    const json = JSON.stringify(cookies)
+    if (safeStorage.isEncryptionAvailable()) {
+      const encrypted = safeStorage.encryptString(json)
+      writeFileSync(this.cookiePath, JSON.stringify({ encrypted: true, data: encrypted.toString('base64') }))
+    } else {
+      writeFileSync(this.cookiePath, JSON.stringify({ encrypted: false, data: json }))
+    }
+  }
+
+  private loadRaw(): SavedCookie[] {
+    if (!existsSync(this.cookiePath)) return []
+    try {
+      const raw = readFileSync(this.cookiePath, 'utf-8')
+      const parsed = JSON.parse(raw)
+      // 兼容旧版明文格式：直接是数组
+      if (Array.isArray(parsed)) return parsed
+      // 新版格式
+      if (parsed && parsed.data) {
+        if (parsed.encrypted && safeStorage.isEncryptionAvailable()) {
+          const buf = Buffer.from(parsed.data, 'base64')
+          return JSON.parse(safeStorage.decryptString(buf))
+        }
+        return JSON.parse(parsed.data)
+      }
+      return []
+    } catch {
+      return []
+    }
+  }
+
   saveElectronCookies(electronCookies: ElectronCookie[]) {
-    const playwrightCookies = electronCookies.map((c) => ({
+    const playwrightCookies: SavedCookie[] = electronCookies.map((c) => ({
       name: c.name,
       value: c.value,
       domain: c.domain,
@@ -45,85 +76,57 @@ export class TaobaoAuth {
       sameSite: c.sameSite || (c.secure ? 'no_restriction' : 'lax'),
       ...(c.expirationDate ? { expires: c.expirationDate } : {}),
     }))
-    writeFileSync(this.cookiePath, JSON.stringify(playwrightCookies, null, 2))
+    this.saveRaw(playwrightCookies)
   }
 
   async loadCookies(context: BrowserContext): Promise<boolean> {
-    if (!existsSync(this.cookiePath)) return false
-    try {
-      const cookies = JSON.parse(readFileSync(this.cookiePath, 'utf-8'))
-      if (Array.isArray(cookies) && cookies.length > 0) {
-        await context.addCookies(cookies)
-        return true
-      }
-      return false
-    } catch {
-      return false
+    const cookies = this.loadRaw()
+    if (cookies.length > 0) {
+      await context.addCookies(cookies)
+      return true
     }
+    return false
   }
 
   loadCookiesRaw(): SavedCookie[] {
-    if (!existsSync(this.cookiePath)) return []
-    try {
-      const cookies = JSON.parse(readFileSync(this.cookiePath, 'utf-8'))
-      if (Array.isArray(cookies) && cookies.length > 0) {
-        return cookies
-      }
-      return []
-    } catch {
-      return []
-    }
+    return this.loadRaw()
   }
 
   hasSavedCookies(): boolean {
-    if (!existsSync(this.cookiePath)) return false
-    try {
-      const data = readFileSync(this.cookiePath, 'utf-8')
-      const cookies: SavedCookie[] = JSON.parse(data)
-      if (!Array.isArray(cookies) || cookies.length === 0) return false
+    const cookies = this.loadRaw()
+    if (cookies.length === 0) return false
 
-      const now = Date.now() / 1000
-      const hasValidCookie = cookies.some((c) => {
-        if (!c.expires || c.expires <= 0) return true
-        return c.expires > now
-      })
-
-      return hasValidCookie
-    } catch {
-      return false
-    }
+    const now = Date.now() / 1000
+    return cookies.some((c) => {
+      if (!c.expires || c.expires <= 0) return true
+      return c.expires > now
+    })
   }
 
   getCookieAge(): string | null {
-    if (!existsSync(this.cookiePath)) return null
-    try {
-      const stat = readFileSync(this.cookiePath, 'utf-8')
-      const cookies: SavedCookie[] = JSON.parse(stat)
-      if (!Array.isArray(cookies) || cookies.length === 0) return null
+    const cookies = this.loadRaw()
+    if (cookies.length === 0) return null
 
-      const keyCookies = cookies.filter(c => SESSION_COOKIES.includes(c.name) && c.expires && c.expires > 0)
-      if (keyCookies.length === 0) return null
+    const keyCookies = cookies.filter(c => SESSION_COOKIES.includes(c.name) && c.expires && c.expires > 0)
+    if (keyCookies.length === 0) return null
 
-      const minExpiry = Math.min(...keyCookies.map(c => c.expires!))
-      const now = Date.now() / 1000
-      const remaining = minExpiry - now
-      if (remaining <= 0) return '已过期'
+    const minExpiry = Math.min(...keyCookies.map(c => c.expires!))
+    const now = Date.now() / 1000
+    const remaining = minExpiry - now
+    if (remaining <= 0) return '已过期'
 
-      const days = Math.floor(remaining / 86400)
-      if (days > 365) return '长期有效'
-      if (days > 0) return `约 ${days} 天后过期`
-      const hours = Math.floor(remaining / 3600)
-      if (hours > 0) return `约 ${hours} 小时后过期`
-      const minutes = Math.floor(remaining / 60)
-      return `约 ${minutes} 分钟后过期`
-    } catch {
-      return null
-    }
+    const days = Math.floor(remaining / 86400)
+    if (days > 365) return '长期有效'
+    if (days > 0) return `约 ${days} 天后过期`
+    const hours = Math.floor(remaining / 3600)
+    if (hours > 0) return `约 ${hours} 小时后过期`
+    const minutes = Math.floor(remaining / 60)
+    return `约 ${minutes} 分钟后过期`
   }
 
   clearCookies() {
     if (existsSync(this.cookiePath)) {
-      writeFileSync(this.cookiePath, '[]')
+      this.saveRaw([])
     }
   }
 }

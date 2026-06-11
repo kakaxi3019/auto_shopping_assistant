@@ -26,8 +26,9 @@ export class TaskScheduler {
   private parser: LlmParser
   private executor: TaskExecutor
   private mainWindow: BrowserWindow | null = null
-  private taskQueue: Array<{ taskId: number; fn: () => Promise<void> }> = []
+  private taskQueue: Array<{ taskId: number; fn: () => Promise<void>; cancelFn?: () => void; cancelled?: boolean }> = []
   private isExecuting = false
+  private cancelFns = new Map<number, () => void>()
 
   constructor(db: Database) {
     this.db = db
@@ -214,6 +215,7 @@ export class TaskScheduler {
 
   private async executeTask(taskId: number, parsedItems: ParsedShoppingItem[], platformName: string, instruction?: string, dryRun?: boolean, paymentMode?: PaymentMode) {
     this.lastProgressPerTask.delete(taskId)
+    let cancelReject: ((reason?: any) => void) | null = null
     const taskFn = async () => {
       const platform = this.registry.get(platformName)
       if (!platform) {
@@ -230,9 +232,18 @@ export class TaskScheduler {
       })
 
       try {
-        const execResult = await this.executor.execute(taskId, parsedItems, platform, (msg) => {
-          this.emitUpdate(taskId, 'running', undefined, msg)
-        }, instruction, dryRun, paymentMode)
+        const cancelPromise = new Promise<never>((_resolve, reject) => { cancelReject = reject })
+        const execResult = await Promise.race([
+          this.executor.execute(taskId, parsedItems, platform, (msg) => {
+            this.emitUpdate(taskId, 'running', undefined, msg)
+          }, instruction, dryRun, paymentMode),
+          cancelPromise,
+        ])
+
+        const currentTask = this.db.getTaskById(taskId)
+        if (currentTask && currentTask.status === 'cancelled') {
+          return
+        }
 
         const hasPending = execResult.itemResults.some(r => r.status === 'pending')
         const hasPendingPayment = execResult.itemResults.some(r => r.status === 'success' && r.pendingPayment)
@@ -249,16 +260,23 @@ export class TaskScheduler {
         this.emitUpdate(taskId, status, error, undefined, undefined, instruction)
         this.db.updateTaskItemResults(taskId, JSON.stringify(execResult.itemResults))
       } catch (e) {
+        const currentTask = this.db.getTaskById(taskId)
+        if (currentTask && currentTask.status === 'cancelled') {
+          return
+        }
         const errorMsg = e instanceof Error ? e.message : String(e)
         this.db.updateTaskStatus(taskId, 'failed', errorMsg)
         this.emitUpdate(taskId, 'failed', errorMsg, undefined, undefined, instruction)
       } finally {
+        cancelReject = null
         unsubscribe()
       }
     }
 
+    const cancelFn = () => { if (cancelReject) cancelReject(new Error('__cancelled__')) }
+    this.cancelFns.set(taskId, cancelFn)
     const isQueued = this.isExecuting || this.taskQueue.length > 0
-    this.taskQueue.push({ taskId, fn: taskFn })
+    this.taskQueue.push({ taskId, fn: taskFn, cancelFn })
 
     if (isQueued) {
       this.db.updateTaskStatus(taskId, 'running')
@@ -273,9 +291,10 @@ export class TaskScheduler {
     this.isExecuting = true
 
     while (this.taskQueue.length > 0) {
-      const { fn } = this.taskQueue.shift()!
+      const entry = this.taskQueue.shift()!
+      if (entry.cancelled) continue
       try {
-        await fn()
+        await entry.fn()
       } catch (e) {
         console.error('[TaskScheduler] Task execution error:', e)
       }
@@ -285,6 +304,14 @@ export class TaskScheduler {
   }
 
   cancelTask(taskId: number) {
+    // Cancel the executor if it's running (makes taskFn exit immediately via Promise.race)
+    const cancelFn = this.cancelFns.get(taskId)
+    if (cancelFn) cancelFn()
+    this.cancelFns.delete(taskId)
+
+    // Mark queued entry so processQueue skips it if it hasn't been shifted yet
+    const queuedEntry = this.taskQueue.find(t => t.taskId === taskId)
+    if (queuedEntry) queuedEntry.cancelled = true
     this.taskQueue = this.taskQueue.filter(t => t.taskId !== taskId)
     this.db.dismissPendingConfirmationsForTask(taskId)
 

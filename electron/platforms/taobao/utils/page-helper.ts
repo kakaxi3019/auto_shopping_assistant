@@ -441,8 +441,11 @@ const ORDER_API_JS_TEMPLATE = `async function(pageNum, beginTime, endTime) {
           skuText = rawSkuText;
         }
 
+        // 提取 skuId：规格的数字标识，用于自动选中商品规格
+        const skuId = (sub.skuInfo && sub.skuInfo.skuId) || itemInfo.skuId || ''
+
         if (productName) {
-          orders.push({ productName, productUrl, price, imageUrl, orderId, purchasedAt, shopName, sku: skuText });
+          orders.push({ productName, productUrl, price, imageUrl, orderId, purchasedAt, shopName, sku: skuText, skuId });
         }
       }
     }

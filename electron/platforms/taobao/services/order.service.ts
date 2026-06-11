@@ -5,7 +5,7 @@ import { CookieManager } from '../infrastructure/cookie-manager'
 import { WindowManager } from '../infrastructure/window-manager'
 import { TaobaoAuth } from '../taobao.auth'
 import { setUserAgent, debugLog, getOrderApiJs } from '../utils/page-helper'
-import { ORDER_API_URL, APP_ICON } from '../utils/constants'
+import { ORDER_API_URL, APP_ICON, TAOBAO_PRELOAD } from '../utils/constants'
 import { TAOBAO_SELECTORS } from '../taobao.selectors'
 
 export class OrderService {
@@ -48,8 +48,9 @@ export class OrderService {
       webPreferences: {
         contextIsolation: true,
         nodeIntegration: false,
-        sandbox: false,
+        sandbox: true,
         backgroundThrottling: false,
+        preload: TAOBAO_PRELOAD,
       },
     })
     setUserAgent(hiddenWindow)
@@ -142,9 +143,10 @@ export class OrderService {
             purchasedAt: item.purchasedAt || new Date().toISOString(),
             shopName: (item as Record<string, unknown>).shopName as string || '',
             sku: (item as Record<string, unknown>).sku as string || '',
+            skuId: (item as Record<string, unknown>).skuId as string || '',
             rawData: JSON.stringify(item),
           })
-          allOrders.push({ id: orderId, platform: 'taobao', productName: item.productName, productUrl: item.productUrl, price: item.price, imageUrl: item.imageUrl, orderId: item.orderId, purchasedAt: item.purchasedAt, shopName: (item as Record<string, unknown>).shopName as string || '', sku: (item as Record<string, unknown>).sku as string || '', rawData: JSON.stringify(item) } as Order)
+          allOrders.push({ id: orderId, platform: 'taobao', productName: item.productName, productUrl: item.productUrl, price: item.price, imageUrl: item.imageUrl, orderId: item.orderId, purchasedAt: item.purchasedAt, shopName: (item as Record<string, unknown>).shopName as string || '', sku: (item as Record<string, unknown>).sku as string || '', skuId: (item as Record<string, unknown>).skuId as string || '', rawData: JSON.stringify(item) } as Order)
         }
 
         if (!result.hasNext) break

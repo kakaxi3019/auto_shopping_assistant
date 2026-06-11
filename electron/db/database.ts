@@ -2,11 +2,11 @@ import initSqlJs, { type Database as SqlJsDatabase } from 'sql.js'
 import { join } from 'path'
 import { app, safeStorage } from 'electron'
 import { existsSync, readFileSync, writeFileSync } from 'fs'
-import { MIGRATIONS, MIGRATION_V2, MIGRATION_V3, MIGRATION_V4, MIGRATION_V5, MIGRATION_V6, MIGRATION_V7, MIGRATION_V8, MIGRATION_V9, MIGRATION_V10, MIGRATION_V11, MIGRATION_V12, MIGRATION_V13, MIGRATION_V14, MIGRATION_V15 } from './migrations'
+import { MIGRATIONS, MIGRATION_V2, MIGRATION_V3, MIGRATION_V4, MIGRATION_V5, MIGRATION_V6, MIGRATION_V7, MIGRATION_V8, MIGRATION_V9, MIGRATION_V10, MIGRATION_V11, MIGRATION_V12, MIGRATION_V13, MIGRATION_V14, MIGRATION_V15, MIGRATION_V16 } from './migrations'
 import type { ShoppingTask, PendingConfirmation } from '../../shared/types/task.types'
 import type { Order } from '../../shared/types/platform.types'
 
-const MIGRATION_VERSION = 15
+const MIGRATION_VERSION = 16
 
 const SENSITIVE_KEYS = new Set(['openai_api_key', 'anthropic_api_key'])
 
@@ -191,6 +191,12 @@ export class Database {
 
     if (currentVersion < 15) {
       for (const sql of MIGRATION_V15) {
+        this.db.run(sql)
+      }
+    }
+
+    if (currentVersion < 16) {
+      for (const sql of MIGRATION_V16) {
         this.db.run(sql)
       }
     }
@@ -433,16 +439,17 @@ export class Database {
 
   upsertOrder(order: Omit<Order, 'id' | 'unavailable'>): number {
     this.db.run(`
-      INSERT INTO orders (platform, order_id, product_name, product_url, price, image_url, purchased_at, shop_name, sku, raw_data)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO orders (platform, order_id, product_name, product_url, price, image_url, purchased_at, shop_name, sku, sku_id, raw_data)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(platform, order_id) DO UPDATE SET
         product_name = excluded.product_name,
         product_url = excluded.product_url,
         price = excluded.price,
         image_url = excluded.image_url,
         shop_name = excluded.shop_name,
-        sku = excluded.sku
-    `, [order.platform, order.orderId, order.productName, order.productUrl, order.price, order.imageUrl, order.purchasedAt, order.shopName, order.sku, order.rawData])
+        sku = excluded.sku,
+        sku_id = excluded.sku_id
+    `, [order.platform, order.orderId, order.productName, order.productUrl, order.price, order.imageUrl, order.purchasedAt, order.shopName, order.sku, order.skuId || '', order.rawData])
     this.scheduleSave()
     const row = this.db.exec('SELECT id FROM orders WHERE platform = ? AND order_id = ?', [order.platform, order.orderId])
     return Number(row[0]?.values[0]?.[0])

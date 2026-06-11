@@ -5,7 +5,7 @@ import type { CookieManager } from '../infrastructure/cookie-manager'
 import type { WindowManager } from '../infrastructure/window-manager'
 import type { TaobaoAuth } from '../taobao.auth'
 import { debugLog, execJS, injectOverlayBanner, injectCenterToast, setUserAgent, humanDelay } from '../utils/page-helper'
-import { APP_ICON, TIMEOUTS, WINDOW_SIZES } from '../utils/constants'
+import { APP_ICON, TIMEOUTS, WINDOW_SIZES, TAOBAO_PRELOAD } from '../utils/constants'
 import { tryAutoLoginThenShow } from '../utils/window-helper'
 import type { AddToCartResult } from '../../../shared/types/platform.types'
 
@@ -119,8 +119,9 @@ export class VerificationService {
         webPreferences: {
           nodeIntegration: false,
           contextIsolation: true,
-          sandbox: false,
+          sandbox: true,
           backgroundThrottling: false,
+          preload: TAOBAO_PRELOAD,
         },
       })
       setUserAgent(verifyWindow)

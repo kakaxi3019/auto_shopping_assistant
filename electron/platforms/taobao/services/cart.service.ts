@@ -1,4 +1,4 @@
-﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿import { BrowserWindow } from 'electron'
+﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿import { BrowserWindow } from 'electron'
 import type { Page, BrowserContext } from 'playwright'
 import type { Database } from '../../../db/database'
 import type { AddToCartResult, Order } from '../../../../shared/types/platform.types'
@@ -9,7 +9,7 @@ import { VerificationService } from './verification.service'
 import { InteractionService } from './interaction.service'
 import { TaobaoAuth } from '../taobao.auth'
 import { setUserAgent, debugLog, humanDelay, humanClickAt, humanClickElement, execJS, injectOverlayBanner, injectCenterToast, rand, ListenerTracker, cleanupForCaptcha, resetCaptchaMode } from '../utils/page-helper'
-import { APP_ICON, WINDOW_SIZES, TIMEOUTS, KEYWORDS, ORDER_DETAIL_URL } from '../utils/constants'
+import { APP_ICON, WINDOW_SIZES, TIMEOUTS, KEYWORDS, ORDER_DETAIL_URL, TAOBAO_PRELOAD } from '../utils/constants'
 import { isCheckoutOrPayPage, isLoginPage, isIdentityVerifyPage, isBuyPage, isCartPage, isProductDetailPage, isOrderArchivePage, isOrderDetailPage, isErrorPage } from '../utils/url-helper'
 import { TAOBAO_SELECTORS } from '../taobao.selectors'
 import { HUMAN_SIM_JS } from '../utils/human-sim'
@@ -56,9 +56,9 @@ export class CartService {
     this.isDestroyed = isDestroyed
   }
 
-  async addToCart(productUrl: string, sku?: string, orderId?: string, cartOnly?: boolean): Promise<AddToCartResult> {
+  async addToCart(productUrl: string, sku?: string, orderId?: string, cartOnly?: boolean, skuId?: string): Promise<AddToCartResult> {
     this.emitStatus('正在再买一单...')
-    debugLog(`[Taobao-Cart] addToCart invoked: productUrl=${productUrl}, sku=${sku}, orderId=${orderId}, cartOnly=${cartOnly}`)
+    debugLog(`[Taobao-Cart] addToCart invoked: productUrl=${productUrl}, sku=${sku}, orderId=${orderId}, cartOnly=${cartOnly}, skuId=${skuId}`)
 
     if (!orderId) {
       this.emitStatus('没有订单号，无法再买一单')
@@ -67,7 +67,7 @@ export class CartService {
     }
 
     try {
-      const result = await this.runInHiddenWindow(orderId, productUrl, cartOnly, sku)
+      const result = await this.runInHiddenWindow(orderId, productUrl, cartOnly, sku, skuId)
       if (result) return result
 
       return { success: false, error: '再买一单操作未返回结果' }
@@ -106,8 +106,9 @@ export class CartService {
         webPreferences: {
           nodeIntegration: false,
           contextIsolation: true,
-          sandbox: false,
+          sandbox: true,
           backgroundThrottling: false,
+          preload: TAOBAO_PRELOAD,
         },
       })
       this.windowManager.setShopWindow(newShopWindow)
@@ -125,6 +126,13 @@ export class CartService {
           lt.dispose()
           resolve(result)
         }
+
+        lt.on(newShopWindow, 'closed', () => {
+          if (!resolved) {
+            this.emitStatus('操作窗口已关闭')
+            doResolve({ success: false, error: '操作窗口已关闭' })
+          }
+        })
 
         const timeout = setTimeout(() => {
           if (!resolved) {
@@ -367,13 +375,13 @@ export class CartService {
               `)
 
               if (hasSkuDialog) {
-                this.emitStatus('需要选择商品规格，请在弹出的窗口中选择后点击"加入购物车"')
+                this.emitStatus('需要选择商品规格，请在弹出的窗口中选择后点击购买按钮')
                 sw!.setSize(WINDOW_SIZES.VERIFICATION.width, WINDOW_SIZES.VERIFICATION.height)
-                sw!.setTitle('请选择商品规格，选好后点击"加入购物车"')
+                sw!.setTitle('请选择商品规格，选好后点击购买按钮')
                 const mw = this.windowManager.getMainWindow()
                 if (mw) sw!.setParentWindow(mw)
-                injectOverlayBanner(sw!, "🛒 自动购物助手：需要选择商品规格，请在下方选择后点击\"加入购物车\"")
-                injectCenterToast(sw!, "请选择规格后点击加入购物车")
+                injectOverlayBanner(sw!, "🛒 自动购物助手：需要选择商品规格，请在下方选择后点击购买按钮")
+                injectCenterToast(sw!, "请选择规格后点击购买按钮")
                 sw!.show()
 
                 lt.on(sw!.webContents, 'did-navigate', async (_evt, url: string) => {
@@ -443,8 +451,9 @@ export class CartService {
       webPreferences: {
         nodeIntegration: false,
         contextIsolation: true,
-        sandbox: false,
+        sandbox: true,
         backgroundThrottling: false,
+        preload: TAOBAO_PRELOAD,
       },
     })
     this.windowManager.setShopWindow(newShopWindow)
@@ -493,8 +502,9 @@ export class CartService {
         webPreferences: {
           nodeIntegration: false,
           contextIsolation: true,
-          sandbox: false,
+          sandbox: true,
           backgroundThrottling: false,
+          preload: TAOBAO_PRELOAD,
         },
       })
       this.windowManager.setShopWindow(newShopWindow)
@@ -512,6 +522,13 @@ export class CartService {
           lt.dispose()
           resolve(result)
         }
+
+        lt.on(newShopWindow, 'closed', () => {
+          if (!resolved) {
+            this.emitStatus('操作窗口已关闭')
+            doResolve({ success: false, error: '操作窗口已关闭' })
+          }
+        })
 
         const timeout = setTimeout(() => {
           if (!resolved) {
@@ -857,11 +874,11 @@ export class CartService {
               if (hasSkuDialog) {
                 this.emitStatus('需要选择商品规格，请在弹出的窗口中选择...')
                 sw!.setSize(WINDOW_SIZES.VERIFICATION.width, WINDOW_SIZES.VERIFICATION.height)
-                sw!.setTitle('请选择商品规格，选好后点击"立即购买"')
+                sw!.setTitle('请选择商品规格，选好后点击购买按钮')
                 const mw = this.windowManager.getMainWindow()
                 if (mw) sw!.setParentWindow(mw)
-                injectOverlayBanner(sw!, "🛒 自动购物助手：需要选择商品规格，请在下方选择后点击\"立即购买\"")
-                injectCenterToast(sw!, "请选择规格后点击立即购买")
+                injectOverlayBanner(sw!, "🛒 自动购物助手：需要选择商品规格，请在下方选择后点击购买按钮")
+                injectCenterToast(sw!, "请选择规格后点击购买按钮")
                 sw!.show()
 
                 lt.on(sw!.webContents, 'did-navigate', async (_evt, url: string) => {
@@ -907,7 +924,7 @@ export class CartService {
     }
   }
 
-  private async runInHiddenWindow(orderId: string, productUrl?: string, cartOnly?: boolean, sku?: string): Promise<AddToCartResult | null> {
+  private async runInHiddenWindow(orderId: string, productUrl?: string, cartOnly?: boolean, sku?: string, skuId?: string): Promise<AddToCartResult | null> {
     const mainWindow = this.windowManager.getMainWindow()
     if (!mainWindow) {
       debugLog('[Taobao-Cart] runInHiddenWindow failed: mainWindow is null')
@@ -934,8 +951,9 @@ export class CartService {
       webPreferences: {
         nodeIntegration: false,
         contextIsolation: true,
-        sandbox: false,
+        sandbox: true,
         backgroundThrottling: false,
+        preload: TAOBAO_PRELOAD,
       },
     })
     this.windowManager.setShopWindow(newShopWindow)
@@ -971,10 +989,140 @@ export class CartService {
 
     return new Promise<AddToCartResult | null>((resolve) => {
       const lt = new ListenerTracker()
+
+      let resolved = false
+      const doResolve = (result: AddToCartResult | null) => {
+        if (resolved) return
+        resolved = true
+        clearTimeout(timeout)
+        clearInterval(checkInterval)
+        if (firstLoadTimer) {
+          clearTimeout(firstLoadTimer)
+          firstLoadTimer = null
+        }
+        lt.dispose()
+        if (!result?.directToPay) {
+          const sw = this.windowManager.getShopWindow()
+          if (sw && !sw.isDestroyed()) {
+            try { sw.close() } catch { /* ignore */ }
+            this.windowManager.setShopWindow(null)
+          }
+        }
+        resolve(result)
+      }
+
+      lt.on(newShopWindow, 'closed', () => {
+        if (!resolved) {
+          this.emitStatus('操作窗口已关闭')
+          doResolve({ success: false, error: '操作窗口已关闭' })
+        }
+      })
+
+      const REBUY_TIMEOUT = 600000
+      const timeout = setTimeout(() => {
+        if (!resolved) {
+          doResolve(null)
+          this.windowManager.closeShopWindow(async () => { await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth) })
+          this.emitStatus('⚠️ 再买一单操作超时，请尝试手动操作')
+        }
+      }, REBUY_TIMEOUT)
+
+      let firstLoadTimer: ReturnType<typeof setTimeout> | null = setTimeout(() => {
+        if (!resolved) {
+          this.windowManager.closeShopWindow(async () => { await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth) })
+          this.emitStatus('订单详情页加载超时，可能受到风控限制')
+          doResolve({ success: false, error: '订单详情页加载超时' })
+        }
+      }, 30000)
+
+      let mainAutoLoginAttempted = false
+
+      // 监听主窗口自身的网络错误
+      lt.on(newShopWindow.webContents, 'did-fail-load', (_event, errorCode, errorDescription, validatedURL) => {
+        if (firstLoadTimer) {
+          clearTimeout(firstLoadTimer)
+          firstLoadTimer = null
+        }
+        if (resolved) return
+        if (isErrorPage(validatedURL) || isLoginPage(validatedURL) || isIdentityVerifyPage(validatedURL) || validatedURL.includes('orderDetail.htm')) {
+          this.windowManager.closeShopWindow(async () => { await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth) })
+          this.emitStatus(`⚠️ 订单详情页加载失败: ${errorDescription} (${errorCode})`)
+          doResolve({ success: false, error: `订单详情页加载失败: ${errorDescription}` })
+        }
+      })
+
+      // 监听主窗口自身的加载完成，检测登录与安全验证
+      lt.on(newShopWindow.webContents, 'did-finish-load', async () => {
+        if (firstLoadTimer) {
+          clearTimeout(firstLoadTimer)
+          firstLoadTimer = null
+        }
+        if (resolved) return
+
+        const currentUrl = newShopWindow.webContents.getURL()
+        
+        // 捕获订单页本身的登录重定向
+        if (isLoginPage(currentUrl)) {
+          debugLog('[Taobao-Cart] Main window redirected to login page, trying auto login')
+          if (mainAutoLoginAttempted) {
+            debugLog('[Taobao-Cart] Already attempted auto login once on main window, waiting for manual login.')
+            return
+          }
+          mainAutoLoginAttempted = true
+          this.emitStatus('登录已过期，请在弹出的窗口中重新登录...')
+          await this.verificationService.tryAutoLoginThenShow(newShopWindow)
+          return
+        }
+
+        // 捕获订单页本身的安全身份验证
+        if (isIdentityVerifyPage(currentUrl)) {
+          this.emitStatus('需要进行身份验证，请在弹出的窗口中完成验证...')
+          newShopWindow.setSize(WINDOW_SIZES.SMALL.width, WINDOW_SIZES.SMALL.height)
+          newShopWindow.setTitle('淘宝身份验证')
+          const mw = this.windowManager.getMainWindow()
+          if (mw) newShopWindow.setParentWindow(mw)
+          injectOverlayBanner(newShopWindow, "🔐 自动购物助手：淘宝要求身份验证，请在下方完成验证后继续")
+          injectCenterToast(newShopWindow, "请完成身份验证")
+          newShopWindow.show()
+          newShopWindow.focus()
+          return
+        }
+
+        // 捕获订单页本身的验证码滑块
+        const hasCaptcha = await this.verificationService.detectCaptcha(newShopWindow)
+        if (hasCaptcha) {
+          cleanupForCaptcha(newShopWindow)
+          newShopWindow.setSize(WINDOW_SIZES.CONFIRMATION.width, WINDOW_SIZES.CONFIRMATION.height)
+          newShopWindow.setTitle('淘宝安全验证')
+          newShopWindow.setAlwaysOnTop(true)
+          if (newShopWindow.isMinimized()) newShopWindow.restore()
+          injectOverlayBanner(newShopWindow, '🔐 自动购物助手：淘宝要求安全验证，请在下方拖动滑块完成验证')
+          injectCenterToast(newShopWindow, '请拖动滑块完成验证')
+          newShopWindow.show()
+          newShopWindow.focus()
+          this.emitStatus('需要进行滑块验证，请在弹出的窗口中完成验证...')
+          
+          const verified = await this.interactionService.waitForUserConfirmation(
+            newShopWindow,
+            '淘宝要求安全验证（滑块验证），请在弹出的窗口中拖动滑块完成验证，然后点击"已完成"',
+            '淘宝安全验证',
+            '🔐 请拖动滑块完成验证',
+            'verification',
+          )
+          if (!verified) {
+            this.windowManager.closeShopWindow(async () => { await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth) })
+            doResolve({ success: false, error: '安全验证未完成' })
+            return
+          }
+          resetCaptchaMode(newShopWindow)
+          newShopWindow.loadURL(detailUrl, detailUrlLoadOptions)
+        }
+      })
+
       newShopWindow.loadURL(detailUrl, detailUrlLoadOptions)
 
       newShopWindow.webContents.setWindowOpenHandler(({ url: openUrl }) => {
-        return { action: 'allow', overrideBrowserWindowOptions: { show: false, webPreferences: { sandbox: false, contextIsolation: true, nodeIntegration: false, backgroundThrottling: false } } }
+        return { action: 'allow', overrideBrowserWindowOptions: { show: false, webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, backgroundThrottling: false, preload: TAOBAO_PRELOAD } } }
       })
 
       lt.on(newShopWindow.webContents, 'did-create-window', (newWindow) => {
@@ -984,6 +1132,7 @@ export class CartService {
         this.windowManager.trackWindow(newWindow)
 
         let skuHandled = false
+        let autoLoginAttempted = false
 
         const handlePopupUrl = async (popupUrl: string) => {
           if (resolved) return
@@ -1011,15 +1160,7 @@ export class CartService {
             this.windowManager.setShopWindow(newWindow)
             await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth)
             this.emitStatus('已进入结算页面')
-            newWindow.setSize(WINDOW_SIZES.CONFIRMATION.width, WINDOW_SIZES.CONFIRMATION.height)
-            newWindow.setTitle('自动结算中 - 请稍候')
-            const mw = this.windowManager.getMainWindow()
-            if (mw) {
-              newWindow.setParentWindow(mw)
-            }
-            injectOverlayBanner(newWindow, "💳 自动购物助手：已进入结算页面，系统正在自动为您提交订单，请稍候...")
-            injectCenterToast(newWindow, "正在自动结算，请稍候")
-            newWindow.show()
+            // 不注入横幅：用户可能还会跳转到支付页，旧横幅会因 SPA 导航残留
             doResolve({ success: true, directToPay: true })
             return
           }
@@ -1049,6 +1190,11 @@ export class CartService {
           }
           if (isLoginPage(popupUrl)) {
             debugLog(`[Taobao-Cart] login page detected on popup, trying auto login: ${popupUrl}`)
+            if (autoLoginAttempted) {
+              debugLog('[Taobao-Cart] Already attempted auto login once on popup, waiting for manual login.')
+              return
+            }
+            autoLoginAttempted = true
             await this.verificationService.tryAutoLoginThenShow(newWindow)
             return
           }
@@ -1058,7 +1204,52 @@ export class CartService {
           if (isProductDetailPage(popupUrl)) {
             if (skuHandled) return
             skuHandled = true
-            await humanDelay(1500)
+
+            // 如果有 skuId 但 URL 中没有，追加 skuId 让淘宝自动选中规格
+            if (skuId && !popupUrl.includes('skuId=')) {
+              try {
+                const urlObj = new URL(popupUrl)
+                urlObj.searchParams.set('skuId', skuId)
+                const newUrl = urlObj.toString()
+                debugLog(`[Taobao-Cart] Appending skuId to product URL: ${newUrl}`)
+                await newWindow.loadURL(newUrl)
+                popupUrl = newUrl
+              } catch (e) {
+                debugLog(`[Taobao-Cart] Failed to append skuId: ${e}`)
+              }
+            }
+
+            // 智能轮询等待规格选项加载以及淘宝页面可能进行的自动规格勾选，最多等待 5 秒
+            try {
+              for (let checkLoop = 0; checkLoop < 10; checkLoop++) {
+                if (newWindow.isDestroyed()) break
+                const check = await execJS(newWindow, `
+                  (function() {
+                    var skuItems = document.querySelectorAll('[class*="skuItem"], [class*="sku-item"], [class*="SkuItem"], [data-sku], [class*="valueItem"], [class*="ValueItem"], [class*="sku"], [class*="Sku"]');
+                    var hasSpecs = skuItems.length > 0;
+                    var hasSelectedSpec = false;
+                    for (var i = 0; i < skuItems.length; i++) {
+                      var classList = skuItems[i].className || '';
+                      var isSelected = classList.includes('selected') || classList.includes('active') || classList.includes('current') || skuItems[i].getAttribute('aria-checked') === 'true';
+                      if (isSelected) {
+                        hasSelectedSpec = true;
+                        break;
+                      }
+                    }
+                    return { hasSpecs: hasSpecs, hasSelectedSpec: hasSelectedSpec };
+                  })()
+                `)
+                if (check && (check.hasSelectedSpec || (check.hasSpecs && !popupUrl.includes('skuId=')))) {
+                  debugLog('[Taobao-Cart] Smart spec wait condition met early, hasSelectedSpec=' + check.hasSelectedSpec + ', loop=' + checkLoop)
+                  break
+                }
+                await humanDelay(500)
+              }
+            } catch (waitErr) {
+              debugLog('[Taobao-Cart] Error during smart spec wait: ' + waitErr)
+              await humanDelay(1500)
+            }
+
             try {
               const popupOffShelf = await checkOffShelf(newWindow)
               if (popupOffShelf) {
@@ -1068,7 +1259,7 @@ export class CartService {
                 return
               }
               if (popupUrl.includes('openSku=true') || popupUrl.includes('sku_properties=') || popupUrl.includes('skuId=') || sku) {
-                this.emitStatus('正在选择商品规格...')
+                this.emitStatus('正在尝试自动选择商品规格...')
                 const skuClickCount = await execJS(newWindow, `
                   (function() {
                     var urlParams = new URLSearchParams(window.location.search);
@@ -1199,30 +1390,33 @@ export class CartService {
                       }
                     }
                     
-                    return { skuProps: skuProps, skuId: skuId, clicked: clicked, needManualSelect: hasSpecs && !hasSelectedSpec };
+                    // 有规格选项但无一被选中时，需要用户手动选择
+                    var needManual = hasSpecs && !hasSelectedSpec;
+                    return { skuProps: skuProps, skuId: skuId, clicked: clicked, needManualSelect: needManual };
                   })()
                 `)
                 debugLog(`[Taobao-Cart] Specification selection matched ${skuClickCount?.clicked} items based on text "${sku || ''}" or URL parameters. needManualSelect=${skuClickCount?.needManualSelect}`)
                 await humanDelay(1000)
 
                 if (skuClickCount?.needManualSelect) {
+                  clearTimeout(timeout) // 进入手动选规格流程，取消再买一单的 45 秒整体超时，由 waitForUserConfirmation 的 30 分钟超时接管
                   debugLog('[Taobao-Cart] specifications are visible but none selected. Triggering manual spec selection.')
-                  const actionText = cartOnly ? '点击加入购物车' : '点击购买'
+                  this.emitStatus('规格未自动选中，请手动选择...')
                   newWindow.setSize(WINDOW_SIZES.CONFIRMATION.width, WINDOW_SIZES.CONFIRMATION.height)
-                  newWindow.setTitle(`请选择商品规格 - 选择后${actionText}`)
+                  newWindow.setTitle('请选择商品规格 - 选择后点击购买按钮')
                   const mw = this.windowManager.getMainWindow()
                   if (mw) {
                     newWindow.setParentWindow(mw)
                   }
-                  const bannerMsg = `⚠️ 自动购物助手：规格未选中，请在下方手动选择规格并点击“立即购买”或“加入购物车”`
+                  const bannerMsg = `⚠️ 自动购物助手：规格未选中，请在下方手动选择规格并点击购买按钮`
                   injectOverlayBanner(newWindow, bannerMsg)
-                  injectCenterToast(newWindow, `请手动选择规格后${actionText}`)
+                  injectCenterToast(newWindow, '请手动选择规格后点击购买按钮')
                   newWindow.show()
 
                   const confirmed = await this.interactionService.waitForUserConfirmation(
                     newWindow,
-                    `自动选规格失败，请在弹出的窗口中手动选择规格（选中并点击“立即购买”后，系统将自动跳转并继续，无需手动点击面板上的已选好按钮）`,
-                    `请选择商品规格 - 选择后${actionText}`,
+                    `自动选规格失败，请在弹出的窗口中手动选择规格（选中并点击购买按钮后，系统将自动跳转并继续，无需手动点击面板上的已选好按钮）`,
+                    '请选择商品规格 - 选择后点击购买按钮',
                     bannerMsg,
                     'add-to-cart',
                   )
@@ -1319,6 +1513,16 @@ export class CartService {
                   )
                   if (verified) {
                     resetCaptchaMode(newWindow)
+                    // 清除验证横幅
+                    try {
+                      newWindow.webContents.executeJavaScript(`
+                        var b = document.getElementById('__auto_shop_banner__');
+                        if (b) b.remove();
+                        var t = document.getElementById('__auto_shop_toast__');
+                        if (t) t.remove();
+                        document.body.style.paddingTop = '';
+                      `).catch(() => {})
+                    } catch { /* ignore */ }
 
                     const sw = this.windowManager.getShopWindow()
                     if (sw && !sw.isDestroyed()) sw.hide()
@@ -1333,12 +1537,12 @@ export class CartService {
                       this.emitStatus('验证完成，已进入结算页面')
                       doResolve({ success: true, directToPay: true })
                     } else if (isProductDetailPage(afterVerifyUrl)) {
-                      this.emitStatus('验证完成！因页面刷新导致规格已重置，请在弹出窗口中手动重新选择规格并购买')
+                      this.emitStatus('验证完成！因页面刷新导致规格已重置，请在弹出窗口中手动重新选择规格并购买|SCENE:add-to-cart|')
                       newWindow.setSize(WINDOW_SIZES.CONFIRMATION.width, WINDOW_SIZES.CONFIRMATION.height)
                       newWindow.setTitle('请选择规格并购买')
                       const mw = this.windowManager.getMainWindow()
                       if (mw) newWindow.setParentWindow(mw)
-                      injectOverlayBanner(newWindow, '🛒 自动购物助手：验证通过！因页面重载导致规格重置，请手动选择规格并点击购买')
+                      injectOverlayBanner(newWindow, '🛒 自动购物助手：验证通过！因页面重载导致规格重置，请手动选择规格并点击购买按钮')
                       injectCenterToast(newWindow, '验证通过，请手动选择规格并购买')
                       newWindow.show()
                       const confirmed = await this.interactionService.waitForUserConfirmation(
@@ -1452,12 +1656,12 @@ export class CartService {
                       this.emitStatus('验证完成，已进入结算页面')
                       doResolve({ success: true, directToPay: true })
                     } else if (isProductDetailPage(afterVerifyUrl)) {
-                      this.emitStatus('验证完成！因页面刷新导致规格已重置，请在弹出窗口中手动重新选择规格并购买')
+                      this.emitStatus('验证完成！因页面刷新导致规格已重置，请在弹出窗口中手动重新选择规格并购买|SCENE:add-to-cart|')
                       newWindow.setSize(WINDOW_SIZES.CONFIRMATION.width, WINDOW_SIZES.CONFIRMATION.height)
                       newWindow.setTitle('请选择规格并购买')
                       const mw = this.windowManager.getMainWindow()
                       if (mw) newWindow.setParentWindow(mw)
-                      injectOverlayBanner(newWindow, '🛒 自动购物助手：验证通过！因页面重载导致规格重置，请手动选择规格并点击购买')
+                      injectOverlayBanner(newWindow, '🛒 自动购物助手：验证通过！因页面重载导致规格重置，请手动选择规格并点击购买按钮')
                       injectCenterToast(newWindow, '验证通过，请手动选择规格并购买')
                       newWindow.show()
                       const confirmed = await this.interactionService.waitForUserConfirmation(
@@ -1843,33 +2047,9 @@ export class CartService {
         })
       })
 
-      let resolved = false
-      const doResolve = (result: AddToCartResult | null) => {
-        if (resolved) return
-        resolved = true
-        clearTimeout(timeout)
-        clearInterval(checkInterval)
-        lt.dispose()
-        if (!result?.directToPay) {
-          const sw = this.windowManager.getShopWindow()
-          if (sw && !sw.isDestroyed()) {
-            try { sw.close() } catch { /* ignore */ }
-            this.windowManager.setShopWindow(null)
-          }
-        }
-        resolve(result)
-      }
       let sameUrlCount = 0
       let rebuyRetryCount = 0
       const MAX_REBUY_RETRIES = 3
-      const REBUY_TIMEOUT = 45000 // 提升至 45 秒，为用户处理滑块验证和页面载入留出足够时间
-      const timeout = setTimeout(() => {
-        if (!resolved) {
-          doResolve(null)
-          this.windowManager.closeShopWindow(async () => { await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth) })
-          this.emitStatus('⚠️ 再买一单操作超时，请尝试手动操作')
-        }
-      }, REBUY_TIMEOUT)
 
       const checkOffShelf = async (win: BrowserWindow): Promise<string> => {
         try {
@@ -2034,8 +2214,22 @@ export class CartService {
               await humanDelay(3000)
               if (resolved) return
 
-              const afterClickUrl = sw.webContents.getURL()
+              let afterClickUrl = sw.webContents.getURL()
               if (isProductDetailPage(afterClickUrl)) {
+                // 如果有 skuId 但 URL 中没有，追加 skuId 让淘宝自动选中规格
+                if (skuId && !afterClickUrl.includes('skuId=')) {
+                  try {
+                    const urlObj = new URL(afterClickUrl)
+                    urlObj.searchParams.set('skuId', skuId)
+                    const newUrl = urlObj.toString()
+                    debugLog(`[Taobao-Cart] Appending skuId to product URL (same-window): ${newUrl}`)
+                    await sw.loadURL(newUrl)
+                    await humanDelay(2000)
+                    afterClickUrl = sw.webContents.getURL()
+                  } catch (e) {
+                    debugLog(`[Taobao-Cart] Failed to append skuId (same-window): ${e}`)
+                  }
+                }
                 const offShelfKeyword = await checkOffShelf(sw)
                 if (offShelfKeyword) {
                   this.windowManager.closeShopWindow(async () => { await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth) })
@@ -2179,8 +2373,22 @@ export class CartService {
                   await humanDelay(3000)
                   if (resolved) return
 
-                  const afterFrameClickUrl = sw.webContents.getURL()
+                  let afterFrameClickUrl = sw.webContents.getURL()
                   if (isProductDetailPage(afterFrameClickUrl)) {
+                    // 如果有 skuId 但 URL 中没有，追加 skuId 让淘宝自动选中规格
+                    if (skuId && !afterFrameClickUrl.includes('skuId=')) {
+                      try {
+                        const urlObj = new URL(afterFrameClickUrl)
+                        urlObj.searchParams.set('skuId', skuId)
+                        const newUrl = urlObj.toString()
+                        debugLog(`[Taobao-Cart] Appending skuId to product URL (frame): ${newUrl}`)
+                        await sw.loadURL(newUrl)
+                        await humanDelay(2000)
+                        afterFrameClickUrl = sw.webContents.getURL()
+                      } catch (e) {
+                        debugLog(`[Taobao-Cart] Failed to append skuId (frame): ${e}`)
+                      }
+                    }
                     const offShelfKeyword = await checkOffShelf(sw)
                     if (offShelfKeyword) {
                       this.windowManager.closeShopWindow(async () => { await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth) })
@@ -2307,7 +2515,7 @@ export class CartService {
               currentSw.setTitle('请选择规格并购买')
               const mw = this.windowManager.getMainWindow()
               if (mw) currentSw.setParentWindow(mw)
-              injectOverlayBanner(currentSw, '🛒 自动购物助手：验证通过，请选择规格并点击"立即购买"或"加入购物车"')
+              injectOverlayBanner(currentSw, '🛒 自动购物助手：验证通过，请选择规格并点击购买按钮')
               injectCenterToast(currentSw, '验证通过，请选择规格并购买')
               currentSw.show()
               const confirmed = await this.interactionService.waitForUserConfirmation(
@@ -2396,7 +2604,7 @@ export class CartService {
           sw!.setTitle('请选择规格并购买')
           const mw = this.windowManager.getMainWindow()
           if (mw) sw!.setParentWindow(mw)
-          injectOverlayBanner(sw!, '🛒 自动购物助手：请选择规格并点击"立即购买"或"加入购物车"')
+          injectOverlayBanner(sw!, '🛒 自动购物助手：请选择规格并点击购买按钮')
           injectCenterToast(sw!, '请选择规格并购买')
           sw!.show()
           const confirmed = await this.interactionService.waitForUserConfirmation(
@@ -2650,7 +2858,7 @@ export class CartService {
         await humanDelay(1500)
         const sw = this.windowManager.getShopWindow()
         if (!sw || sw.isDestroyed()) return
-        const url = sw.webContents.getURL()
+        let url = sw.webContents.getURL()
 
         if (isErrorPage(url)) {
           this.windowManager.closeShopWindow()
@@ -2678,6 +2886,20 @@ export class CartService {
           return
         }
         if (isProductDetailPage(url)) {
+          // 如果有 skuId 但 URL 中没有，追加 skuId 让淘宝自动选中规格
+          if (skuId && !url.includes('skuId=')) {
+            try {
+              const urlObj = new URL(url)
+              urlObj.searchParams.set('skuId', skuId)
+              const newUrl = urlObj.toString()
+              debugLog(`[Taobao-Cart] Appending skuId to product URL (navigate): ${newUrl}`)
+              await sw.loadURL(newUrl)
+              await humanDelay(2000)
+              url = sw.webContents.getURL()
+            } catch (e) {
+              debugLog(`[Taobao-Cart] Failed to append skuId (navigate): ${e}`)
+            }
+          }
           const offShelfKeyword = await checkOffShelf(sw)
           if (offShelfKeyword) {
             this.windowManager.closeShopWindow(async () => { await this.cookieManager.syncCookiesFromElectron(this.getContext(), this.auth) })
@@ -2690,7 +2912,7 @@ export class CartService {
           sw.setTitle('请选择规格并购买')
           const mw = this.windowManager.getMainWindow()
           if (mw) sw.setParentWindow(mw)
-          injectOverlayBanner(sw, '🛒 自动购物助手：请选择规格并点击"立即购买"或"加入购物车"')
+          injectOverlayBanner(sw, '🛒 自动购物助手：请选择规格并点击购买按钮')
           injectCenterToast(sw, '请选择规格并购买')
           sw.show()
           const confirmed = await this.interactionService.waitForUserConfirmation(
@@ -2784,7 +3006,7 @@ export class CartService {
           sw.setTitle('请选择规格并购买')
           const mw = this.windowManager.getMainWindow()
           if (mw) sw.setParentWindow(mw)
-          injectOverlayBanner(sw, '🛒 自动购物助手：请选择规格并点击"立即购买"或"加入购物车"')
+          injectOverlayBanner(sw, '🛒 自动购物助手：请选择规格并点击购买按钮')
           injectCenterToast(sw, '请选择规格并购买')
           sw.show()
           const confirmed = await this.interactionService.waitForUserConfirmation(
@@ -2857,7 +3079,7 @@ export class CartService {
             sw.setTitle('请选择规格并购买')
             const mw = this.windowManager.getMainWindow()
             if (mw) sw.setParentWindow(mw)
-            injectOverlayBanner(sw, '🛒 自动购物助手：请选择规格并点击"立即购买"或"加入购物车"')
+            injectOverlayBanner(sw, '🛒 自动购物助手：请选择规格并点击购买按钮')
             injectCenterToast(sw, '请选择规格并购买')
             sw.show()
             this.emitStatus('再买一单后跳转到商品详情页，请在弹出的窗口中选择规格并购买')
@@ -2973,7 +3195,7 @@ export class CartService {
                 checkSw.setTitle('请选择规格并购买')
                 const mw = this.windowManager.getMainWindow()
                 if (mw) checkSw.setParentWindow(mw)
-                injectOverlayBanner(checkSw, '🛒 自动购物助手：验证通过，请选择规格并点击"立即购买"或"加入购物车"')
+                injectOverlayBanner(checkSw, '🛒 自动购物助手：验证通过，请选择规格并点击购买按钮')
                 injectCenterToast(checkSw, '验证通过，请选择规格并购买')
                 checkSw.show()
                 const confirmed = await this.interactionService.waitForUserConfirmation(
@@ -3104,7 +3326,7 @@ export class CartService {
                 sw!.setTitle('请选择规格并购买')
                 const mw = this.windowManager.getMainWindow()
                 if (mw) sw!.setParentWindow(mw)
-                injectOverlayBanner(sw!, '🛒 自动购物助手：请选择规格并点击"立即购买"或"加入购物车"')
+                injectOverlayBanner(sw!, '🛒 自动购物助手：请选择规格并点击购买按钮')
                 injectCenterToast(sw!, '请选择规格并购买')
                 sw!.show()
                 this.emitStatus('再买一单后跳转到商品详情页，请在弹出的窗口中选择规格并购买')
@@ -3209,7 +3431,7 @@ export class CartService {
               sw!.setTitle('请选择规格并购买')
               const mw = this.windowManager.getMainWindow()
               if (mw) sw!.setParentWindow(mw)
-              injectOverlayBanner(sw!, '🛒 自动购物助手：请选择规格并点击"立即购买"或"加入购物车"')
+              injectOverlayBanner(sw!, '🛒 自动购物助手：请选择规格并点击购买按钮')
               injectCenterToast(sw!, '请选择规格并购买')
               sw!.show()
               const confirmed = await this.interactionService.waitForUserConfirmation(

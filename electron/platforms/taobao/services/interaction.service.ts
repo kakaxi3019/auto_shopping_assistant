@@ -1,7 +1,7 @@
 import { BrowserWindow } from 'electron'
 import { isDisposableUrl, isLoginPage, isIdentityVerifyPage, isCheckoutOrPayPage, isBuyPage, isCartPage } from '../utils/url-helper'
 import { setUserAgent, injectOverlayBanner, injectCenterToast, debugLog } from '../utils/page-helper'
-import { APP_ICON } from '../utils/constants'
+import { APP_ICON, TAOBAO_PRELOAD } from '../utils/constants'
 import { tryAutoLoginThenShow, showConfirmationWindow } from '../utils/window-helper'
 import type { CookieManager } from '../infrastructure/cookie-manager'
 import type { WindowManager } from '../infrastructure/window-manager'
@@ -107,6 +107,24 @@ export class InteractionService {
         scene,
       }
 
+      const isPaymentPage = (url: string) => url.includes('alipay.com') || url.includes('cashier')
+
+      const removeBannerJs = `
+        var b = document.getElementById('__auto_shop_banner__');
+        if (b) b.remove();
+        var t = document.getElementById('__auto_shop_toast__');
+        if (t) t.remove();
+        document.body.style.paddingTop = '';
+      `
+      const removeBanner = () => {
+        // SPA 导航期间 executeJavaScript 可能不可靠，延时重试确保生效
+        for (const delay of [0, 300, 800, 1500]) {
+          setTimeout(() => {
+            try { win.webContents.executeJavaScript(removeBannerJs).catch(() => {}) } catch { /* ignore */ }
+          }, delay)
+        }
+      }
+
       const onNavigate = () => {
         if (resolved || win.isDestroyed()) return
         if (this.pendingConfirmation && this.pendingConfirmation.id === id) {
@@ -115,13 +133,21 @@ export class InteractionService {
           if (this.pendingConfirmation.scene === 'add-to-cart') {
             if (isBuyPage(newUrl) || isCartPage(newUrl)) {
               debugLog(`[Taobao-Interaction] auto-detected navigation to buy/cart page in onNavigate: ${newUrl}. Auto-resolving confirmation.`)
+              removeBanner()
+              safeResolve(true)
+              return
+            }
+            if (isPaymentPage(newUrl)) {
+              debugLog(`[Taobao-Interaction] auto-detected navigation to payment page from add-to-cart scene: ${newUrl}. Auto-resolving confirmation.`)
+              removeBanner()
               safeResolve(true)
               return
             }
           }
-          if (newUrl.includes('alipay.com') || newUrl.includes('cashier')) {
+          if (isPaymentPage(newUrl)) {
             if (this.pendingConfirmation.scene !== 'payment') {
               this.pendingConfirmation.scene = 'payment'
+              removeBanner()
               this.emitStatus(`已进入支付页面，请在窗口中完成支付|SCENE:payment|`)
             }
           }
@@ -136,13 +162,21 @@ export class InteractionService {
           if (this.pendingConfirmation.scene === 'add-to-cart') {
             if (isBuyPage(newUrl) || isCartPage(newUrl)) {
               debugLog(`[Taobao-Interaction] auto-detected navigation to buy/cart page in onNavigateInPage: ${newUrl}. Auto-resolving confirmation.`)
+              removeBanner()
+              safeResolve(true)
+              return
+            }
+            if (isPaymentPage(newUrl)) {
+              debugLog(`[Taobao-Interaction] auto-detected navigation to payment page from add-to-cart scene: ${newUrl}. Auto-resolving confirmation.`)
+              removeBanner()
               safeResolve(true)
               return
             }
           }
-          if (newUrl.includes('alipay.com') || newUrl.includes('cashier')) {
+          if (isPaymentPage(newUrl)) {
             if (this.pendingConfirmation.scene !== 'payment') {
               this.pendingConfirmation.scene = 'payment'
+              removeBanner()
               this.emitStatus(`已进入支付页面，请在窗口中完成支付|SCENE:payment|`)
             }
           }
@@ -239,7 +273,7 @@ export class InteractionService {
       title: windowTitle,
       icon: APP_ICON,
       autoHideMenuBar: true,
-      webPreferences: { nodeIntegration: false, contextIsolation: true, sandbox: false, backgroundThrottling: false },
+      webPreferences: { nodeIntegration: false, contextIsolation: true, sandbox: true, backgroundThrottling: false, preload: TAOBAO_PRELOAD },
     })
     setUserAgent(win)
     const mainWindow = this.windowManager.getMainWindow()
@@ -247,7 +281,7 @@ export class InteractionService {
     this.windowManager.trackWindow(win)
 
     win.webContents.setWindowOpenHandler(({ url: openUrl }) => {
-      return { action: 'allow', overrideBrowserWindowOptions: { show: false, webPreferences: { sandbox: false, contextIsolation: true, nodeIntegration: false, backgroundThrottling: false } } }
+      return { action: 'allow', overrideBrowserWindowOptions: { show: false, webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, backgroundThrottling: false, preload: TAOBAO_PRELOAD } } }
     })
 
     win.webContents.on('did-create-window', (newWindow) => {

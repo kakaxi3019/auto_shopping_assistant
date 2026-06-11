@@ -294,8 +294,8 @@ export class TaobaoPlatform implements PlatformAdapter {
     return order.productUrl
   }
 
-  async addToCart(productUrl: string, sku?: string, orderId?: string, cartOnly?: boolean): Promise<AddToCartResult> {
-    return this.cartService.addToCart(productUrl, sku, orderId, cartOnly)
+  async addToCart(productUrl: string, sku?: string, orderId?: string, cartOnly?: boolean, skuId?: string): Promise<AddToCartResult> {
+    return this.cartService.addToCart(productUrl, sku, orderId, cartOnly, skuId)
   }
 
   async openProductPage(productUrl: string): Promise<void> {
@@ -338,8 +338,8 @@ export class TaobaoPlatform implements PlatformAdapter {
     return this.paymentService.pay(totalAmount, dryRun, paymentMode)
   }
 
-  async showPaymentWindow(title?: string): Promise<{ paid: boolean }> {
-    return this.paymentService.showPaymentWindow(title)
+  async showPaymentWindow(title?: string, silent?: boolean): Promise<{ paid: boolean }> {
+    return this.paymentService.showPaymentWindow(title, silent)
   }
 
   async cleanup(): Promise<void> {

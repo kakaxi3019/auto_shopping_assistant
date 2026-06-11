@@ -14,6 +14,8 @@ export const APP_ICON = app.isPackaged
   ? join(process.resourcesPath, 'app-icon', 'auto_shopping_app_icon.png')
   : join(__dirname, '../build/auto_shopping_app_icon.png')
 
+export const TAOBAO_PRELOAD = join(__dirname, '../../../preload-taobao.js')
+
 export const CHROME_UA = (() => {
   const electronVer = process.versions.chrome || '131.0.0.0'
   return `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${electronVer} Safari/537.36`

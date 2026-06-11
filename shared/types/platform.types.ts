@@ -9,6 +9,7 @@ export interface Order {
   purchasedAt: string
   shopName: string
   sku: string
+  skuId: string
   rawData: string
   unavailable: number
 }
@@ -103,12 +104,12 @@ export interface PlatformAdapter {
   searchProduct(keyword: string): Promise<SearchResult[]>
   openSearchPage(keyword: string): Promise<string | null>
   getProductUrl(order: Order): string
-  addToCart(productUrl: string, sku?: string, orderId?: string, cartOnly?: boolean): Promise<AddToCartResult>
+  addToCart(productUrl: string, sku?: string, orderId?: string, cartOnly?: boolean, skuId?: string): Promise<AddToCartResult>
   openProductPage(productUrl: string): Promise<void>
   purchaseFromUrl(productUrl: string): Promise<AddToCartResult>
   checkout(directToPay?: boolean, quantity?: number): Promise<CheckoutResult>
   pay(totalAmount?: number, dryRun?: boolean, paymentMode?: string): Promise<PayResult>
-  showPaymentWindow(title?: string): Promise<{ paid: boolean }>
+  showPaymentWindow(title?: string, silent?: boolean): Promise<{ paid: boolean }>
   cleanup?(): Promise<void>
   onStatusChange(callback: (status: string) => void): () => void
   resolveConfirmation?(confirmed: boolean): Promise<void>

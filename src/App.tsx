@@ -152,9 +152,9 @@ export default function App() {
             onUpdateItem={updatePreviewItem}
             onRemoveItem={removePreviewItem}
             onClose={closePanel}
-            onConfirmAction={async () => { const r = await api.confirmAction() as boolean; return r }}
-            onRejectAction={async () => { const r = await api.rejectAction() as boolean; return r }}
-            onReopenWindow={async () => { const r = await api.reopenConfirmationWindow() as boolean; return r }}
+            onConfirmAction={async () => { const r = await api.confirmAction(tasks.find(t => t.id === activeTaskId)?.platform || 'taobao') as boolean; return r }}
+            onRejectAction={async () => { const r = await api.rejectAction(tasks.find(t => t.id === activeTaskId)?.platform || 'taobao') as boolean; return r }}
+            onReopenWindow={async () => { const r = await api.reopenConfirmationWindow(tasks.find(t => t.id === activeTaskId)?.platform || 'taobao') as boolean; return r }}
             onRetryItem={retryTaskItem}
             onCancelTask={cancelTask}
             onRematch={previewTask}
