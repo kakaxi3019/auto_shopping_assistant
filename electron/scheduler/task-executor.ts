@@ -119,8 +119,8 @@ export class TaskExecutor {
       const cartResult: AddToCartResult = await platform.addToCart(url, skuToUse, order.orderId, isCartOnly, order.skuId)
       debugLog('TaskExecutor', `addToCart returned: ${JSON.stringify(cartResult)}`)
       if (!cartResult.success) {
-        // 窗口被关闭通常是用户点击了停止，不应触发搜索降级打开新窗口
-        if (cartResult.error?.includes('操作窗口已关闭')) {
+        // 用户主动取消（点击停止 / 关闭窗口 / 手动取消弹窗）不应触发搜索降级打开新窗口
+        if (cartResult.error?.includes('操作窗口已关闭') || cartResult.error?.includes('用户取消') || cartResult.error?.includes('任务已取消')) {
           result.error = '已停止'
           return
         }

@@ -1,4 +1,4 @@
-﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿import { BrowserWindow } from 'electron'
+﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿import { BrowserWindow } from 'electron'
 
 declare const _hs: {
   scrollSmooth: (y: number, duration?: number) => Promise<void>
@@ -19,7 +19,7 @@ import { CookieManager } from '../infrastructure/cookie-manager'
 import { VerificationService } from './verification.service'
 import { InteractionService } from './interaction.service'
 import { TaobaoAuth } from '../taobao.auth'
-import { setUserAgent, debugLog, humanDelay, execJS, injectOverlayBanner, injectCenterToast, ListenerTracker, cleanupForCaptcha, resetCaptchaMode } from '../utils/page-helper'
+import { setUserAgent, debugLog, humanDelay, execJS, injectOverlayBanner, injectCenterToast, ListenerTracker, cleanupForCaptcha, resetCaptchaMode, humanClickAt } from '../utils/page-helper'
 import { APP_ICON, WINDOW_SIZES, TIMEOUTS, KEYWORDS, ORDER_DETAIL_URL, TAOBAO_PRELOAD } from '../utils/constants'
 import { isCheckoutOrPayPage, isLoginPage, isIdentityVerifyPage, isBuyPage, isCartPage, isProductDetailPage, isOrderArchivePage, isOrderDetailPage, isErrorPage } from '../utils/url-helper'
 import { TAOBAO_SELECTORS } from '../taobao.selectors'
@@ -2098,6 +2098,37 @@ export class CartService {
           return
         }
         try {
+          // 1. 如果入参没有传入 skuId，尝试从页面上的“再买一单”或商品链接中自动提取以作 Fallback
+          if (!skuId && _productUrl) {
+            try {
+              const match = _productUrl.match(/[?&]id=(\d+)/)
+              if (match && match[1]) {
+                const productId = match[1]
+                const extractedSkuId = await sw.webContents.executeJavaScript(`
+                  (function() {
+                    var links = document.querySelectorAll('a[href]');
+                    for (var i = 0; i < links.length; i++) {
+                      var href = links[i].getAttribute('href') || '';
+                      if (href.indexOf('id=' + ${JSON.stringify(productId)}) !== -1 && href.indexOf('skuId=') !== -1) {
+                        var skuMatch = href.match(/[?&]skuId=(\\d+)/);
+                        if (skuMatch && skuMatch[1]) {
+                          return skuMatch[1];
+                        }
+                      }
+                    }
+                    return '';
+                  })()
+                `)
+                if (extractedSkuId) {
+                  skuId = extractedSkuId
+                  debugLog('[Taobao-Cart] tryClickRebuy: Extracted skuId ' + skuId + ' from page links for product ' + productId)
+                }
+              }
+            } catch (err) {
+              debugLog('[Taobao-Cart] tryClickRebuy: failed to extract skuId from page links: ' + err)
+            }
+          }
+
           const cartTargets = cartOnly ? [...KEYWORDS.CART_BUTTONS] : []
           const rebuyTargets = [...KEYWORDS.REBUY_BUTTONS]
           const allTargets = [...cartTargets, ...rebuyTargets]
@@ -2161,12 +2192,25 @@ export class CartService {
               }
               var chosen = bestCartMatch || bestMatch;
               if (chosen) {
-                _hs.click(chosen.el);
-                return { clicked: true, text: chosen.text, isCart: !!bestCartMatch, matches: debugMatches };
+                var rect = chosen.el.getBoundingClientRect();
+                return { 
+                  found: true, 
+                  text: chosen.text, 
+                  isCart: !!bestCartMatch, 
+                  matches: debugMatches,
+                  x: rect.left + rect.width * 0.5,
+                  y: rect.top + rect.height * 0.5
+                };
               }
-              return { clicked: false, matches: debugMatches };
+              return { found: false, matches: debugMatches };
             })()
           `)
+
+          if (mainResult && mainResult.found) {
+            debugLog('[Taobao-Cart] tryClickRebuy: found button ' + mainResult.text + ' at (' + Math.round(mainResult.x) + ', ' + Math.round(mainResult.y) + '), triggering humanClickAt...')
+            await humanClickAt(sw, Math.round(mainResult.x), Math.round(mainResult.y))
+            mainResult.clicked = true
+          }
 
           if (mainResult && mainResult.clicked) {
             if (mainResult.isCart) {
