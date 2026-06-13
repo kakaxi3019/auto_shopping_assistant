@@ -235,7 +235,7 @@ export class TaskExecutor {
 
     // 用户已手动跳到支付/结算页（directToPay=true），跳过 checkout 流程，直接处理支付
     if (directToPay) {
-      onProgress(`已到达支付页面，等待用户完成支付...`)
+      onProgress(`已到达支付页面，等待用户完成支付...|SCENE:payment|`)
       debugLog('TaskExecutor', `directToPay=true, skipping checkout, monitoring payment result`)
       const payWindowResult = await platform.showPaymentWindow(
         `订单已提交 - 请在页面中完成支付`,
@@ -310,8 +310,8 @@ export class TaskExecutor {
       }
     } else {
       onProgress(totalAmount > 0
-        ? `正在支付 "${item.name}"（¥${totalAmount.toFixed(2)}）...`
-        : `正在支付 "${item.name}"...`
+        ? `正在支付 "${item.name}"（¥${totalAmount.toFixed(2)}）...|SCENE:payment|`
+        : `正在支付 "${item.name}"...|SCENE:payment|`
       )
       debugLog('TaskExecutor', `paymentMode is auto_pay / other, initiating platform.pay for totalAmount=${totalAmount}`)
       const payResult = await platform.pay(totalAmount, dryRun, paymentMode)

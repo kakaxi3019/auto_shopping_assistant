@@ -1092,8 +1092,9 @@ export default function ShoppingAssistantPanel({
             ? '由于该商品结算页面已失效且无法恢复，当前任务已自动取消。请重新下单'
             : '如需继续购买，请点击"重新打开商品页面"；如商品无法购买，请点击"商品无法购买"取消当前任务',
           openTitle: '请在弹出的窗口中操作',
-          openHint: '请在弹出的窗口中选择规格并点击购买按钮，系统将自动检测页面跳转并继续后续流程',
+          openHint: '请在弹出的窗口中选择规格并点击购买按钮，系统将自动检测页面跳转并继续后续流程。如商品无法购买，可关闭弹窗后取消任务',
           autoDetect: true,
+          hideFailWhenOpen: true,
         },
         'payment': {
           noun: '支付',
@@ -1191,10 +1192,13 @@ export default function ShoppingAssistantPanel({
                   ) : confirmActionStatus === 'success' ? '✅ 已确认' : labels.confirmBtn}
                 </button>
               )}
-              <button onClick={handleRejectActionClick} disabled={confirmActionStatus === 'loading' || confirmActionStatus === 'success'}
-                className="px-3 py-1.5 text-sm font-medium text-white bg-red-500 rounded-lg hover:bg-red-600 transition-colors">
-                {isCannotRestore ? '确认关闭任务' : labels.failBtn}
-              </button>
+              {/* 窗口打开且 hideFailWhenOpen 时，隐藏失败按钮（auto-resolve 后按钮无效）；窗口关闭时显示 */}
+              {(!isWindowClosed && (labels as any).hideFailWhenOpen) ? null : (
+                <button onClick={handleRejectActionClick} disabled={confirmActionStatus === 'loading' || confirmActionStatus === 'success'}
+                  className="px-3 py-1.5 text-sm font-medium text-white bg-red-500 rounded-lg hover:bg-red-600 transition-colors">
+                  {isCannotRestore ? '确认关闭任务' : labels.failBtn}
+                </button>
+              )}
             </div>
           </div>
         )}

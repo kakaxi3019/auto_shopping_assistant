@@ -130,16 +130,16 @@ export class InteractionService {
         if (this.pendingConfirmation && this.pendingConfirmation.id === id) {
           const newUrl = win.webContents.getURL()
           this.pendingConfirmation.windowUrl = newUrl
+          // 任何导航都清除旧横幅（验证横幅、规格横幅等）
+          removeBanner()
           if (this.pendingConfirmation.scene === 'add-to-cart') {
             if (isBuyPage(newUrl) || isCartPage(newUrl)) {
               debugLog(`[Taobao-Interaction] auto-detected navigation to buy/cart page in onNavigate: ${newUrl}. Auto-resolving confirmation.`)
-              removeBanner()
               safeResolve(true)
               return
             }
             if (isPaymentPage(newUrl)) {
               debugLog(`[Taobao-Interaction] auto-detected navigation to payment page from add-to-cart scene: ${newUrl}. Auto-resolving confirmation.`)
-              removeBanner()
               safeResolve(true)
               return
             }
@@ -147,7 +147,6 @@ export class InteractionService {
           if (isPaymentPage(newUrl)) {
             if (this.pendingConfirmation.scene !== 'payment') {
               this.pendingConfirmation.scene = 'payment'
-              removeBanner()
               this.emitStatus(`已进入支付页面，请在窗口中完成支付|SCENE:payment|`)
             }
           }
@@ -159,16 +158,16 @@ export class InteractionService {
         if (this.pendingConfirmation && this.pendingConfirmation.id === id) {
           const newUrl = win.webContents.getURL()
           this.pendingConfirmation.windowUrl = newUrl
+          // 任何导航都清除旧横幅
+          removeBanner()
           if (this.pendingConfirmation.scene === 'add-to-cart') {
             if (isBuyPage(newUrl) || isCartPage(newUrl)) {
               debugLog(`[Taobao-Interaction] auto-detected navigation to buy/cart page in onNavigateInPage: ${newUrl}. Auto-resolving confirmation.`)
-              removeBanner()
               safeResolve(true)
               return
             }
             if (isPaymentPage(newUrl)) {
               debugLog(`[Taobao-Interaction] auto-detected navigation to payment page from add-to-cart scene: ${newUrl}. Auto-resolving confirmation.`)
-              removeBanner()
               safeResolve(true)
               return
             }
@@ -176,7 +175,6 @@ export class InteractionService {
           if (isPaymentPage(newUrl)) {
             if (this.pendingConfirmation.scene !== 'payment') {
               this.pendingConfirmation.scene = 'payment'
-              removeBanner()
               this.emitStatus(`已进入支付页面，请在窗口中完成支付|SCENE:payment|`)
             }
           }
