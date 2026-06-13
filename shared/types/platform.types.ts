@@ -106,7 +106,7 @@ export interface PlatformAdapter {
   getProductUrl(order: Order): string
   addToCart(productUrl: string, sku?: string, orderId?: string, cartOnly?: boolean, skuId?: string): Promise<AddToCartResult>
   openProductPage(productUrl: string): Promise<void>
-  purchaseFromUrl(productUrl: string): Promise<AddToCartResult>
+  purchaseFromUrl(productUrl: string, sku?: string): Promise<AddToCartResult>
   checkout(directToPay?: boolean, quantity?: number): Promise<CheckoutResult>
   pay(totalAmount?: number, dryRun?: boolean, paymentMode?: string): Promise<PayResult>
   showPaymentWindow(title?: string, silent?: boolean): Promise<{ paid: boolean }>

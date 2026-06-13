@@ -387,7 +387,7 @@ export class Database {
           if (usedKeyword === keyword && exactResults.length === 0) {
             usedKeyword = subResults[0].sub
           }
-          for (const { sub, orders } of subResults) {
+          for (const { orders } of subResults) {
             if (orders.length > 10 && subResults.some(sr => sr.orders.length <= 10 && sr.orders.length > 0)) {
               continue
             }

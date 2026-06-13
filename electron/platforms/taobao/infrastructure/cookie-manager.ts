@@ -117,7 +117,7 @@ export class CookieManager {
 
       const existingCookies = await session.defaultSession.cookies.get({})
       const taobaoExisting = existingCookies.filter(
-        (c) => c.domain.includes('taobao') || c.domain.includes('tmall') || c.domain.includes('alipay')
+        (c) => (c.domain || '').includes('taobao') || (c.domain || '').includes('tmall') || (c.domain || '').includes('alipay')
       )
 
       const normalizeDomain = (d: string) => d.startsWith('.') ? d : '.' + d
@@ -131,7 +131,7 @@ export class CookieManager {
 
       const sessionOnlyCookies: { name: string; value: string; domain: string; path: string; secure: boolean; httpOnly?: boolean; sameSite?: string; expires?: number }[] = []
       for (const ec of taobaoExisting) {
-        const key = `${normalizeDomain(ec.domain)}:${ec.name}:${ec.path}`
+        const key = `${normalizeDomain(ec.domain || '')}:${ec.name}:${ec.path}`
         const sourceEntry = sourceMap.get(key)
         if (!sourceEntry) {
           const ecExpired = ec.expirationDate && ec.expirationDate > 0 && ec.expirationDate <= nowSec
@@ -140,9 +140,9 @@ export class CookieManager {
             sessionOnlyCookies.push({
               name: ec.name,
               value: ec.value,
-              domain: ec.domain,
-              path: ec.path,
-              secure: ec.secure,
+              domain: ec.domain || '',
+              path: ec.path || '',
+              secure: ec.secure || false,
               httpOnly: ec.httpOnly,
               sameSite: this.toElectronSameSite(pwSameSite),
               expires: ec.expirationDate && ec.expirationDate > 0 ? ec.expirationDate : undefined,
@@ -156,9 +156,9 @@ export class CookieManager {
             sessionOnlyCookies.push({
               name: ec.name,
               value: ec.value,
-              domain: ec.domain,
-              path: ec.path,
-              secure: ec.secure,
+              domain: ec.domain || '',
+              path: ec.path || '',
+              secure: ec.secure || false,
               httpOnly: ec.httpOnly,
               sameSite: this.toElectronSameSite(pwSameSite),
               expires: ec.expirationDate && ec.expirationDate > 0 ? ec.expirationDate : undefined,
@@ -191,7 +191,7 @@ export class CookieManager {
 
       const existingMap = new Map<string, { value: string; expirationDate?: number }>()
       for (const c of taobaoExisting) {
-        const key = `${normalizeDomain(c.domain)}:${c.name}:${c.path}`
+        const key = `${normalizeDomain(c.domain || '')}:${c.name}:${c.path}`
         existingMap.set(key, { value: c.value, expirationDate: c.expirationDate })
       }
 
@@ -273,7 +273,7 @@ export class CookieManager {
     try {
       const electronCookies = await session.defaultSession.cookies.get({})
       const taobaoCookies = electronCookies.filter(
-        (c) => c.domain.includes('taobao') || c.domain.includes('tmall') || c.domain.includes('alipay')
+        (c) => (c.domain || '').includes('taobao') || (c.domain || '').includes('tmall') || (c.domain || '').includes('alipay')
       )
 
       if (context) {

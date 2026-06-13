@@ -21,8 +21,6 @@ let mainWindow: BrowserWindow | null = null
 let db: Database | null = null
 let scheduler: TaskScheduler | null = null
 let scheduledRunner: ScheduledTaskRunner | null = null
-let backendReady = false
-
 function createWindow() {
   console.log('[Startup] Creating main window...')
 
@@ -49,7 +47,7 @@ function createWindow() {
     console.error(`[Startup] Page failed to load: ${errorCode} ${errorDesc} ${validatedURL}`)
   })
 
-  mainWindow.webContents.on('crashed', (_event, killed) => {
+  mainWindow.webContents.on('crashed' as any, (_event: any, killed: any) => {
     console.error(`[Error] mainWindow webContents CRASHED! killed=${killed}`)
   })
 
@@ -152,7 +150,6 @@ app.whenReady().then(async () => {
   scheduledRunner = new ScheduledTaskRunner(db, scheduler)
   scheduledRunner.start()
 
-  backendReady = true
   mainWindow?.webContents.send('app:ready')
 
   app.on('activate', () => {

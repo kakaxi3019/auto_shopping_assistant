@@ -1,14 +1,14 @@
 import { BrowserWindow } from 'electron'
 import type { Page, BrowserContext } from 'playwright'
-import type { CheckoutResult } from '../../../shared/types/platform.types'
+import type { CheckoutResult } from '../../../../shared/types/platform.types'
 import { BrowserManager } from '../infrastructure/browser-manager'
 import { WindowManager } from '../infrastructure/window-manager'
 import { CookieManager } from '../infrastructure/cookie-manager'
 import { VerificationService } from './verification.service'
 import { TaobaoAuth } from '../taobao.auth'
-import { setUserAgent, debugLog, humanDelay, humanClickAt, humanClickElement, execJS, injectOverlayBanner, rand, clickInShopWindow } from '../utils/page-helper'
-import { APP_ICON, TIMEOUTS, WINDOW_SIZES, KEYWORDS } from '../utils/constants'
-import { isBuyPage, isLoginPage, isCartPage, isProductDetailPage } from '../utils/url-helper'
+import { debugLog, humanDelay, execJS, clickInShopWindow } from '../utils/page-helper'
+import { TIMEOUTS, KEYWORDS } from '../utils/constants'
+import { isBuyPage, isLoginPage, isCartPage } from '../utils/url-helper'
 import { TAOBAO_SELECTORS } from '../taobao.selectors'
 import { HUMAN_SIM_JS } from '../utils/human-sim'
 
@@ -16,36 +16,30 @@ export class CheckoutService {
   private browserManager: BrowserManager
   private windowManager: WindowManager
   private cookieManager: CookieManager
-  private verificationService: VerificationService
   private auth: TaobaoAuth
   private emitStatus: (status: string) => void
   private getContext: () => BrowserContext | null
   private getPage: () => Page | null
-  private setPage: (page: Page) => void
-  private isDestroyed: () => boolean
 
   constructor(
     browserManager: BrowserManager,
     windowManager: WindowManager,
     cookieManager: CookieManager,
-    verificationService: VerificationService,
+    _verificationService: VerificationService,
     auth: TaobaoAuth,
     emitStatus: (status: string) => void,
     getContext: () => BrowserContext | null,
     getPage: () => Page | null,
-    setPage: (page: Page) => void,
-    isDestroyed: () => boolean
+    _setPage: (page: Page) => void,
+    _isDestroyed: () => boolean
   ) {
     this.browserManager = browserManager
     this.windowManager = windowManager
     this.cookieManager = cookieManager
-    this.verificationService = verificationService
     this.auth = auth
     this.emitStatus = emitStatus
     this.getContext = getContext
     this.getPage = getPage
-    this.setPage = setPage
-    this.isDestroyed = isDestroyed
   }
 
   async checkout(directToPay = false, quantity = 1): Promise<CheckoutResult> {
@@ -265,7 +259,7 @@ export class CheckoutService {
 
   private async submitOrder(): Promise<CheckoutResult> {
     const page = this.getPage()
-    const orderDiag = await page!.evaluate(() => {
+    await page!.evaluate(() => {
       const buttons: { tag: string; text: string; cls: string; id: string }[] = []
       document.querySelectorAll('button, a, [role="button"], [onclick], [class*="btn"], [class*="submit"], [class*="go"], [class*="pay"]').forEach(el => {
         const text = (el.textContent || '').trim().substring(0, 40)
@@ -337,7 +331,7 @@ export class CheckoutService {
           }
 
           return { found: false }
-        }, { selectors, textTargets, loginKeywords: KEYWORDS.LOGIN })
+        }, { selectors, textTargets, loginKeywords: [...KEYWORDS.LOGIN] })
 
         if (locateResult.found && locateResult.selector) {
           try {

@@ -5,7 +5,7 @@ import { CookieManager } from '../infrastructure/cookie-manager'
 import { WindowManager } from '../infrastructure/window-manager'
 import { TaobaoAuth } from '../taobao.auth'
 import { setUserAgent, debugLog, getOrderApiJs } from '../utils/page-helper'
-import { ORDER_API_URL, APP_ICON, TAOBAO_PRELOAD } from '../utils/constants'
+import { APP_ICON, TAOBAO_PRELOAD } from '../utils/constants'
 import { TAOBAO_SELECTORS } from '../taobao.selectors'
 
 export class OrderService {
@@ -126,7 +126,7 @@ export class OrderService {
           const hasValidSku = typeof (item as any).sku === 'string'
 
           if (!hasValidOrderId || !hasValidProductName || !hasValidProductUrl || !hasValidPrice || !hasValidSku) {
-            debugLog('OrderService', `跳过不完整的新订单: ${JSON.stringify(item)}`)
+            debugLog(`[OrderService] 跳过不完整的新订单: ${JSON.stringify(item)}`)
             continue
           }
 

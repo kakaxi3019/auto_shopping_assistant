@@ -82,7 +82,7 @@ export class TaobaoAuth {
   async loadCookies(context: BrowserContext): Promise<boolean> {
     const cookies = this.loadRaw()
     if (cookies.length > 0) {
-      await context.addCookies(cookies)
+      await context.addCookies(cookies as any)
       return true
     }
     return false

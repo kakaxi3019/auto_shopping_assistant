@@ -1,14 +1,25 @@
 ﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿import { BrowserWindow } from 'electron'
+
+declare const _hs: {
+  scrollSmooth: (y: number, duration?: number) => Promise<void>
+  findVisible: (selectors: string[], textTargets?: string[] | null) => Array<{ el: Element; text: string; area: number; rect: DOMRect }>
+  findByText: (textTargets: string[], maxTextLength?: number) => Array<{ el: Element; text: string; area: number; rect: DOMRect }>
+  findInShadowDOM: (selectors: string[], textTargets?: string[] | null) => Array<{ el: Element; text: string; area: number; rect: DOMRect }>
+  findAndClick: (selectors: string[], textTargets?: string[] | null) => { el: Element; text: string; area: number } | null
+  click: (el: Element) => boolean
+  rand: (min: number, max: number) => number
+  delay: (min: number, max: number) => Promise<void>
+}
 import type { Page, BrowserContext } from 'playwright'
 import type { Database } from '../../../db/database'
-import type { AddToCartResult, Order } from '../../../../shared/types/platform.types'
+import type { AddToCartResult } from '../../../../shared/types/platform.types'
 import { BrowserManager } from '../infrastructure/browser-manager'
 import { WindowManager } from '../infrastructure/window-manager'
 import { CookieManager } from '../infrastructure/cookie-manager'
 import { VerificationService } from './verification.service'
 import { InteractionService } from './interaction.service'
 import { TaobaoAuth } from '../taobao.auth'
-import { setUserAgent, debugLog, humanDelay, humanClickAt, humanClickElement, execJS, injectOverlayBanner, injectCenterToast, rand, ListenerTracker, cleanupForCaptcha, resetCaptchaMode } from '../utils/page-helper'
+import { setUserAgent, debugLog, humanDelay, execJS, injectOverlayBanner, injectCenterToast, ListenerTracker, cleanupForCaptcha, resetCaptchaMode } from '../utils/page-helper'
 import { APP_ICON, WINDOW_SIZES, TIMEOUTS, KEYWORDS, ORDER_DETAIL_URL, TAOBAO_PRELOAD } from '../utils/constants'
 import { isCheckoutOrPayPage, isLoginPage, isIdentityVerifyPage, isBuyPage, isCartPage, isProductDetailPage, isOrderArchivePage, isOrderDetailPage, isErrorPage } from '../utils/url-helper'
 import { TAOBAO_SELECTORS } from '../taobao.selectors'
@@ -21,11 +32,8 @@ export class CartService {
   private verificationService: VerificationService
   private interactionService: InteractionService
   private auth: TaobaoAuth
-  private db: Database
   private emitStatus: (status: string) => void
   private getContext: () => BrowserContext | null
-  private getPage: () => Page | null
-  private setPage: (page: Page) => void
   private isDestroyed: () => boolean
 
   constructor(
@@ -35,11 +43,11 @@ export class CartService {
     verificationService: VerificationService,
     interactionService: InteractionService,
     auth: TaobaoAuth,
-    db: Database,
+    _db: Database,
     emitStatus: (status: string) => void,
     getContext: () => BrowserContext | null,
-    getPage: () => Page | null,
-    setPage: (page: Page) => void,
+    _getPage: () => Page | null,
+    _setPage: (page: Page) => void,
     isDestroyed: () => boolean
   ) {
     this.browserManager = browserManager
@@ -48,11 +56,8 @@ export class CartService {
     this.verificationService = verificationService
     this.interactionService = interactionService
     this.auth = auth
-    this.db = db
     this.emitStatus = emitStatus
     this.getContext = getContext
-    this.getPage = getPage
-    this.setPage = setPage
     this.isDestroyed = isDestroyed
   }
 
@@ -77,7 +82,8 @@ export class CartService {
     }
   }
 
-  private async addToCartDirectly(productUrl: string, sku?: string): Promise<AddToCartResult> {
+  // @ts-ignore - 保留备用，暂未使用
+  private async addToCartDirectly(productUrl: string, _sku?: string): Promise<AddToCartResult> {
     this.emitStatus('正在打开商品页面加入购物车...')
 
     if (!productUrl) {
@@ -173,7 +179,7 @@ export class CartService {
 
         const currentShopWindow = this.windowManager.getShopWindow()!
 
-        currentShopWindow.webContents.setWindowOpenHandler(({ url: openUrl }) => {
+        currentShopWindow.webContents.setWindowOpenHandler(({ url: _openUrl }) => {
           return { action: 'allow', overrideBrowserWindowOptions: { show: false, webPreferences: { backgroundThrottling: false } } }
         })
 
@@ -387,7 +393,7 @@ export class CartService {
                 lt.on(sw!.webContents, 'did-navigate', async (_evt, url: string) => {
                   await handleNavigation(url)
                 })
-                sw!.webContents.setWindowOpenHandler(({ url: openUrl }) => {
+                sw!.webContents.setWindowOpenHandler(({ url: _openUrl }) => {
                   return { action: 'allow', overrideBrowserWindowOptions: { show: false, webPreferences: { backgroundThrottling: false } } }
                 })
                 lt.on(sw!.webContents, 'did-create-window', (newWin) => {
@@ -569,7 +575,7 @@ export class CartService {
 
         const currentShopWindow = this.windowManager.getShopWindow()!
 
-        currentShopWindow.webContents.setWindowOpenHandler(({ url: openUrl }) => {
+        currentShopWindow.webContents.setWindowOpenHandler(({ url: _openUrl }) => {
           return { action: 'allow', overrideBrowserWindowOptions: { show: false, webPreferences: { backgroundThrottling: false } } }
         })
 
@@ -718,7 +724,7 @@ export class CartService {
             if (pageStatus.hasBuyButton) {
               this.emitStatus('正在选择商品规格...')
               // 如果传入了 sku 规格，则执行精准规格点击逻辑
-              const skuClickCount = await execJS(sw!, `
+              await execJS(sw!, `
                 (function() {
                   var urlParams = new URLSearchParams(window.location.search);
                   var skuProps = urlParams.get('sku_properties');
@@ -884,7 +890,7 @@ export class CartService {
                 lt.on(sw!.webContents, 'did-navigate', async (_evt, url: string) => {
                   await handleNavigation(url)
                 })
-                sw!.webContents.setWindowOpenHandler(({ url: openUrl }) => {
+                sw!.webContents.setWindowOpenHandler(({ url: _openUrl }) => {
                   return { action: 'allow', overrideBrowserWindowOptions: { show: false, webPreferences: { backgroundThrottling: false } } }
                 })
                 lt.on(sw!.webContents, 'did-create-window', (newWindow) => {
@@ -924,7 +930,7 @@ export class CartService {
     }
   }
 
-  private async runInHiddenWindow(orderId: string, productUrl?: string, cartOnly?: boolean, sku?: string, skuId?: string): Promise<AddToCartResult | null> {
+  private async runInHiddenWindow(orderId: string, _productUrl?: string, cartOnly?: boolean, sku?: string, skuId?: string): Promise<AddToCartResult | null> {
     const mainWindow = this.windowManager.getMainWindow()
     if (!mainWindow) {
       debugLog('[Taobao-Cart] runInHiddenWindow failed: mainWindow is null')
@@ -1121,7 +1127,7 @@ export class CartService {
 
       newShopWindow.loadURL(detailUrl, detailUrlLoadOptions)
 
-      newShopWindow.webContents.setWindowOpenHandler(({ url: openUrl }) => {
+      newShopWindow.webContents.setWindowOpenHandler(({ url: _openUrl }) => {
         return { action: 'allow', overrideBrowserWindowOptions: { show: false, webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, backgroundThrottling: false, preload: TAOBAO_PRELOAD } } }
       })
 
@@ -1701,7 +1707,7 @@ export class CartService {
                 const checkResult = { needSelect: pageDiag.needSelect, hint: pageDiag.hint }
 
                 if (checkResult.needSelect) {
-                  const reopenUrl = newWindow.webContents.getURL()
+                  void newWindow.webContents.getURL()
                   const actionText = cartOnly ? '点击加入购物车' : '点击购买'
                   newWindow.setSize(WINDOW_SIZES.CONFIRMATION.width, WINDOW_SIZES.CONFIRMATION.height)
                   newWindow.setTitle(`请选择商品规格 - 选择后${actionText}`)
@@ -2253,7 +2259,7 @@ export class CartService {
           for (const frame of frames) {
             if (frame === sw!.webContents.mainFrame) continue
             try {
-              const frameUrl = frame.url
+              void frame.url
               await frame.executeJavaScript(HUMAN_SIM_JS).catch(() => {})
               const frameResult = await frame.executeJavaScript(`
                 (function() {
@@ -2650,9 +2656,9 @@ export class CartService {
             break
           }
           try {
-            const hsCheck = await execJS(sw, `(function() { return typeof _hs !== 'undefined'; })()`)
+            await execJS(sw, `(function() { return typeof _hs !== 'undefined'; })()`)
             if (retry === 0) {
-              const pageDiag = await execJS(sw, `
+              await execJS(sw, `
                 (function() {
                   var bodyText = (document.body?.innerText || '').substring(0, 2000);
                   var allTexts = [];
@@ -2699,7 +2705,7 @@ export class CartService {
             const frames = sw!.webContents.mainFrame.framesInSubtree
             for (const frame of frames) {
               if (frame === sw!.webContents.mainFrame) continue
-              const fUrl = frame.url
+              void frame.url
               try {
                 await frame.executeJavaScript(HUMAN_SIM_JS).catch(() => {})
                 const fHasBtn = await frame.executeJavaScript(`
@@ -2853,7 +2859,7 @@ export class CartService {
         }
       })
 
-      lt.on(currentSw.webContents, 'did-navigate', async (_event, navUrl: string) => {
+      lt.on(currentSw.webContents, 'did-navigate', async (_event, _navUrl: string) => {
         if (resolved) return
         await humanDelay(1500)
         const sw = this.windowManager.getShopWindow()
@@ -3491,7 +3497,7 @@ export class CartService {
     })
   }
 
-  async addToCartViaPlaywright(productUrl: string, orderId: string): Promise<AddToCartResult> {
+  async addToCartViaPlaywright(_productUrl: string, orderId: string): Promise<AddToCartResult> {
     await this.browserManager.ensureBrowser(this.auth, this.cookieManager, this.emitStatus)
     const page = this.browserManager.getPage()
     if (!page) return { success: false, error: '浏览器未初始化' }
@@ -3652,7 +3658,6 @@ export class CartService {
     const page = this.browserManager.getPage()
     if (!page) return false
 
-    const targets = [...KEYWORDS.REBUY_BUTTONS]
     const selectors = ['button', 'a', '[class*="btn"]', '[class*="Button"]', '[role="button"]', '[class*="action"]', '[class*="submit"]', '[class*="rebuy"]', '[class*="Rebuy"]', '[class*="buy-again"]', '[class*="BuyAgain"]', '[data-spm*="rebuy"]', '[data-spm*="buy"]', 'span[class*="click"]', 'div[class*="click"]']
 
     try {

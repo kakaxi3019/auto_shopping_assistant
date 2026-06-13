@@ -241,7 +241,7 @@ export function registerIpcHandlers(db: Database, scheduler: TaskScheduler) {
       })
 
       try {
-        const orders = await adapter.fetchOrderHistory(1, timeRange)
+        await adapter.fetchOrderHistory(1, timeRange)
         const actualCount = db.getOrderCount(platform)
         db.setSetting(`last_sync_time_${platform}`, new Date().toISOString())
         db.setSetting(`last_sync_count_${platform}`, String(actualCount))

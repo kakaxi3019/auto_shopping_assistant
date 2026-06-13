@@ -1,6 +1,8 @@
 node_modules/
 dist/
 dist-electron/
+*.d.ts
+!electron/types/*.d.ts
 release/
 release-dist/
 release-portable/

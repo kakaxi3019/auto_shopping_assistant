@@ -1,14 +1,15 @@
+import type { BrowserWindow } from 'electron'
 import type { BrowserContext, Page } from 'playwright'
-import type { PayResult } from '../../../shared/types/platform.types'
+import type { PayResult } from '../../../../shared/types/platform.types'
 import type { Database } from '../../../db/database'
 import type { WindowManager } from '../infrastructure/window-manager'
 import type { CookieManager } from '../infrastructure/cookie-manager'
 import type { InteractionService } from './interaction.service'
 import type { VerificationService } from './verification.service'
 import type { TaobaoAuth } from '../taobao.auth'
-import { setUserAgent, debugLog, humanDelay, humanClickAt, humanClickElement, execJS, injectOverlayBanner, injectCenterToast, rand, clickInShopWindow } from '../utils/page-helper'
-import { APP_ICON, TIMEOUTS, WINDOW_SIZES, KEYWORDS } from '../utils/constants'
-import { isCheckoutOrPayPage, isLoginPage, isIdentityVerifyPage, isBuyPage, isCartPage, isProductDetailPage } from '../utils/url-helper'
+import { debugLog, humanDelay, injectOverlayBanner, injectCenterToast, clickInShopWindow } from '../utils/page-helper'
+import { WINDOW_SIZES, KEYWORDS } from '../utils/constants'
+import { isIdentityVerifyPage } from '../utils/url-helper'
 import { TAOBAO_SELECTORS } from '../taobao.selectors'
 
 
@@ -16,39 +17,31 @@ export class PaymentService {
   private windowManager: WindowManager
   private cookieManager: CookieManager
   private interactionService: InteractionService
-  private verificationService: VerificationService
   private auth: TaobaoAuth
   private db: Database
   private emitStatus: (status: string) => void
   private getContext: () => BrowserContext | null
-  private getPage: () => Page | null
-  private setPage: (page: Page) => void
-  private isDestroyed: () => boolean
 
   constructor(
     windowManager: WindowManager,
     cookieManager: CookieManager,
     interactionService: InteractionService,
-    verificationService: VerificationService,
+    _verificationService: VerificationService,
     auth: TaobaoAuth,
     db: Database,
     emitStatus: (status: string) => void,
     getContext: () => BrowserContext | null,
-    getPage: () => Page | null,
-    setPage: (page: Page) => void,
-    isDestroyed: () => boolean,
+    _getPage: () => Page | null,
+    _setPage: (page: Page) => void,
+    _isDestroyed: () => boolean,
   ) {
     this.windowManager = windowManager
     this.cookieManager = cookieManager
     this.interactionService = interactionService
-    this.verificationService = verificationService
     this.auth = auth
     this.db = db
     this.emitStatus = emitStatus
     this.getContext = getContext
-    this.getPage = getPage
-    this.setPage = setPage
-    this.isDestroyed = isDestroyed
   }
 
   async pay(totalAmount?: number, dryRun?: boolean, paymentMode?: string): Promise<PayResult> {

@@ -1,8 +1,8 @@
 import { BrowserWindow } from 'electron'
-import { isDisposableUrl, isLoginPage, isIdentityVerifyPage, isCheckoutOrPayPage, isBuyPage, isCartPage } from '../utils/url-helper'
+import { isDisposableUrl, isLoginPage, isIdentityVerifyPage, isBuyPage, isCartPage } from '../utils/url-helper'
 import { setUserAgent, injectOverlayBanner, injectCenterToast, debugLog } from '../utils/page-helper'
 import { APP_ICON, TAOBAO_PRELOAD } from '../utils/constants'
-import { tryAutoLoginThenShow, showConfirmationWindow } from '../utils/window-helper'
+import { tryAutoLoginThenShow } from '../utils/window-helper'
 import type { CookieManager } from '../infrastructure/cookie-manager'
 import type { WindowManager } from '../infrastructure/window-manager'
 import type { TaobaoAuth } from '../taobao.auth'
@@ -278,7 +278,7 @@ export class InteractionService {
     if (mainWindow) win.setParentWindow(mainWindow)
     this.windowManager.trackWindow(win)
 
-    win.webContents.setWindowOpenHandler(({ url: openUrl }) => {
+    win.webContents.setWindowOpenHandler(({ url: _openUrl }) => {
       return { action: 'allow', overrideBrowserWindowOptions: { show: false, webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, backgroundThrottling: false, preload: TAOBAO_PRELOAD } } }
     })
 

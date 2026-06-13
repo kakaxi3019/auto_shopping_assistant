@@ -1,14 +1,14 @@
 import * as path from 'path'
 import * as fs from 'fs'
 import { app, BrowserWindow, WebContents } from 'electron'
-import { CHROME_UA, ORDER_API_URL } from './constants'
+import { CHROME_UA } from './constants'
 import { HUMAN_SIM_JS } from './human-sim'
 import { ANTI_DETECT_JS } from './anti-detect'
 
 export class ListenerTracker {
-  private entries: Array<{ wc: WebContents; event: string; handler: (...args: any[]) => void }> = []
+  private entries: Array<{ wc: WebContents | BrowserWindow; event: string; handler: (...args: any[]) => void }> = []
 
-  on(wc: WebContents, event: string, handler: (...args: any[]) => void) {
+  on(wc: WebContents | BrowserWindow, event: string, handler: (...args: any[]) => void) {
     this.entries.push({ wc, event, handler })
     wc.on(event as any, handler)
   }
@@ -229,7 +229,7 @@ export async function humanDelay(base: number, jitter?: number): Promise<void> {
 
 export type HintContext = 'guide' | 'warning' | 'security' | 'error'
 
-export function injectOverlayBanner(win: BrowserWindow, message: string, context?: HintContext) {
+export function injectOverlayBanner(win: BrowserWindow, message: string, _context?: HintContext) {
   const js = `
     (function() {
       var msg = ${JSON.stringify(message)};
@@ -299,7 +299,7 @@ export function injectOverlayBanner(win: BrowserWindow, message: string, context
   });
 }
 
-export function injectCenterToast(win: BrowserWindow, message: string, context?: HintContext) {
+export function injectCenterToast(win: BrowserWindow, message: string, _context?: HintContext) {
   const js = `
     (function() {
       var msg = ${JSON.stringify(message)};

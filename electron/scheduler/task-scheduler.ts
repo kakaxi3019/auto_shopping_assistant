@@ -6,19 +6,8 @@ import type { Database } from '../db/database'
 import { PlatformRegistry } from '../platforms/registry'
 import { LlmParser } from '../llm/parser'
 import { TaskExecutor } from './task-executor'
-import { appendFileSync, writeFileSync } from 'fs'
+import { appendFileSync } from 'fs'
 import { join } from 'path'
-
-const SCHEDULER_LOG_FILE = join(app.getPath('userData'), 'preview-debug.log')
-
-function schedulerLog(msg: string) {
-  const ts = new Date().toISOString()
-  const line = `[${ts}] ${msg}\n`
-  console.log(msg)
-  try {
-    appendFileSync(SCHEDULER_LOG_FILE, line, 'utf-8')
-  } catch {}
-}
 
 export class TaskScheduler {
   private db: Database

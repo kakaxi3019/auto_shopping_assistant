@@ -2,12 +2,8 @@ import type { Order, ParsedShoppingItem, PreviewItem, CandidateOrder, AmbiguityL
 import type { PlatformAdapter } from '../../shared/types/platform.types'
 import type { ItemResult } from '../../shared/types/task.types'
 import type { Database } from '../db/database'
-import { appendFileSync } from 'fs'
-import { join } from 'path'
-import { app } from 'electron'
 import { debugLog } from '../utils/debug-log'
 
-const PREVIEW_LOG_FILE = join(app.getPath('userData'), 'preview-debug.log')
 const MIN_CONFIDENCE_THRESHOLD = 50
 const KEYWORD_MATCH_THRESHOLD = 35
 
@@ -17,13 +13,6 @@ const PRODUCT_TYPE_SUFFIXES = [
   '绳', '夹', '扣', '钉', '灯', '糖', '粉', '酱', '油', '醋',
   '耳机', '键盘', '鼠标', '杯', '玩具', '线', '片', '卡', '贴'
 ]
-
-function previewLog(msg: string) {
-  const ts = new Date().toISOString()
-  const line = `[${ts}] ${msg}\n`
-  console.log(msg)
-  try { appendFileSync(PREVIEW_LOG_FILE, line, 'utf-8') } catch {}
-}
 
 export type ErrorCategory = 'out_of_stock' | 'login_expired' | 'not_supported' | 'network_error' | 'no_history' | 'other'
 
@@ -712,10 +701,9 @@ export class TaskExecutor {
     const searchPlatform = item.platform || platformName
     const seen = new Set<string>()
     const allOrders: Order[] = []
-    const MAX_PREVIEW_ORDERS = 20
     const MIN_CANDIDATE_SCORE = 50
 
-    const addOrders = (orders: Order[], label: string, minScore?: number) => {
+    const addOrders = (orders: Order[], _label: string, minScore?: number) => {
       const scoreThreshold = minScore ?? MIN_CANDIDATE_SCORE
       const filtered = orders.filter(o => this.computeMatchScore(o, item.name) >= scoreThreshold)
       for (const o of filtered) {

@@ -1,5 +1,5 @@
 import { BrowserWindow } from 'electron'
-import { APP_ICON, CHROME_UA, TAOBAO_PRELOAD } from '../utils/constants'
+import { APP_ICON, TAOBAO_PRELOAD } from '../utils/constants'
 import { setUserAgent } from '../utils/page-helper'
 
 export class WindowManager {

@@ -8,18 +8,14 @@ import { attachAntiDetectStealth, injectHumanSim, injectOverlayBanner, injectCen
 
 export class SearchService {
   private windowManager: WindowManager
-  private cookieManager: CookieManager
-  private auth: TaobaoAuth
 
   constructor(
     windowManager: WindowManager,
-    cookieManager: CookieManager,
-    auth: TaobaoAuth,
+    _cookieManager: CookieManager,
+    _auth: TaobaoAuth,
     _emitStatus: (status: string) => void
   ) {
     this.windowManager = windowManager
-    this.cookieManager = cookieManager
-    this.auth = auth
   }
 
   async searchProduct(keyword: string): Promise<SearchResult[]> {
@@ -81,7 +77,7 @@ export class SearchService {
             }
           } catch {}
         }, 1000)
-        const pollTimeout = setTimeout(() => {
+        setTimeout(() => {
           if (!resolved) {
             resolved = true
             clearInterval(checkInterval)

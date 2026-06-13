@@ -14,7 +14,7 @@ import { CheckoutService } from './services/checkout.service'
 import { PaymentService } from './services/payment.service'
 import { setUserAgent, injectOverlayBanner, injectCenterToast } from './utils/page-helper'
 import { APP_ICON } from './utils/constants'
-import { isLoginPage, isIdentityVerifyPage, isCheckoutOrPayPage } from './utils/url-helper'
+import { isLoginPage } from './utils/url-helper'
 import { TAOBAO_SELECTORS } from './taobao.selectors'
 
 export class TaobaoPlatform implements PlatformAdapter {
@@ -183,10 +183,10 @@ export class TaobaoPlatform implements PlatformAdapter {
 
         const allCookies = await session.defaultSession.cookies.get({})
         const taobaoCookies = allCookies.filter(
-          (c) => c.domain.includes('taobao') || c.domain.includes('tmall') || c.domain.includes('alipay')
+          (c) => (c.domain || '').includes('taobao') || (c.domain || '').includes('tmall') || (c.domain || '').includes('alipay')
         )
 
-        this.auth.saveElectronCookies(taobaoCookies)
+        this.auth.saveElectronCookies(taobaoCookies as any)
 
         const context = this.browserManager.getContext()
         if (context && taobaoCookies.length > 0) {
@@ -282,7 +282,7 @@ export class TaobaoPlatform implements PlatformAdapter {
       const cookies = await session.defaultSession.cookies.get({ domain })
       for (const c of cookies) {
         try {
-          await session.defaultSession.cookies.remove(`https://${c.domain.replace(/^\./, '')}${c.path}`, c.name)
+          await session.defaultSession.cookies.remove(`https://${(c.domain || '').replace(/^\./, '')}${c.path || '/'}`, c.name)
         } catch {}
       }
     }
@@ -363,7 +363,7 @@ export class TaobaoPlatform implements PlatformAdapter {
 
       const win = this.windowManager.createInteractionWindow(url)
 
-      win.webContents.setWindowOpenHandler(({ url: openUrl }) => {
+      win.webContents.setWindowOpenHandler(({ url: _openUrl }) => {
         return { action: 'allow', overrideBrowserWindowOptions: { show: false, webPreferences: { backgroundThrottling: false } } }
       })
 
